@@ -11,7 +11,7 @@ import type {
   RecurrenceRule,
   Weekday,
 } from "./types.js";
-import { hasExplicitOffset, overlaps, resolvedTimeZone, toDate } from "./time.js";
+import { hasExplicitOffset, intersectsRange, resolvedTimeZone, toDate } from "./time.js";
 import {
   addPlainDays,
   addPlainMinutes,
@@ -33,6 +33,11 @@ import {
 
 const MAX_OCCURRENCES = 20_000;
 
+/** Structural equality for recurrence definitions used by both command and editor paths. */
+export function sameRecurrence(a: CalendarRecurrence | undefined, b: CalendarRecurrence | null | undefined): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
 export interface RecurrenceExpansionOptions {
   readonly timeZone?: string | undefined;
 }
@@ -45,6 +50,7 @@ interface TemporalContext {
   readonly elapsedDurationMs: number;
   readonly wallDurationMinutes: number;
   readonly dateDurationDays: number;
+  readonly point: boolean;
 }
 
 interface ResolvedCandidate {
@@ -104,7 +110,7 @@ export function expandItem(item: CalendarItem, range: CalendarRange, options: Re
   if (rangeEnd <= rangeStart) throw new RangeError("Calendar range end must be after start");
   if (!item.recurrence) {
     const occurrence = occurrenceFromItem(item, options);
-    return overlaps(occurrence.start, occurrence.end, range.start, range.end) ? [occurrence] : [];
+    return intersectsRange(occurrence.start, occurrence.end, range.start, range.end, occurrence.temporalForm === "point") ? [occurrence] : [];
   }
 
   validateRecurrenceRule(item.recurrence.rule);
@@ -118,7 +124,7 @@ export function expandItem(item: CalendarItem, range: CalendarRange, options: Re
     const exception = exceptions.get(candidate.identity);
     if (!exception?.cancelled) {
       const occurrence = patchOccurrence(item, candidate, exception?.replacement, options);
-      if (toDate(occurrence.start).getTime() < rangeEnd && toDate(occurrence.end).getTime() > rangeStart) out.push(occurrence);
+      if (intersectsRange(occurrence.start, occurrence.end, range.start, range.end, occurrence.temporalForm === "point")) out.push(occurrence);
     }
     if (candidate.startEpochMs >= rangeEnd) {
       pastRange += 1;
@@ -213,7 +219,7 @@ export function projectOccurrencePatchToSeries(
   };
 }
 
-/** Preserve existing exception intent when a whole series start/rule is edited. Exceptions are rebased by occurrence ordinal. */
+/** Preserve existing exception meaning when a whole series start/rule is edited. Exceptions are rebased by occurrence ordinal. */
 export function rebaseRecurrenceExceptions(
   previous: CalendarItem,
   next: CalendarItem,
@@ -384,8 +390,14 @@ function contextFor(item: CalendarItem, options: RecurrenceExpansionOptions): Te
   const elapsedDurationMs = sourceInstant(item.end, kind, zone, viewerZone) - sourceInstant(item.start, kind, zone, viewerZone);
   const wallDurationMinutes = plainMinutesBetween(startPlain, endPlain);
   const dateDurationDays = Math.max(1, plainDaysBetween(startPlain, endPlain));
-  if (kind !== "date" && wallDurationMinutes <= 0 && elapsedDurationMs <= 0) throw new RangeError(`Calendar item ${item.id} must end after it starts`);
-  return { kind, timeZone: zone, startPlain, endPlain, elapsedDurationMs, wallDurationMinutes, dateDurationDays };
+  const point = item.temporalForm === "point";
+  if (point) {
+    if (kind === "date" || item.allDay || item.precision === "date") throw new RangeError(`Calendar item ${item.id} point temporal form cannot be date-only or all-day`);
+    if (wallDurationMinutes !== 0 || elapsedDurationMs !== 0) throw new RangeError(`Calendar item ${item.id} point temporal form requires start and end to be identical`);
+  } else if (kind !== "date" && wallDurationMinutes <= 0 && elapsedDurationMs <= 0) {
+    throw new RangeError(`Calendar item ${item.id} must end after it starts`);
+  }
+  return { kind, timeZone: zone, startPlain, endPlain, elapsedDurationMs, wallDurationMinutes, dateDurationDays, point };
 }
 
 function resolveAnchor(item: CalendarItem, ctx: TemporalContext): ResolvedCandidate {
@@ -404,7 +416,8 @@ function resolveCandidate(item: CalendarItem, ctx: TemporalContext, plain: Plain
   }
 
   let endEpochMs: number;
-  if (ctx.kind === "instant") endEpochMs = startEpochMs + ctx.elapsedDurationMs;
+  if (ctx.point) endEpochMs = startEpochMs;
+  else if (ctx.kind === "instant") endEpochMs = startEpochMs + ctx.elapsedDurationMs;
   else if (ctx.kind === "date") {
     const endPlain = addPlainDays({ ...plain, hour: 0, minute: 0, second: 0, millisecond: 0 }, ctx.dateDurationDays);
     endEpochMs = plainToInstant(endPlain, ctx.timeZone, "compatible");
@@ -427,8 +440,10 @@ function patchOccurrence(item: CalendarItem, base: ResolvedCandidate, patch: Cal
   const location = patch?.location === null ? undefined : patch?.location ?? item.location;
   const temporal = patch?.temporal === null ? undefined : patch?.temporal ?? item.temporal;
   const reminders = patch?.reminders === null ? undefined : patch?.reminders ?? item.reminders;
+  const occurrenceId = item.recurrence
+    ? `series:${item.seriesId ?? item.id}@${base.identity}`
+    : `item:${item.id}`;
   return {
-    id: item.id,
     calendarId: patch?.calendarId ?? item.calendarId,
     title: patch?.title ?? item.title,
     ...(description !== undefined ? { description } : {}),
@@ -438,6 +453,7 @@ function patchOccurrence(item: CalendarItem, base: ResolvedCandidate, patch: Cal
     allDay: patch?.allDay ?? item.allDay,
     precision: patch?.precision ?? item.precision,
     ...(temporal !== undefined ? { temporal } : {}),
+    ...((patch?.temporalForm ?? item.temporalForm) !== undefined ? { temporalForm: patch?.temporalForm ?? item.temporalForm } : {}),
     kind: patch?.kind ?? item.kind,
     ownership: item.ownership,
     editPolicy: patch?.editPolicy ?? item.editPolicy,
@@ -447,7 +463,7 @@ function patchOccurrence(item: CalendarItem, base: ResolvedCandidate, patch: Cal
     ...(metadata !== undefined ? { metadata } : {}),
     ...(item.createdAt !== undefined ? { createdAt: item.createdAt } : {}),
     ...(item.updatedAt !== undefined ? { updatedAt: item.updatedAt } : {}),
-    occurrenceId: `${item.seriesId ?? item.id}@${base.identity}`,
+    occurrenceId,
     sourceItemId: item.id,
     originalStart: base.identity,
     recurring: Boolean(item.recurrence),

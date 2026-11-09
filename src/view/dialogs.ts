@@ -29,6 +29,7 @@ export async function requestCalendarDate(
   title: string,
   initialDate: string,
   confirmLabel: string,
+  bounds?: { readonly min?: string; readonly max?: string },
 ): Promise<string | null> {
   const dialog = element("dialog", "dc-dialog dc-scope-dialog");
   dialog.setAttribute("aria-label", title);
@@ -41,6 +42,8 @@ export async function requestCalendarDate(
   input.type = "date";
   input.required = true;
   input.value = initialDate;
+  if (bounds?.min) input.min = bounds.min;
+  if (bounds?.max) input.max = bounds.max;
   body.append(field("Date", input));
   const footer = element("div", "dc-dialog-footer");
   const cancel = button("Cancel", "cancel");

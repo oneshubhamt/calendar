@@ -109,10 +109,10 @@ export function createMilestoneItem(input: {
 }
 
 export const PLANNING_CALENDAR_CSS = `
-.dc-planning-actual{opacity:.78}
-.dc-planning-compared-planned{outline:1px dashed color-mix(in srgb,var(--dc-accent) 72%,transparent);outline-offset:-2px}
-.dc-planning-compared-actual{border-style:dashed}
-.dc-planning-overdue{box-shadow:inset 3px 0 0 var(--dc-danger)}
+.planning-actual{opacity:.78}
+.planning-compared-planned{outline:1px dashed color-mix(in srgb,var(--dc-accent) 72%,transparent);outline-offset:-2px}
+.planning-compared-actual{border-style:dashed}
+.planning-overdue{box-shadow:inset 3px 0 0 var(--dc-danger)}
 `;
 
 export function createPlanningUiExtension(semantics: PlanningSemantics = {}): CalendarUiExtension {
@@ -151,10 +151,10 @@ export function createPlanningUiExtension(semantics: PlanningSemantics = {}): Ca
       const role = rules.relationRole(occurrence);
       const pair = pairs.get(occurrence.occurrenceId);
       const classes: string[] = [];
-      if (role === "actual") classes.push("dc-planning-actual");
-      if (pair && role === "planned") classes.push("dc-planning-compared-planned");
-      if (pair && role === "actual") classes.push("dc-planning-compared-actual");
-      if (overdue.has(occurrence.occurrenceId)) classes.push("dc-planning-overdue");
+      if (role === "actual") classes.push("planning-actual");
+      if (pair && role === "planned") classes.push("planning-compared-planned");
+      if (pair && role === "actual") classes.push("planning-compared-actual");
+      if (overdue.has(occurrence.occurrenceId)) classes.push("planning-overdue");
       const detailRows = pair?.plannedMinutes !== undefined || pair?.actualMinutes !== undefined
         ? [{ label: "Plan vs actual", value: [pair.plannedMinutes !== undefined ? `Planned ${Math.round(pair.plannedMinutes * 10) / 10}m` : "", pair.actualMinutes !== undefined ? `Actual ${Math.round(pair.actualMinutes * 10) / 10}m` : "", pair.varianceMinutes !== undefined ? `${pair.varianceMinutes >= 0 ? "+" : ""}${Math.round(pair.varianceMinutes * 10) / 10}m variance` : ""].filter(Boolean).join(" · ") }]
         : undefined;

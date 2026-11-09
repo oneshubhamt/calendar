@@ -203,11 +203,22 @@ function fromUtcDate(date: Date): PlainDateTimeParts {
   };
 }
 
+const intlFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function intlFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = intlFormatterCache.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone, calendar: "iso8601", numberingSystem: "latn", hourCycle: "h23",
+      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+    });
+    intlFormatterCache.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 function intlParts(epochMilliseconds: number, timeZone: string): PlainDateTimeParts {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone, calendar: "iso8601", numberingSystem: "latn", hourCycle: "h23",
-    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
-  });
+  const formatter = intlFormatter(timeZone);
   const values: Record<string, number> = {};
   for (const part of formatter.formatToParts(new Date(epochMilliseconds))) if (part.type !== "literal") values[part.type] = Number(part.value);
   return validatePlain({
@@ -223,7 +234,8 @@ function offsetMinutesAt(epochMilliseconds: number, timeZone: string): number {
   return (representedUtc - epochSecond) / MINUTE_MS;
 }
 
-function possibleInstants(parts: PlainDateTimeParts, timeZone: string): number[] {
+/** Return every real instant represented by one local wall time: zero for gaps, two for overlaps. */
+export function possibleInstantsForPlain(parts: PlainDateTimeParts, timeZone: string): readonly number[] {
   const naive = plainScalar(parts);
   const probes = [naive, naive - DAY_MS, naive + DAY_MS, naive - 180 * DAY_MS, naive + 180 * DAY_MS, naive - 365 * DAY_MS, naive + 365 * DAY_MS];
   const offsets = [...new Set(probes.map(probe => offsetMinutesAt(probe, timeZone)))];
@@ -235,7 +247,7 @@ function possibleInstants(parts: PlainDateTimeParts, timeZone: string): number[]
 }
 
 function intlPlainToInstant(parts: PlainDateTimeParts, timeZone: string, disambiguation: TemporalDisambiguation): number {
-  const matches = possibleInstants(parts, timeZone);
+  const matches = possibleInstantsForPlain(parts, timeZone);
   if (matches.length === 1) return matches[0]!;
   if (matches.length > 1) {
     if (disambiguation === "reject") throw new RangeError("Ambiguous local date-time");

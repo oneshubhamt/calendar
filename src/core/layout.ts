@@ -1,14 +1,21 @@
 import type { CalendarOccurrence, CalendarRange, ISODateTime } from "./types.js";
-import { dateKey, startOfDay, toDate } from "./time.js";
+import { addDays, dateKey, startOfDay, toDate } from "./time.js";
+import { civilMinuteOfInstant } from "./civil-timeline.js";
 
 export interface TimedLayoutItem {
   readonly occurrence: CalendarOccurrence;
   readonly topMinutes: number;
+  /** Zero for a true point marker; positive for interval blocks. */
   readonly heightMinutes: number;
   readonly column: number;
   readonly columnCount: number;
   readonly columnSpan: number;
+  readonly temporalForm: "interval" | "point";
+  /** Visual-only lane used when zero/real-duration items share screen pixels without claiming temporal overlap. */
+  readonly visualLane: number;
+  readonly visualLaneCount: number;
 }
+
 
 interface ClusterItem {
   readonly occurrence: CalendarOccurrence;
@@ -16,6 +23,7 @@ interface ClusterItem {
   readonly end: number;
   readonly topMinutes: number;
   readonly heightMinutes: number;
+  readonly point: boolean;
   column: number;
 }
 
@@ -24,20 +32,24 @@ function isTimed(item: CalendarOccurrence): boolean {
 }
 
 function overlaps(a: ClusterItem, b: ClusterItem): boolean {
+  if (a.point && b.point) return a.start === b.start;
+  if (a.point) return b.start <= a.start && a.start < b.end;
+  if (b.point) return a.start <= b.start && b.start < a.end;
   return a.start < b.end && a.end > b.start;
 }
 
 function layoutCluster(cluster: ClusterItem[]): TimedLayoutItem[] {
-  const columnEnds: number[] = [];
+  const byColumn: ClusterItem[][] = [];
   for (const item of cluster) {
-    let column = columnEnds.findIndex(end => end <= item.start);
-    if (column < 0) column = columnEnds.length;
+    let column = byColumn.findIndex(existing => existing.every(other => !overlaps(item, other)));
+    if (column < 0) {
+      column = byColumn.length;
+      byColumn.push([]);
+    }
     item.column = column;
-    columnEnds[column] = item.end;
+    byColumn[column]!.push(item);
   }
-  const columnCount = Math.max(1, columnEnds.length);
-  const byColumn = Array.from({ length: columnCount }, () => [] as ClusterItem[]);
-  for (const item of cluster) byColumn[item.column]!.push(item);
+  const columnCount = Math.max(1, byColumn.length);
 
   return cluster.map(item => {
     let span = 1;
@@ -52,47 +64,105 @@ function layoutCluster(cluster: ClusterItem[]): TimedLayoutItem[] {
       column: item.column,
       columnCount,
       columnSpan: span,
+      temporalForm: item.point ? "point" : "interval",
+      visualLane: 0,
+      visualLaneCount: 1,
     };
   });
 }
 
 export function layoutTimedDay(items: readonly CalendarOccurrence[], day: ISODateTime | Date, timeZone?: string): TimedLayoutItem[] {
   const dayStart = startOfDay(day, timeZone);
-  const dayEnd = timeZone ? new Date(startOfDay(new Date(dayStart.getTime() + 36 * 60 * 60_000), timeZone).getTime()) : new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate() + 1);
+  const dayEnd = timeZone ? addDays(dayStart, 1, timeZone) : new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate() + 1);
   const relevant: ClusterItem[] = items
     .filter(isTimed)
-    .filter(item => toDate(item.start).getTime() < dayEnd.getTime() && toDate(item.end).getTime() > dayStart.getTime())
+    .filter(item => {
+      const start = toDate(item.start).getTime();
+      const end = toDate(item.end).getTime();
+      return item.temporalForm === "point"
+        ? start === end && start >= dayStart.getTime() && start < dayEnd.getTime()
+        : start < dayEnd.getTime() && end > dayStart.getTime();
+    })
     .map(occurrence => {
-      const start = Math.max(dayStart.getTime(), toDate(occurrence.start).getTime());
-      const end = Math.min(dayEnd.getTime(), toDate(occurrence.end).getTime());
+      const point = occurrence.temporalForm === "point";
+      const start = point ? toDate(occurrence.start).getTime() : Math.max(dayStart.getTime(), toDate(occurrence.start).getTime());
+      const end = point ? start : Math.min(dayEnd.getTime(), toDate(occurrence.end).getTime());
+      const topMinutes = timeZone ? civilMinuteOfInstant(start, dayStart, timeZone) : (start - dayStart.getTime()) / 60_000;
+      const endMinutes = timeZone ? civilMinuteOfInstant(end, dayStart, timeZone) : (end - dayStart.getTime()) / 60_000;
+      const civilHeight = endMinutes - topMinutes;
+      const elapsedHeight = (end - start) / 60_000;
       return {
         occurrence,
         start,
         end,
-        topMinutes: (start - dayStart.getTime()) / 60_000,
-        heightMinutes: Math.max(1, (end - start) / 60_000),
+        topMinutes,
+        heightMinutes: point ? 0 : Math.max(1, civilHeight > 0 ? civilHeight : elapsedHeight),
+        point,
         column: 0,
       };
     })
-    .sort((a, b) => a.start - b.start || b.end - a.end || a.occurrence.title.localeCompare(b.occurrence.title));
+    .sort((a, b) => a.start - b.start || Number(a.point) - Number(b.point) || b.end - a.end || a.occurrence.title.localeCompare(b.occurrence.title));
 
   const result: TimedLayoutItem[] = [];
   let cluster: ClusterItem[] = [];
-  let clusterEnd = -Infinity;
   const flush = () => {
     if (!cluster.length) return;
     result.push(...layoutCluster(cluster));
     cluster = [];
-    clusterEnd = -Infinity;
   };
 
   for (const item of relevant) {
-    if (cluster.length && item.start >= clusterEnd) flush();
+    if (cluster.length && !cluster.some(other => overlaps(item, other))) flush();
     cluster.push(item);
-    clusterEnd = Math.max(clusterEnd, item.end);
   }
   flush();
-  return result;
+  return assignVisualLanes(result);
+}
+
+const MIN_VISUAL_EVENT_HEIGHT = 20;
+
+/**
+ * Keep screen-space boxes legible when distinct real instants map to nearby/equal civil coordinates
+ * (for example close point markers or the two sides of a fall-back overlap). This affects only width,
+ * never temporal collision semantics or stored duration.
+ */
+function assignVisualLanes(items: readonly TimedLayoutItem[]): TimedLayoutItem[] {
+  const groups = new Map<string, TimedLayoutItem[]>();
+  for (const item of items) {
+    const key = `${item.column}:${item.columnCount}:${item.columnSpan}`;
+    const group = groups.get(key) ?? [];
+    group.push(item);
+    groups.set(key, group);
+  }
+
+  const updates = new Map<string, { lane: number; count: number }>();
+  for (const group of groups.values()) {
+    const sorted = [...group].sort((a, b) => a.topMinutes - b.topMinutes || a.occurrence.occurrenceId.localeCompare(b.occurrence.occurrenceId));
+    let cluster: TimedLayoutItem[] = [];
+    let clusterBottom = Number.NEGATIVE_INFINITY;
+    const flushVisual = () => {
+      if (cluster.length <= 1) {
+        const only = cluster[0];
+        if (only) updates.set(only.occurrence.occurrenceId, { lane: 0, count: 1 });
+      } else {
+        cluster.forEach((item, lane) => updates.set(item.occurrence.occurrenceId, { lane, count: cluster.length }));
+      }
+      cluster = [];
+      clusterBottom = Number.NEGATIVE_INFINITY;
+    };
+    for (const item of sorted) {
+      const visualHeight = Math.max(MIN_VISUAL_EVENT_HEIGHT, item.heightMinutes);
+      if (cluster.length && item.topMinutes >= clusterBottom) flushVisual();
+      cluster.push(item);
+      clusterBottom = Math.max(clusterBottom, item.topMinutes + visualHeight);
+    }
+    flushVisual();
+  }
+
+  return items.map(item => {
+    const visual = updates.get(item.occurrence.occurrenceId) ?? { lane: 0, count: 1 };
+    return { ...item, visualLane: visual.lane, visualLaneCount: visual.count };
+  });
 }
 
 export interface MonthDayBucket {
@@ -109,6 +179,14 @@ export function groupByDay(items: readonly CalendarOccurrence[], timeZone?: stri
   for (const item of items) {
     const exactStart = toDate(item.start);
     const itemEnd = toDate(item.end);
+    if (item.temporalForm === "point") {
+      if (rangeExactStart && rangeEnd && (exactStart.getTime() < rangeExactStart.getTime() || exactStart.getTime() >= rangeEnd.getTime())) continue;
+      const key = dateKey(exactStart, timeZone);
+      const bucket = map.get(key) ?? { allDay: [], timed: [] };
+      bucket.timed.push(item);
+      map.set(key, bucket);
+      continue;
+    }
     if (rangeExactStart && rangeEnd && (itemEnd.getTime() <= rangeExactStart.getTime() || exactStart.getTime() >= rangeEnd.getTime())) continue;
     const itemStart = startOfDay(item.start, timeZone);
     let cursor = rangeStart && itemStart.getTime() < rangeStart.getTime() ? rangeStart : itemStart;

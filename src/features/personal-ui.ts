@@ -51,10 +51,6 @@ function writableSource(source: CalendarSource | undefined): boolean {
   return Boolean(source && !source.readOnly && source.allowCreate !== false);
 }
 
-function editable(occurrence: CalendarOccurrence): boolean {
-  return occurrence.editPolicy !== "readonly" && occurrence.editPolicy !== "generated";
-}
-
 function draftFromItem(item: CalendarItem): CalendarCreateDraft {
   return {
     calendarId: item.calendarId,
@@ -252,8 +248,8 @@ export function createPersonalCalendarUiAddon(options: PersonalCalendarUiOptions
       if (options.routineTemplates?.length) container.append(button("Routine", () => { void applyRoutine().catch(error => context.announce(error instanceof Error ? error.message : "Could not apply routine")); }, "Apply a routine"));
     },
     sourceMenuActions(context) { state.context = context; return options.calendarCreation === false || !context.canManageSources() ? [] : [{ label: "+ New calendar", run: newCalendar }]; },
-    detailActions(occurrence, context) { state.context = context; if (options.copyMove === false) return []; const actions: CalendarUiAction[] = [{ label: "Copy to date", run: () => copyToDate(occurrence) }]; if (editable(occurrence)) actions.push({ label: "Move to date", run: () => moveToDate(occurrence) }); return actions; },
-    contextActions(occurrence, context) { state.context = context; if (options.copyMove === false) return []; const actions: CalendarUiAction[] = [{ label: "Copy to date…", run: () => copyToDate(occurrence) }]; if (editable(occurrence)) actions.push({ label: "Move to date…", run: () => moveToDate(occurrence) }); return actions; },
+    detailActions(occurrence, context) { state.context = context; if (options.copyMove === false) return []; const actions: CalendarUiAction[] = [{ label: "Copy to date", run: () => copyToDate(occurrence) }]; if (context.canMoveOccurrence(occurrence)) actions.push({ label: "Move to date", run: () => moveToDate(occurrence) }); return actions; },
+    contextActions(occurrence, context) { state.context = context; if (options.copyMove === false) return []; const actions: CalendarUiAction[] = [{ label: "Copy to date…", run: () => copyToDate(occurrence) }]; if (context.canMoveOccurrence(occurrence)) actions.push({ label: "Move to date…", run: () => moveToDate(occurrence) }); return actions; },
     onRefresh(context) { state.context = context; },
     emptyMessage() { return currentFilter() ? "No events match the current filters." : undefined; },
     destroy() { window.clearTimeout(state.searchTimer); state.context = null; },

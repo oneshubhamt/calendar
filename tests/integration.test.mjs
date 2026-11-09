@@ -12,8 +12,8 @@ test('realistic fixtures project all three Director domains', async()=>{
   assert.ok(result.occurrences.some(x=>x.ownership==='revision-engine'));
   assert.ok(result.occurrences.some(x=>x.ownership==='practice-history'));
   assert.ok(result.occurrences.some(x=>x.kind==='exam'));
-  const scheduledRevision=result.occurrences.find(x=>x.id==='fixture:revision:scheduled');
-  const scheduledMock=result.occurrences.find(x=>x.id==='fixture:practice:scheduled');
+  const scheduledRevision=result.occurrences.find(x=>x.sourceItemId==='fixture:revision:scheduled');
+  const scheduledMock=result.occurrences.find(x=>x.sourceItemId==='fixture:practice:scheduled');
   assert.ok(scheduledRevision); assert.ok(scheduledMock);
   assert.equal(fixture.ecosystem.sourceActions.actions(scheduledRevision).some(x=>x.id==='revision:start'),true);
   assert.equal(fixture.ecosystem.sourceActions.actions(scheduledMock).some(x=>x.id==='practice:launch'),true);

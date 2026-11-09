@@ -1,6 +1,6 @@
 # Director Calendar
 
-Release candidate: **1.0.0-rc.9**.
+Release: **1.1.0**.
 
 Director Calendar is reusable, local-first calendar software written in strict TypeScript. The calendar kernel is application-agnostic: hosts supply their own semantic kinds, ownership/provenance, metadata, editors/actions and adapters without changing calendar mechanics.
 
@@ -32,16 +32,32 @@ A host can:
 - configure generic type choices; opt into `features/personal-ui` for category/search/filter/quick-create/routines/source management;
 - supply an `itemFactory` to control ownership/provenance and new-item shape;
 - intercept create/open/edit through handled callbacks and use its own domain UI;
-- provide source actions such as open/start/launch/custom;
+- provide occurrence actions such as open/start/launch/custom, with optional safe text icons, inline rendering, accessible labels, primary/danger emphasis and enabled/pending/pressed/state presentation;
 - provide display icon/color/text/class metadata;
-- attach optional UI extensions such as planning presentation;
+- attach optional UI extensions that can supply a safe text icon, leading/title/subtitle/trailing slots, badges, detail rows, a complete occurrence-level accessible-label override and bounded feature-specific data decoration;
 - use a read-only snapshot provider when the host owns persistence/commands elsewhere, or a mutable repository when Calendar owns writes; projected host data can publish invalidations without transferring ownership;
+- supply `CalendarProjectionProvider` items for Calendar-owned recurrence expansion, or `CalendarOccurrenceProjectionProvider` occurrences when the host has already expanded recurrence for the requested range; host-expanded `start`, `end` and `originalStart` values must be absolute ISO date-times and are canonicalized before range filtering, while any host-local recurrence key belongs in opaque `projectionIdentity`;
+- supply `CalendarOccurrenceCapabilityProvider` for per-occurrence move/conversion/resize/open/edit/delete/recurrence/action authority; default-path results can only narrow existing policy, while explicit `trusted-host` authority routes through `trustedHostCommandHandler` and is revalidated at execution; editor saves and add-on patches derive the same move/resize/conversion requirements from the temporal fields they actually change, and trusted-host semantic editing is not re-blocked by a legacy schedule-only editor branch;
+- Calendar applies its built-in occurrence command lifecycle for operation-specific pending state, occurrence-level duplicate suppression, stable occurrence/source/projection identity context, explicit stale-command errors, accessible failures and authoritative refresh after asynchronous host commands; pointer drag/resize previews are stateful and survive re-render until host resolution, and a committed mutation whose reprojection fails is reported distinctly from a rejected mutation so retry cannot duplicate a successful write;
+- independently suppress Calendar-owned toolbar/date-navigation/view-switch/source/create chrome through `chrome`, including a fully toolbar-free embedded day grid while keyboard/grid interactions remain active;
+- constrain embedded navigation with inclusive local-date `navigationBounds`; initial/programmatic anchors clamp into range, date navigation cannot leave it, host projection queries are clipped, and create/move/resize placement outside the bounds fails closed;
+- optionally add a second day/week reference scale with `secondaryTimeZone`; one shared civil-timeline model drives layout and hit-testing, spring-forward gaps are non-targetable, fall-back overlaps use explicit `dstOverlapDisambiguation: "earlier" | "later"`, and half-hour offsets plus `-1d`/`+1d` civil-date rollover remain truthful without changing event identity or command semantics;
 - map ICS/Google imports to host-defined ownership/kind/edit policy while interoperability identity stays namespaced under `metadata.calendarInterop`;
 - use custom reminder delivery-channel identifiers in addition to the built-in browser/in-app/external conventions.
 
 The base view treats host metadata as opaque and does not infer categories or application semantics from it. Custom reminder channels can be supplied to the editor, and an existing unknown channel is preserved during editing.
 
-The built-in editor preserves temporal meaning: zoned events edit in their own IANA timezone, floating events remain wall-clock values, instant events remain instants, and all-day values remain date-only. Drag/drop and keyboard conversions between all-day and timed placement update start/end, precision and temporal representation atomically rather than leaving mixed state. Recurrence controls cover the common daily/weekly/monthly/yearly patterns and expose the engine's month-day, month, RFC-style weekday/ordinal and set-position filters behind an advanced disclosure. Unchanged recurrence rules are preserved exactly; split-series edits preserve the remaining count and remap only surviving tail exceptions.
+The built-in editor preserves temporal meaning: zoned events edit in their own IANA timezone, floating events remain wall-clock values, instant events remain instants, all-day values remain date-only, and point occurrences edit as one instant while preserving `start === end`. Drag/drop and keyboard conversions between all-day and timed placement update start/end, precision and temporal representation atomically rather than leaving mixed state. Recurrence controls cover the common daily/weekly/monthly/yearly patterns and expose the engine's month-day, month, RFC-style weekday/ordinal and set-position filters behind an advanced disclosure. Unchanged recurrence rules are preserved exactly; split-series edits preserve the remaining count and remap only surviving tail exceptions.
+
+True point-in-time values use `temporalForm: "point"` with `start === end`; Calendar does not manufacture a duration for them. They render as exact time-grid markers, participate in month/year/agenda views, and remain zero-duration through editing, duplication and movement; close markers use visual-only horizontal lanes to avoid screen overlap without acquiring scheduling duration, and points cannot be resized or dragged into all-day placement.
+
+## v1.1 host-boundary notes
+
+- `CalendarOccurrence` now has the meaningful identities `sourceItemId`, `occurrenceId` and optional `projectionIdentity`; it no longer duplicates `sourceItemId` as an `id` field. One-off repository occurrences use stable `item:<sourceItemId>` occurrence identity even when moved.
+- The generic action authority flag is `canInvokeActions` (not the earlier inline-specific name) because it governs inline, details and context actions consistently. `canEdit` means semantic edit authority; schedule-only movement/resizing remains expressed by the dedicated temporal capabilities.
+- Presentation-extension CSS is cosmetic-only, scoped beneath Calendar, and fails closed on geometry declarations, malformed scope-breaking selectors or `!important`; add-on CSS is scoped to its add-on wrapper, permits a conservative responsive `@media` subset, and cannot use `!important`. Host decoration data is emitted only as `data-host-*`. Calendar geometry is not a host CSS API.
+- `handleCreate` / `handleEdit` fall-through opens the built-in mutation editor only when an actual Calendar command path exists.
+- The published npm package contains production `dist`, docs and README only; demos, fixtures, tests and TypeScript sources remain repository/development assets.
 
 ## Sandboxes
 

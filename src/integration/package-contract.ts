@@ -1,7 +1,7 @@
 export const DIRECTOR_CALENDAR_PACKAGE = Object.freeze({
   name: "@director/calendar",
-  version: "1.0.0-rc.9",
-  coreContract: 10,
+  version: "1.1.0",
+  coreContract: 11,
   integrations: Object.freeze({
     studyDirector: Object.freeze({ contractVersion: 1, verifiedAgainst: "SDVB75F10" }),
     revisionDirector: Object.freeze({ contractVersion: 1, verifiedAgainst: "main" }),

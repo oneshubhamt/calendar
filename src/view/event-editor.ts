@@ -6,13 +6,16 @@ import type {
   CalendarSource,
   CalendarReminder,
   CalendarTemporalSpec,
+  CalendarTemporalForm,
+  CalendarOverlapDisambiguation,
   RecurrenceFrequency,
   SeriesEditScope,
   Weekday,
 } from "../core/types.js";
 import type { CalendarKindOption, CalendarReminderChannelOption, CalendarSelection } from "./types.js";
 import { addDays, startOfDay, toDate } from "../core/time.js";
-import { formatPlainDateTime, instantToPlain, plainToInstant } from "../core/temporal.js";
+import { formatPlainDateTime, instantToPlain } from "../core/temporal.js";
+import { instantAtCivilDateTime } from "../core/civil-timeline.js";
 import { recurrenceAdvancedFields, recurrenceRuleFromEditor, recurrenceUntilFromEditor } from "./recurrence-editor.js";
 
 const WEEKDAYS: readonly { readonly value: Weekday; readonly label: string }[] = [
@@ -37,11 +40,18 @@ function localTime(date: Date, timeZone: string): string {
   return `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`;
 }
 
-function localDateTime(dateValue: string, timeValue: string, timeZone: string): Date {
+function localDateTime(
+  dateValue: string,
+  timeValue: string,
+  timeZone: string,
+  overlap: CalendarOverlapDisambiguation,
+): Date {
   const [year, month, day] = dateValue.split("-").map(Number);
   const [hour, minute] = timeValue.split(":").map(Number);
   if (![year, month, day, hour ?? 0, minute ?? 0].every(Number.isFinite)) throw new Error("Invalid calendar date or time");
-  return new Date(plainToInstant({ year: year!, month: month!, day: day!, hour: hour ?? 0, minute: minute ?? 0, second: 0, millisecond: 0 }, timeZone, "compatible"));
+  const resolved = instantAtCivilDateTime({ year: year!, month: month!, day: day!, hour: hour ?? 0, minute: minute ?? 0, second: 0, millisecond: 0 }, timeZone, overlap);
+  if (!resolved) throw new Error("That local time does not exist because of a daylight-saving transition");
+  return resolved;
 }
 
 function plainDateTimeValue(dateValue: string, timeValue: string): string {
@@ -84,6 +94,15 @@ export interface EventEditorInitial {
   readonly duplicate?: boolean;
 }
 
+export interface EventEditorCapabilities {
+  /** Whether non-temporal semantic fields may be edited. Omitted preserves the occurrence's base EditPolicy. */
+  readonly allowSemanticEdit?: boolean | undefined;
+  readonly allowAllDayConversion?: boolean | undefined;
+  readonly allowRecurrenceChange?: boolean | undefined;
+  readonly allowStartChange?: boolean | undefined;
+  readonly allowEndChange?: boolean | undefined;
+}
+
 export interface EventEditorResult {
   readonly calendarId: string;
   readonly title: string;
@@ -93,6 +112,7 @@ export interface EventEditorResult {
   readonly end: string;
   readonly allDay: boolean;
   readonly temporal: CalendarTemporalSpec;
+  readonly temporalForm?: CalendarTemporalForm | undefined;
   readonly kind: CalendarItemKind;
   readonly recurrence?: CalendarRecurrence;
   readonly reminders?: readonly CalendarReminder[];
@@ -111,9 +131,12 @@ export async function openEventEditor(
     { value: "in-app", label: "In app" },
     { value: "external", label: "External calendar" },
   ],
+  capabilities: EventEditorCapabilities = {},
+  overlapDisambiguation: CalendarOverlapDisambiguation = "earlier",
 ): Promise<EventEditorResult | null> {
   const occurrence = initial.occurrence;
   const sourceItem = initial.sourceItem;
+  const pointOccurrence = Boolean(occurrence && occurrence.temporalForm === "point");
   const selection = initial.selection;
   const allDay = occurrence?.allDay ?? selection?.allDay ?? false;
   const sourceTemporal: CalendarTemporalSpec = sourceItem?.temporal ?? occurrence?.temporal ?? (allDay ? { kind: "date" } : { kind: "instant" });
@@ -121,7 +144,8 @@ export async function openEventEditor(
   const start = occurrence ? toDate(occurrence.start) : selection ? toDate(selection.start) : new Date();
   const end = occurrence ? toDate(occurrence.end) : selection ? toDate(selection.end) : new Date(start.getTime() + 60 * 60_000);
   const selectedCalendar = initial.duplicate ? defaultCalendarId : occurrence?.calendarId ?? defaultCalendarId;
-  const scheduleOnly = Boolean(occurrence && occurrence.editPolicy === "schedule-only" && !initial.duplicate);
+  const baseSemanticEdit = !occurrence || initial.duplicate || occurrence.editPolicy === "full";
+  const scheduleOnly = Boolean(occurrence && !initial.duplicate && !(capabilities.allowSemanticEdit ?? baseSemanticEdit));
   const dialog = element("dialog", "dc-dialog dc-editor-dialog");
   dialog.setAttribute("aria-label", initial.duplicate ? "Duplicate event" : occurrence ? "Edit event" : "New event");
   const form = element("form", "dc-editor");
@@ -153,7 +177,16 @@ export async function openEventEditor(
   endTime.step = "300";
 
   const dateGrid = element("div", "dc-editor-grid");
-  dateGrid.append(field("Starts", startDate), field("Time", startTime), field("Ends", endDate), field("Time", endTime));
+  const endDateField = field(pointOccurrence ? "At" : "Ends", endDate);
+  const endTimeField = field("Time", endTime);
+  dateGrid.append(field(pointOccurrence ? "Date" : "Starts", startDate), field("Time", startTime), endDateField, endTimeField);
+  if (pointOccurrence) {
+    endDate.disabled = true;
+    endTime.disabled = true;
+    endDateField.hidden = true;
+    endTimeField.hidden = true;
+    dateGrid.dataset.temporalForm = "point";
+  }
 
   const location = input("location", "text", occurrence?.location ?? "");
   location.maxLength = 320;
@@ -279,9 +312,13 @@ export async function openEventEditor(
   });
   const initialRecurrenceFormState = recurrenceFormState();
 
+  const startLocked = Boolean(occurrence && capabilities.allowStartChange === false);
+  const endLocked = Boolean(occurrence && capabilities.allowEndChange === false);
   const toggleTime = () => {
-    startTime.disabled = allDayInput.checked;
-    endTime.disabled = allDayInput.checked;
+    startDate.disabled = startLocked;
+    startTime.disabled = startLocked || allDayInput.checked;
+    endDate.disabled = pointOccurrence || endLocked;
+    endTime.disabled = pointOccurrence || endLocked || allDayInput.checked;
   };
   const toggleRecurrence = () => {
     const enabled = repeat.value !== "";
@@ -298,6 +335,8 @@ export async function openEventEditor(
   endMode.addEventListener("change", toggleRecurrence);
   toggleTime();
   toggleRecurrence();
+  if (pointOccurrence || (occurrence && capabilities.allowAllDayConversion === false)) allDayInput.disabled = true;
+  if (occurrence && capabilities.allowRecurrenceChange === false) recurrenceBox.disabled = true;
   if (scheduleOnly) {
     title.disabled = true;
     calendar.disabled = true;
@@ -346,14 +385,14 @@ export async function openEventEditor(
         let nextStart: Date;
         let nextEnd: Date;
         if (allDayValue) {
-          nextStart = startOfDay(localDateTime(startDate.value, "00:00", editorTimeZone), editorTimeZone);
-          nextEnd = addDays(startOfDay(localDateTime(endDate.value, "00:00", editorTimeZone), editorTimeZone), 1, editorTimeZone);
+          nextStart = startOfDay(toDate(startDate.value, editorTimeZone), editorTimeZone);
+          nextEnd = addDays(startOfDay(toDate(endDate.value, editorTimeZone), editorTimeZone), 1, editorTimeZone);
         } else {
-          nextStart = localDateTime(startDate.value, startTime.value, editorTimeZone);
-          nextEnd = localDateTime(endDate.value, endTime.value, editorTimeZone);
+          nextStart = localDateTime(startDate.value, startTime.value, editorTimeZone, overlapDisambiguation);
+          nextEnd = pointOccurrence ? nextStart : localDateTime(endDate.value, endTime.value, editorTimeZone, overlapDisambiguation);
         }
-        if (nextEnd.getTime() <= nextStart.getTime()) {
-          endDate.setCustomValidity("End must be after start");
+        if (pointOccurrence ? nextEnd.getTime() !== nextStart.getTime() : nextEnd.getTime() <= nextStart.getTime()) {
+          endDate.setCustomValidity(pointOccurrence ? "Point time must remain a single instant" : "End must be after start");
           endDate.reportValidity();
           return;
         }
@@ -383,15 +422,28 @@ export async function openEventEditor(
           recurrence = { rule, ...(!initial.duplicate && sourceItem?.recurrence?.exceptions ? { exceptions: sourceItem.recurrence.exceptions } : {}) };
         }
         const reminders: CalendarReminder[] = reminderMinutes.value === "" ? [] : [{ id: existingReminder?.id ?? `reminder-${crypto.randomUUID()}`, minutesBefore: Math.max(0, Number(reminderMinutes.value) || 0), channel: reminderChannel.value as CalendarReminder["channel"] }];
+        const startValue = allDayValue
+          ? startDate.value
+          : nextTemporal.kind === "zoned" || nextTemporal.kind === "floating"
+            ? plainDateTimeValue(startDate.value, startTime.value)
+            : nextStart.toISOString();
+        const endValue = pointOccurrence
+          ? startValue
+          : allDayValue
+            ? localDate(nextEnd, editorTimeZone)
+            : nextTemporal.kind === "zoned" || nextTemporal.kind === "floating"
+              ? plainDateTimeValue(endDate.value, endTime.value)
+              : nextEnd.toISOString();
         const result: EventEditorResult = {
           calendarId: calendar.value || defaultCalendarId,
           title: title.value.trim(),
           ...(description.value.trim() ? { description: description.value.trim() } : {}),
           ...(location.value.trim() ? { location: location.value.trim() } : {}),
-          start: allDayValue ? startDate.value : nextTemporal.kind === "zoned" || nextTemporal.kind === "floating" ? plainDateTimeValue(startDate.value, startTime.value) : nextStart.toISOString(),
-          end: allDayValue ? localDate(nextEnd, editorTimeZone) : nextTemporal.kind === "zoned" || nextTemporal.kind === "floating" ? plainDateTimeValue(endDate.value, endTime.value) : nextEnd.toISOString(),
+          start: startValue,
+          end: endValue,
           allDay: allDayValue,
           temporal: nextTemporal,
+          ...(pointOccurrence ? { temporalForm: "point" as const } : {}),
           kind: kind.value as CalendarItemKind,
           ...(reminders.length ? { reminders } : {}),
           ...(recurrence ? { recurrence } : {}),

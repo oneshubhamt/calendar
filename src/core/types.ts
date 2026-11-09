@@ -15,6 +15,8 @@ export type CalendarOwnership = string;
 
 export type EditPolicy = "full" | "schedule-only" | "readonly" | "generated";
 export type TemporalPrecision = "date" | "minute";
+/** Interval is the default. Point represents a true zero-duration instant and must use start === end. */
+export type CalendarTemporalForm = "interval" | "point";
 export type CalendarTemporalKind = "instant" | "zoned" | "floating" | "date";
 /** Host-extensible delivery channel. Built-ins use in-app, browser and external. */
 export type CalendarReminderChannel = string;
@@ -27,6 +29,8 @@ export interface CalendarReminder {
   readonly enabled?: boolean | undefined;
 }
 export type TemporalDisambiguation = "compatible" | "earlier" | "later" | "reject";
+/** Explicit interaction policy for duplicated local times during a fall-back transition. */
+export type CalendarOverlapDisambiguation = "earlier" | "later";
 
 export interface CalendarTemporalSpec {
   readonly kind: CalendarTemporalKind;
@@ -52,6 +56,8 @@ export interface CalendarDisplay {
 
 export type CalendarMetadataScalar = string | number | boolean | null;
 export type CalendarMetadataValue = CalendarMetadataScalar | readonly CalendarMetadataValue[] | { readonly [key: string]: CalendarMetadataValue };
+/** Opaque host/provider identity payload. Calendar validates JSON-like shape but assigns no semantics to its contents. */
+export type CalendarOpaqueIdentity = CalendarMetadataValue;
 
 /** Generic metadata envelope. Calendar mechanics assign no domain meaning to its keys. */
 export interface CalendarMetadata {
@@ -88,27 +94,34 @@ export interface CalendarRecurrence {
   readonly exceptions?: readonly RecurrenceException[] | undefined;
 }
 
-export interface CalendarItem {
-  readonly id: CalendarItemId;
+/** Shared event payload. CalendarItem and CalendarOccurrence add their own distinct identities. */
+export interface CalendarEventFields {
   readonly calendarId: CalendarId;
   readonly title: string;
   readonly description?: string;
   readonly location?: string;
+  /** Calendar items may use their declared temporal representation; resolved occurrences always use absolute instants. */
   readonly start: ISODateTime;
   readonly end: ISODateTime;
   readonly allDay?: boolean | undefined;
   readonly precision?: TemporalPrecision | undefined;
   readonly temporal?: CalendarTemporalSpec | undefined;
+  /** Generic temporal geometry. Omitted means interval; point means a true zero-duration instant. */
+  readonly temporalForm?: CalendarTemporalForm | undefined;
   readonly kind: CalendarItemKind;
   readonly ownership: CalendarOwnership;
   readonly editPolicy: EditPolicy;
   readonly seriesId?: CalendarSeriesId | undefined;
-  readonly recurrence?: CalendarRecurrence | undefined;
   readonly reminders?: readonly CalendarReminder[] | undefined;
   readonly display?: CalendarDisplay | undefined;
   readonly metadata?: CalendarMetadata | undefined;
   readonly createdAt?: ISODateTime | undefined;
   readonly updatedAt?: ISODateTime | undefined;
+}
+
+export interface CalendarItem extends CalendarEventFields {
+  readonly id: CalendarItemId;
+  readonly recurrence?: CalendarRecurrence | undefined;
 }
 
 export interface CalendarItemPatch {
@@ -121,6 +134,7 @@ export interface CalendarItemPatch {
   readonly allDay?: boolean | undefined;
   readonly precision?: TemporalPrecision | undefined;
   readonly temporal?: CalendarTemporalSpec | null | undefined;
+  readonly temporalForm?: CalendarTemporalForm | undefined;
   readonly kind?: CalendarItemKind;
   readonly editPolicy?: EditPolicy;
   readonly recurrence?: CalendarRecurrence | null;
@@ -129,11 +143,19 @@ export interface CalendarItemPatch {
   readonly metadata?: CalendarMetadata | null;
 }
 
-export interface CalendarOccurrence extends Omit<CalendarItem, "recurrence"> {
+export interface CalendarOccurrence extends CalendarEventFields {
+  /** Stable identity of this resolved occurrence. It must not change merely because a one-off occurrence moves. */
   readonly occurrenceId: OccurrenceId;
+  /** Stable identity of the authoritative source record represented by this occurrence. */
   readonly sourceItemId: CalendarItemId;
+  /**
+   * Calendar recurrence anchor used by Calendar-owned recurrence mechanics. Host occurrence projections
+   * must provide an absolute instant here and carry any host-local recurrence key in projectionIdentity.
+   */
   readonly originalStart: ISODateTime;
   readonly recurring: boolean;
+  /** Optional provider-owned occurrence/recurrence identity carried opaquely through Calendar. */
+  readonly projectionIdentity?: CalendarOpaqueIdentity | undefined;
 }
 
 export interface CalendarSource {
@@ -196,6 +218,39 @@ export interface CalendarProjectionProvider {
   subscribe?(listener: () => void): () => void;
 }
 
+/** Host projection boundary for already-expanded occurrences. Calendar never applies recurrence expansion to these values. start/end/originalStart must be absolute ISO date-times; host-local recurrence identity belongs in projectionIdentity. */
+export interface CalendarOccurrenceProjectionProvider {
+  readonly id: string;
+  projectOccurrences(range: CalendarRange): Promise<readonly CalendarOccurrence[]> | readonly CalendarOccurrence[];
+  /** Optional invalidation signal for authoritative host occurrence data. */
+  subscribe?(listener: () => void): () => void;
+}
+
+export type CalendarOccurrenceCommandPath = "default" | "trusted-host";
+
+/**
+ * Fine-grained occurrence authority. Omitted fields inherit Calendar's fail-closed item/source baseline.
+ * A provider using the default command path may only narrow that baseline. A trusted-host path may
+ * explicitly grant an operation because execution is routed to the host rather than Calendar storage.
+ */
+export interface CalendarOccurrenceCapabilities {
+  readonly commandPath?: CalendarOccurrenceCommandPath | undefined;
+  readonly canMove?: boolean | undefined;
+  readonly canMoveBetweenAllDayAndTimed?: boolean | undefined;
+  readonly canResizeStart?: boolean | undefined;
+  readonly canResizeEnd?: boolean | undefined;
+  readonly canOpen?: boolean | undefined;
+  readonly canEdit?: boolean | undefined;
+  readonly canDelete?: boolean | undefined;
+  readonly canChangeRecurrence?: boolean | undefined;
+  readonly canInvokeActions?: boolean | undefined;
+}
+
+/** Optional host/provider authority overlay for an occurrence. */
+export interface CalendarOccurrenceCapabilityProvider {
+  capabilities(occurrence: CalendarOccurrence): CalendarOccurrenceCapabilities | undefined;
+}
+
 export type SeriesEditScope = "this" | "this-and-following" | "all";
 export type CalendarSnapStrategy = "none" | "floor" | "round" | "ceil";
 export type CalendarCollisionMode = "allow" | "warn" | "prevent";
@@ -220,6 +275,10 @@ export interface CalendarHistoryState {
 export interface CalendarCommandContext {
   readonly now: ISODateTime;
   readonly occurrence?: CalendarOccurrence;
+  readonly occurrenceId?: OccurrenceId | undefined;
+  readonly sourceItemId?: CalendarItemId | undefined;
+  readonly projectionIdentity?: CalendarOpaqueIdentity | undefined;
+  readonly seriesScope?: SeriesEditScope | undefined;
   readonly timeZone?: string | undefined;
 }
 
@@ -252,6 +311,8 @@ export type CalendarCommand =
       readonly occurrence: CalendarOccurrence;
       readonly scope: SeriesEditScope;
     };
+
+export type CalendarOccurrenceCommand = Extract<CalendarCommand, { readonly occurrence: CalendarOccurrence }>;
 
 export interface CalendarCommandHandler {
   execute(command: CalendarCommand, context: CalendarCommandContext): Promise<void> | void;

@@ -38,7 +38,7 @@ test('agenda list grouping includes carry-in and multi-day occurrences on every 
   const carry=C.occurrenceFromItem(event({id:'carry',start:'2026-11-07T23:30:00.000Z',end:'2026-11-08T01:00:00.000Z'}));
   const allDay=C.occurrenceFromItem(event({id:'multi',start:'2026-11-08',end:'2026-11-10',allDay:true,precision:'date',temporal:{kind:'date'}}));
   const groups=C.groupAgendaByDay([carry,allDay],{start:'2026-11-08T00:00:00.000Z',end:'2026-11-10T00:00:00.000Z'},'UTC');
-  assert.deepEqual(groups.map(group=>[group.date,group.occurrences.map(row=>row.id)]),[
+  assert.deepEqual(groups.map(group=>[group.date,group.occurrences.map(row=>row.sourceItemId)]),[
     ['2026-11-08',['carry','multi']],
     ['2026-11-09',['multi']],
   ]);
@@ -122,7 +122,7 @@ test('range-bounded day grouping respects exact non-midnight range overlap',()=>
   const range={start:'2026-11-08T12:00:00.000Z',end:'2026-11-08T13:00:00.000Z'};
   const buckets=C.groupByDay([morning,crossing],'UTC',range);
   assert.deepEqual([...buckets.keys()],['2026-11-08']);
-  assert.deepEqual(buckets.get('2026-11-08')?.timed.map(item=>item.id),['crossing']);
+  assert.deepEqual(buckets.get('2026-11-08')?.timed.map(item=>item.sourceItemId),['crossing']);
   assert.equal(C.groupByDay([morning],'UTC',range).size,0);
 });
 
@@ -153,7 +153,7 @@ test('drag-and-drop placement preserves configured snapping and collision policy
     new Date('2026-11-08T11:00:00.000Z'),
     false,{mode:'prevent',includeAllDay:false},moving.occurrenceId,
   );
-  assert.deepEqual(conflicts.map(row=>row.occurrence.id),['occupied']);
+  assert.deepEqual(conflicts.map(row=>row.occurrence.sourceItemId),['occupied']);
   assert.deepEqual(C.placementCollisions([occupied],new Date('2026-11-08T10:00:00.000Z'),new Date('2026-11-08T11:00:00.000Z'),false,{mode:'allow'}),[]);
 });
 

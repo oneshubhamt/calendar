@@ -58,7 +58,7 @@ The supported RFC 5545-style model includes interval/count/until, weekday and or
 
 ## Generic view
 
-`view/` supplies month, week, day and year rendering plus day/week/month/rolling-30-day agenda lists, month-overflow expansion, event details/editor, dual-edge timed resizing, cross-day drag/drop, range selection, touch long-press, auto-scroll, keyboard editing/navigation, jump-to-date, accessibility announcements/dialogs and narrow-screen behavior. Agenda grouping is overlap-aware so carry-in and multi-day events remain visible inside shorter list ranges.
+`view/` supplies month, week, day and year rendering plus day/week/month/rolling-30-day agenda lists, month-overflow expansion, event details/editor, dual-edge timed resizing, cross-day drag/drop, range selection, touch long-press, auto-scroll, keyboard editing/navigation, jump-to-date, accessibility announcements/dialogs and narrow-screen behavior. Agenda grouping is overlap-aware so carry-in and multi-day events remain visible inside shorter list ranges. Calendar-owned toolbar/date-navigation/view-switch/source/create chrome can be suppressed independently for embedded hosts. Optional inclusive local-date navigation bounds clamp anchors, bound host projection/collision queries and fail closed on create/move/resize placement outside the permitted dates while leaving surrounding view geometry non-interactive.
 
 The view has no built-in planned/actual, deadline, milestone, Study/Revision/Practice, category or history semantics. It never interprets arbitrary `metadata` keys; optional features/adapters own such meaning.
 
@@ -71,7 +71,9 @@ Hosts can configure:
 - handled `handleCreate`, `handleOpen`, `handleEdit` callbacks to replace built-in UI;
 - source action ports;
 - UI extensions;
-- item/source icon, color, text color and safe CSS class names.
+- item/source icon, color, text color and safe CSS class names;
+- independently visible Calendar chrome through `chrome`;
+- optional inclusive `navigationBounds` for embedded/bounded calendar surfaces.
 
 ## Optional features
 
@@ -89,7 +91,7 @@ A consumer that does not import this feature receives none of those semantics or
 
 ## Persistence
 
-`CalendarSnapshotProvider` is the minimal read/query boundary; the engine does not require mutation methods. `CalendarProjectionProvider` may expose an invalidation subscription so host-owned projected data can refresh the UI without duplicating persistence. Combined local + projected data is integrity-checked before recurrence expansion, so duplicate item identities and unknown source references fail closed. `CalendarRepository` adds mutable item operations, while source-management capabilities remain explicit. Memory and IndexedDB repositories share canonical patch/integrity behavior. Persisted state fails closed on malformed sources/items, invalid chronology/temporal/recurrence/reminder definitions, duplicate identities, and non-JSON-like/oversized/cyclic metadata.
+`CalendarSnapshotProvider` is the minimal read/query boundary; the engine does not require mutation methods. `CalendarProjectionProvider` may expose host-owned `CalendarItem` values which Calendar recurrence-expands, while `CalendarOccurrenceProjectionProvider` supplies already-expanded `CalendarOccurrence` values for the exact requested range. Either projection boundary may expose an invalidation subscription so host-owned data can refresh the UI without duplicating persistence. Item projections are integrity-checked before recurrence expansion; occurrence projections are validated separately for source, source-item, occurrence-identity and chronology integrity and are never recurrence-expanded again. `CalendarRepository` adds mutable item operations, while source-management capabilities remain explicit. Memory and IndexedDB repositories share canonical patch/integrity behavior. Persisted state fails closed on malformed sources/items, invalid chronology/temporal/recurrence/reminder definitions, duplicate identities, and non-JSON-like/oversized/cyclic metadata.
 
 IndexedDB is optional. A host such as a native/Rust application may project a read-only snapshot into the engine and route commands through its own adapter instead of duplicating authoritative data in browser storage.
 
@@ -112,49 +114,73 @@ The generic architecture therefore distinguishes two projection levels:
 
 An occurrence projection must preserve stable source-item identity and stable host occurrence identity. Calendar may lay out, render, move, resize, select and navigate those occurrences, but it must not reinterpret their recurrence or manufacture host-domain state.
 
+The implemented generic contract is:
+
+```ts
+interface CalendarOccurrenceProjectionProvider {
+  readonly id: string;
+  projectOccurrences(range: CalendarRange): Promise<readonly CalendarOccurrence[]> | readonly CalendarOccurrence[];
+  subscribe?(listener: () => void): () => void;
+}
+```
+
+`CalendarEngine` accepts these providers independently of existing item projections: `new CalendarEngine(repository, itemProjections?, occurrenceProjections?)`. Projected occurrences use their globally stable `occurrenceId` for Calendar interaction identity, `sourceItemId` for the authoritative source-record identity, and optional `projectionIdentity` for any additional provider-owned recurrence/occurrence key. They do not carry a redundant item `id`. Host-expanded `start`, `end` and `originalStart` must be absolute ISO date-times; Calendar canonicalizes offsets before integrity/range processing and fails closed on date-only or floating occurrence boundaries. `projectionIdentity` is bounded JSON-like data: Calendar validates and carries it unchanged but never interprets its structure. One-off Calendar-owned occurrences use `item:<sourceItemId>` identity, so moving them does not change interaction identity; recurring identities remain anchored to their recurrence identity.
+
 ### Per-occurrence authority
 
-The coarse item-level `EditPolicy` remains useful as a fail-closed default, but embedded hosts may need finer interaction authority for each occurrence. The generic capability contract may independently govern operations such as:
+The coarse item-level `EditPolicy` remains the fail-closed default, while `CalendarOccurrenceCapabilityProvider` can narrow authority per occurrence:
 
-- move;
-- resize start;
-- resize end;
-- edit;
-- delete/cancel;
-- complete or otherwise invoke a host action;
-- change recurrence;
-- move between all-day and timed placement.
+```ts
+interface CalendarOccurrenceCapabilities {
+  commandPath?: "default" | "trusted-host";
+  canMove?: boolean;
+  canMoveBetweenAllDayAndTimed?: boolean;
+  canResizeStart?: boolean;
+  canResizeEnd?: boolean;
+  canOpen?: boolean;
+  canEdit?: boolean;
+  canDelete?: boolean;
+  canChangeRecurrence?: boolean;
+  canInvokeActions?: boolean;
+}
 
-Calendar must never infer these permissions from semantic kinds such as task, payment or habit. A host capability provider supplies them explicitly, and command execution revalidates them.
+interface CalendarOccurrenceCapabilityProvider {
+  capabilities(occurrence: CalendarOccurrence): CalendarOccurrenceCapabilities | undefined;
+}
+```
+
+With the default command path, provider values can only narrow the authority already granted by `editPolicy` and source `readOnly`. A `trusted-host` result is the sole generic widening mechanism: each widened operation must be explicitly `true`, and Calendar routes its command to the separately supplied trusted host command handler rather than its repository command path. Missing or malformed capability values fail closed.
+
+The view independently applies move, all-day/timed conversion, start resize, end resize, open, edit, delete/cancel, recurrence-change and inline-action authority. Drag handles, keyboard shortcuts and context/detail actions use the resolved capabilities, and command execution resolves them again immediately before calling the handler. Editor saves and add-on patches use the same temporal-mutation classifier: equal endpoint deltas require move authority, independent endpoint changes require the corresponding resize authority, and all-day/timed transitions additionally require conversion authority. Schedule-only base records retain schedule editing without semantic-field authority; `canEdit` is exclusively semantic edit authority while move/resize/conversion use their dedicated capabilities. An explicit `trusted-host` + `canEdit` result may widen semantic editing, and the editor consumes that resolved decision rather than independently overriding it from `EditPolicy`. Calendar never infers permissions from semantic kinds.
 
 ### Temporal presentation semantics
 
-Not every temporal object is a duration-bearing appointment. Calendar should support generic presentation/layout semantics for:
+Not every temporal object is a duration-bearing appointment. `CalendarItem.temporalForm` is a generic geometry contract: omitted/`interval` values retain ordinary start/end interval behavior, while `point` represents a true zero-duration instant and therefore requires `start === end`. Point values cannot be date-only/all-day.
 
-- duration blocks;
-- point/deadline markers;
+The view maps those temporal forms into generic presentation/layout semantics:
+
+- interval duration blocks;
+- point markers;
 - all-day entries;
-- multi-day spans;
-- optional background/range annotations.
+- multi-day spans.
 
-A point/deadline does not acquire an invented duration merely to fit time-grid geometry. Hosts may choose how such values are rendered while Calendar retains responsibility for collision geometry and accessible navigation.
+Point markers are range-tested by their instant, recurse without acquiring duration, participate in month/year/agenda grouping, and receive zero-duration time-grid geometry. Multiple markers at the same instant and markers inside duration blocks are assigned collision columns for visual legibility, while scheduling collision policy does not treat a point as occupying minutes. Point markers can edit, duplicate or move their single instant while preserving `start === end`; the editor does not expose an authoritative end field, point duplication preserves `temporalForm: "point"`, and resize/all-day conversion remain mechanically unavailable. Calendar retains layout, interaction and accessibility ownership without assigning any host meaning such as deadline or payment.
 
 ### Host presentation and inline actions
 
-Embedded applications may supply structured occurrence presentation without taking over layout. Generic presentation slots may include a leading affordance/icon, title, subtitle, trailing value and badges, plus detail rows and safe styling metadata.
+Embedded applications may supply structured occurrence presentation without taking over layout. `CalendarOccurrencePresentation` supports a safe text `icon`, `leading`, `title`, `subtitle`, `trailing`, `badges`, detail rows, agenda metadata and an optional complete occurrence-level `accessibleLabel`. Slot content is text-only (`string` or `CalendarPresentationText`); Calendar renders it through DOM text APIs and never accepts arbitrary host HTML or DOM ownership. The structured icon overrides `CalendarDisplay.icon` for that occurrence presentation. Multiple badges compose, while later extensions may override earlier singular slots. Dataset decoration accepts only safe camelCase identifier keys with string values; malformed/reserved runtime keys are ignored before reaching `HTMLElement.dataset`.
 
-Hosts may also contribute explicit inline actions. Calendar treats each action as an opaque command identifier with label/state/availability; semantic meaning and persistence remain entirely host-owned.
+The existing `CalendarSourceActionPort` remains the single host action boundary. `CalendarSourceAction` keeps its stable opaque `id` and `label` and may expose a safe text `icon`, `inline`, `accessibleLabel`, `state`, `pressed`, `enabled`, `pending`, `primary`, `danger` and open-ended `kind` presentation metadata. Existing providers remain menu/detail-only unless they explicitly opt an action into `inline: true`. Duplicate or malformed action identities fail closed.
+
+Calendar owns the occurrence card structure: geometry is non-interactive, a dedicated primary button owns open/keyboard behavior, and independent native action buttons own inline commands. Inline pointer/click/keyboard handling is isolated from event open/drag/resize. Action execution is revalidated against the current provider state and `canInvokeActions`, then uses the same occurrence-scoped pending/duplicate-suppression/refresh/error lifecycle as other host commands. Semantic meaning and persistence remain entirely host-owned.
+
+Presentation hooks are isolated from Calendar failure: a failing `presentOccurrence` contribution is ignored while later extensions still render. `CalendarUiExtension.styles` is a cosmetic-only CSS boundary scoped beneath `.dc-root`; geometry declarations, malformed scope-breaking selectors and `!important` fail closed. Presentation data is emitted only in the `data-host-*` namespace and host class names cannot reuse Calendar `dc-*`/`is-*` namespaces. Add-on CSS is scoped to the add-on wrapper, accepts only flat rules plus one conservative `@media` level, and rejects `!important`. Calendar-owned geometry is not a host CSS API.
 
 ### Command routing and optimistic safety
 
-For host-owned occurrences, drag/drop, resizing, keyboard scheduling and inline actions route through a host command handler. Command context carries enough stable identity to distinguish:
+For host-owned occurrences, drag/drop, resizing, keyboard scheduling and other Calendar commands may route through the explicit `trustedHostCommandHandler`. `CalendarCommandContext` carries stable generic identity: `occurrenceId`, `sourceItemId`, optional opaque `projectionIdentity`, and requested `seriesScope`, in addition to the occurrence itself.
 
-- source item;
-- projected occurrence;
-- recurrence/nominal occurrence identity where supplied by the host;
-- requested edit scope.
-
-The host remains responsible for translating the command into its domain operation. Calendar must handle pending state, surface errors without silently mutating its projection, and refresh only from the authoritative host result. Concurrent host changes must fail closed rather than be overwritten.
+`CalendarCommandLifecycle` keeps occurrence-scoped commands pending until execution and the attempted authoritative refresh finish, records the pending operation (`move`, edge resize, edit or action) while suppressing concurrent commands for the same occurrence, preserves pending state across host invalidations/re-renders, and surfaces failures through the view's accessible status channel. Tentative drag/resize geometry is stored independently of DOM nodes and is reconstructed across intermediate re-renders. Lifecycle outcomes distinguish `rejected` from `committed-refresh-failed`; once the host mutation has committed, a reprojection failure is never represented as a command rejection that callers might safely retry. `CalendarCommandStaleError` gives trusted hosts a generic explicit stale/revision rejection signal; Calendar never performs fallback persistence for trusted-host commands.
 
 ### Embedded mode and navigation bounds
 
@@ -164,7 +190,9 @@ Hosts may also provide navigation bounds. Calendar treats these as generic tempo
 
 ### Multi-zone display
 
-The primary calendar zone continues to govern geometry. An optional secondary time-zone scale may be displayed for travel, distributed work or other host use cases without changing occurrence identity or scheduling semantics.
+The primary calendar zone continues to govern geometry, visible-range calculation, grouping, projection queries, drag/drop, resizing and command context. `CalendarUiOptions.secondaryTimeZone` may optionally add one validated IANA reference scale to day/week views only. It is presentation, not a second temporal model.
+
+A shared civil-timeline model is used by primary layout and wall-clock interaction. An event at 03:00 therefore remains aligned with the 03:00 grid line on a spring-forward day; nonexistent wall times are explicitly non-targetable instead of silently resolving forward, and repeated fall-back wall times use `CalendarUiOptions.dstOverlapDisambiguation` (`earlier` by default, or `later`). The event editor uses the same resolution rule. Secondary hour labels resolve those primary civil hours against actual IANA rules: half-hour offsets are preserved, gaps are explicit, overlaps expose both reference values, civil-date rollover is shown as `-1d`/`+1d`, and week labels retain distinct converted values when offsets differ across visible days. The additional axis remains additive chrome; occurrence identity, projection and command semantics continue to use only the primary zone.
 
 These capabilities are intentionally generic. They enable hosts with authoritative temporal domains without adding journeys, tasks, payments, habits, study sessions or any other application concept to Calendar core.
 
@@ -186,7 +214,7 @@ Scheduling interactions preserve one canonical temporal representation: all-day 
 
 Explicit package subpaths allow hosts to import only the layers they need. `demo/generic.html` proves bare core + view with non-Director travel/notes data and no optional personal/planning/storage/interoperability dependency; `demo/index.html` separately demonstrates explicit personal + planning + Director opt-ins. Clean builds remove `dist/` first so deleted modules cannot survive in release archives.
 
-Current package: `@director/calendar` **1.0.0-rc.9**. Generic core contract: **10**. Interoperability contract: **2**.
+Current package: `@director/calendar` **1.1.0**. Generic core contract: **11**. Interoperability contract: **2**. The published package contains production `dist/`, canonical docs and README only; repository demos, fixtures, tests and TypeScript sources are not part of the npm surface.
 
 ## Engineering contract
 

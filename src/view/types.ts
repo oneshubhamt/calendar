@@ -9,12 +9,15 @@ import type {
   CalendarItemKind,
   CalendarItemPatch,
   CalendarOccurrence,
+  CalendarOccurrenceCapabilityProvider,
+  CalendarOverlapDisambiguation,
   CalendarOwnership,
   CalendarRange,
   CalendarRecurrence,
   CalendarReminder,
   CalendarReminderChannel,
   CalendarSource,
+  CalendarTemporalForm,
   CalendarTemporalSpec,
   CalendarView,
   EditPolicy,
@@ -30,12 +33,23 @@ export interface CalendarSelection {
   readonly allDay: boolean;
 }
 
-/** Host-defined source action. `kind` is presentation metadata only and is intentionally open-ended. */
+/** Host-defined occurrence action. `kind` and `state` are presentation metadata only and intentionally open-ended. */
 export interface CalendarSourceAction {
+  /** Stable action identity within one occurrence. Duplicate IDs fail closed. */
   readonly id: string;
   readonly label: string;
+  /** Optional safe text icon/glyph rendered by Calendar; arbitrary host DOM/HTML is never accepted. */
+  readonly icon?: string;
   readonly kind?: string;
   readonly primary?: boolean;
+  readonly danger?: boolean;
+  /** Opts this action into compact in-card rendering; existing actions remain menu/detail-only by default. */
+  readonly inline?: boolean;
+  readonly accessibleLabel?: string;
+  readonly state?: string;
+  readonly pressed?: boolean;
+  readonly enabled?: boolean;
+  readonly pending?: boolean;
 }
 
 export interface CalendarSourceActionPort {
@@ -77,6 +91,7 @@ export interface CalendarCreateDraft {
   readonly allDay?: boolean;
   readonly precision?: TemporalPrecision;
   readonly temporal?: CalendarTemporalSpec;
+  readonly temporalForm?: CalendarTemporalForm;
   readonly kind: CalendarItemKind;
   readonly ownership?: CalendarOwnership;
   readonly editPolicy?: EditPolicy;
@@ -98,12 +113,36 @@ export type CalendarItemFactory = (input: CalendarItemFactoryInput) => CalendarI
 
 export interface CalendarDetailRow { readonly label: string; readonly value: string; }
 
+/** Safe text-only content for a Calendar-owned presentation slot. Calendar never accepts host HTML/DOM here. */
+export interface CalendarPresentationText {
+  readonly text: string;
+  readonly accessibleLabel?: string;
+}
+
+export type CalendarPresentationContent = string | CalendarPresentationText;
+
+export interface CalendarPresentationBadge {
+  readonly label: string;
+  readonly accessibleLabel?: string;
+}
+
 export interface CalendarOccurrencePresentation {
+  /** Host class tokens; Calendar-reserved `dc-*` and `is-*` namespaces fail closed. */
   readonly classNames?: readonly string[];
+  /** Host decoration data. CamelCase keys are emitted only in the dedicated `data-host-*` namespace; malformed runtime keys fail closed. */
   readonly data?: Readonly<Record<string, string>>;
   readonly agendaMeta?: string;
   readonly agendaOrder?: number;
   readonly detailRows?: readonly CalendarDetailRow[];
+  /** Complete accessible label override for the occurrence's primary Calendar-owned interaction target. */
+  readonly accessibleLabel?: string;
+  /** Optional safe text icon/glyph. Overrides CalendarDisplay.icon for this occurrence presentation. */
+  readonly icon?: CalendarPresentationContent;
+  readonly leading?: CalendarPresentationContent;
+  readonly title?: CalendarPresentationContent;
+  readonly subtitle?: CalendarPresentationContent;
+  readonly trailing?: CalendarPresentationContent;
+  readonly badges?: readonly CalendarPresentationBadge[];
 }
 
 export interface CalendarAgendaDayPresentation { readonly summary?: string; }
@@ -117,6 +156,7 @@ export interface CalendarUiExtensionContext {
 
 /** Optional host/feature presentation extension. The calendar view assigns no domain meaning to extension data. */
 export interface CalendarUiExtension {
+  /** Cosmetic-only CSS for extension-provided presentation classes. Geometry declarations and !important fail closed. */
   readonly styles?: string;
   prepare?(context: CalendarUiExtensionContext): void;
   presentOccurrence?(occurrence: CalendarOccurrence): CalendarOccurrencePresentation | undefined;
@@ -143,6 +183,8 @@ export interface CalendarUiAddonContext {
   readonly occurrences: readonly CalendarOccurrence[];
   readonly kindOptions: readonly CalendarKindOption[];
   canManageSources(): boolean;
+  /** Canonical Calendar authority check for add-ons that expose move affordances. */
+  canMoveOccurrence(occurrence: CalendarOccurrence): boolean;
   refresh(): Promise<void>;
   announce(message: string): void;
   createSource(source: CalendarSource): Promise<void>;
@@ -154,6 +196,7 @@ export interface CalendarUiAddonContext {
 /** Optional DOM feature. Base view knows only these generic contribution hooks. */
 export interface CalendarUiAddon {
   readonly id: string;
+  /** CSS for add-on-owned DOM. !important is rejected; targeting Calendar-owned geometry is outside the supported contract. */
   readonly styles?: string;
   filterOccurrence?(occurrence: CalendarOccurrence, source: CalendarSource | undefined): boolean;
   mountToolbar?(container: HTMLElement, context: CalendarUiAddonContext): void;
@@ -165,15 +208,42 @@ export interface CalendarUiAddon {
   destroy?(): void;
 }
 
+export interface CalendarUiChromeOptions {
+  /** Show Calendar-owned toolbar chrome. When false, its child controls are not mounted. */
+  readonly toolbar?: boolean;
+  readonly dateNavigation?: boolean;
+  readonly viewSwitcher?: boolean;
+  readonly sourceControls?: boolean;
+  readonly createControls?: boolean;
+}
+
+/** Inclusive local calendar-date limits for Calendar navigation and placement. */
+export interface CalendarNavigationBounds {
+  readonly min?: ISODate;
+  readonly max?: ISODate;
+}
+
 export interface CalendarUiOptions {
   readonly locale?: string;
   readonly timeZone?: string | undefined;
+  /** Optional reference IANA zone shown as a second time scale in day/week views only. Primary geometry remains unchanged. */
+  readonly secondaryTimeZone?: string | undefined;
+  /** Explicitly chooses which real instant a repeated fall-back wall time targets. Spring-forward gaps remain non-targetable. */
+  readonly dstOverlapDisambiguation?: CalendarOverlapDisambiguation | undefined;
   readonly defaultCalendarId?: CalendarId;
   readonly commandHandler?: CalendarCommandHandler;
+  /** Fine-grained per-occurrence authority overlay. Default-path results may only narrow Calendar policy. */
+  readonly occurrenceCapabilities?: CalendarOccurrenceCapabilityProvider;
+  /** Explicit trusted host command path for occurrences whose capability result selects `trusted-host`. */
+  readonly trustedHostCommandHandler?: CalendarCommandHandler;
   readonly weekStartsOn?: Weekday | undefined;
   readonly initialView?: CalendarView;
   readonly initialAgendaSpan?: CalendarAgendaSpan;
   readonly initialDate?: ISODateTime;
+  /** Calendar-owned chrome is independently suppressible for embedded hosts; every control defaults to visible. */
+  readonly chrome?: CalendarUiChromeOptions;
+  /** Inclusive local-date bounds. Programmatic navigation is clamped and placements outside the range fail closed. */
+  readonly navigationBounds?: CalendarNavigationBounds;
   readonly slotMinutes?: 5 | 10 | 15 | 20 | 30 | 60;
   readonly snapPolicy?: import("../core/types.js").CalendarSnapPolicy;
   readonly collisionPolicy?: import("../core/types.js").CalendarCollisionPolicy;
@@ -194,6 +264,7 @@ export interface CalendarUiOptions {
   readonly allowDrag?: boolean;
   readonly allowResize?: boolean;
   readonly showNowIndicator?: boolean;
+  /** Host occurrence actions; actions opt into compact card rendering with `inline: true`. */
   readonly sourceActions?: CalendarSourceActionPort;
   readonly callbacks?: CalendarUiCallbacks;
 }

@@ -1,9 +1,11 @@
-import type { CalendarItem, CalendarItemId, CalendarItemPatch, CalendarRepository, CalendarSnapshot, CalendarSource, CalendarSourcePatch } from "./types.js";
+import type { CalendarEventFields, CalendarItem, CalendarItemId, CalendarItemPatch, CalendarOccurrence, CalendarRepository, CalendarSnapshot, CalendarSource, CalendarSourcePatch } from "./types.js";
 import { occurrenceFromItem, validateRecurrenceRule } from "./recurrence.js";
 import { parsePlainDate } from "./temporal.js";
+import { hasExplicitOffset } from "./time.js";
 
 const EDIT_POLICIES = new Set(["full", "schedule-only", "readonly", "generated"]);
 const TEMPORAL_KINDS = new Set(["instant", "zoned", "floating", "date"]);
+const TEMPORAL_FORMS = new Set(["interval", "point"]);
 
 function record(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
@@ -21,7 +23,7 @@ const METADATA_MAX_STRING_LENGTH = 262_144;
 const METADATA_MAX_KEY_LENGTH = 512;
 
 /** Runtime counterpart of CalendarMetadata: bounded, acyclic JSON-like data. */
-function assertMetadata(value: unknown, label: string): void {
+function assertJsonLike(value: unknown, label: string, requireObject: boolean, allowUndefinedProperties: boolean): void {
   const seen = new WeakSet<object>();
   let nodes = 0;
   const visit = (current: unknown, depth: number, path: string, allowUndefined: boolean): void => {
@@ -53,12 +55,16 @@ function assertMetadata(value: unknown, label: string): void {
     if (prototype !== Object.prototype && prototype !== null) throw new Error(`${path} must be a plain object`);
     for (const [key, entry] of Object.entries(current as Record<string, unknown>)) {
       if (key.length > METADATA_MAX_KEY_LENGTH) throw new Error(`${path} contains an oversized key`);
-      visit(entry, depth + 1, `${path}.${key}`, true);
+      visit(entry, depth + 1, `${path}.${key}`, allowUndefinedProperties);
     }
     seen.delete(current);
   };
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
-  visit(value, 0, label, true);
+  if (requireObject && (!value || typeof value !== "object" || Array.isArray(value))) throw new Error(`${label} must be an object`);
+  visit(value, 0, label, false);
+}
+
+function assertMetadata(value: unknown, label: string): void {
+  assertJsonLike(value, label, true, true);
 }
 
 function assertSourceIntegrity(source: CalendarSource): void {
@@ -76,56 +82,37 @@ function assertSourceIntegrity(source: CalendarSource): void {
 function assertItemIntegrity(item: CalendarItem): void {
   const raw = record(item, "Calendar item");
   const id = requiredText(raw.id, "Calendar item id");
-  requiredText(raw.calendarId, `Calendar item ${id} calendar id`);
-  requiredText(raw.title, `Calendar item ${id} title`);
-  requiredText(raw.start, `Calendar item ${id} start`);
-  requiredText(raw.end, `Calendar item ${id} end`);
-  const kind = requiredText(raw.kind, `Calendar item ${id} kind`);
-  const ownership = requiredText(raw.ownership, `Calendar item ${id} ownership`);
-  if (kind.length > 120) throw new Error(`Calendar item ${id} kind is too long`);
-  if (ownership.length > 120) throw new Error(`Calendar item ${id} ownership is too long`);
-  if (!EDIT_POLICIES.has(String(raw.editPolicy))) throw new Error(`Calendar item ${id} edit policy is invalid`);
-  if (raw.metadata !== undefined) assertMetadata(raw.metadata, `Calendar item ${id} metadata`);
-  if (item.temporal) {
-    if (!TEMPORAL_KINDS.has(item.temporal.kind)) throw new Error(`Calendar item ${id} temporal kind is invalid`);
-    if (item.temporal.kind === "zoned" && !item.temporal.timeZone) throw new Error(`Calendar item ${id} zoned time requires a time zone`);
-  }
+  const label = `Calendar item ${id}`;
+  assertEventFieldsIntegrity(item, raw, label);
+  const point = item.temporalForm === "point";
   if (item.temporal?.kind === "date" || item.allDay || item.precision === "date") {
     if (/^\d{4}-\d{2}-\d{2}$/.test(item.start) && /^\d{4}-\d{2}-\d{2}$/.test(item.end)) {
       const start = parsePlainDate(item.start);
       const end = parsePlainDate(item.end);
       const startDay = Date.UTC(start.year, start.month - 1, start.day);
       const endDay = Date.UTC(end.year, end.month - 1, end.day);
-      if (endDay <= startDay) throw new Error(`Calendar item ${id} must end after it starts`);
+      if (endDay <= startDay) throw new Error(`${label} must end after it starts`);
     } else {
       const startMs = Date.parse(item.start), endMs = Date.parse(item.end);
-      if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) throw new Error(`Calendar item ${id} must end after it starts`);
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) throw new Error(`${label} must end after it starts`);
     }
   } else {
     occurrenceFromItem(item, { timeZone: item.temporal?.timeZone ?? "UTC" });
   }
+  if (point && item.temporal?.kind === "date") throw new Error(`${label} point temporal form cannot be date-only or all-day`);
   if (item.recurrence) {
     validateRecurrenceRule(item.recurrence.rule);
     const exceptionIds = new Set<string>();
     for (const exception of item.recurrence.exceptions ?? []) {
-      requiredText(exception.originalStart, `Calendar item ${id} recurrence exception originalStart`);
-      if (exceptionIds.has(exception.originalStart)) throw new Error(`Calendar item ${id} has duplicate recurrence exception ${exception.originalStart}`);
+      requiredText(exception.originalStart, `${label} recurrence exception originalStart`);
+      if (exceptionIds.has(exception.originalStart)) throw new Error(`${label} has duplicate recurrence exception ${exception.originalStart}`);
       exceptionIds.add(exception.originalStart);
-      if (exception.cancelled && exception.replacement) throw new Error(`Calendar item ${id} recurrence exception cannot be cancelled and replaced`);
+      if (exception.cancelled && exception.replacement) throw new Error(`${label} recurrence exception cannot be cancelled and replaced`);
       if (exception.replacement) {
         const replacement = { ...applyCalendarItemPatch(item, exception.replacement), recurrence: undefined } as CalendarItem;
         assertItemIntegrity(replacement);
       }
     }
-  }
-  const reminderIds = new Set<string>();
-  for (const reminder of item.reminders ?? []) {
-    requiredText(reminder.id, `Calendar item ${id} reminder id`);
-    if (reminderIds.has(reminder.id)) throw new Error(`Calendar item ${id} has duplicate reminder ${reminder.id}`);
-    reminderIds.add(reminder.id);
-    if (!Number.isFinite(reminder.minutesBefore) || reminder.minutesBefore < 0) throw new Error(`Calendar item ${id} reminder offset is invalid`);
-    if (typeof reminder.channel !== "string" || !reminder.channel.trim() || reminder.channel.length > 120) throw new Error(`Calendar item ${id} reminder channel is invalid`);
-    if (reminder.enabled !== undefined && typeof reminder.enabled !== "boolean") throw new Error(`Calendar item ${id} reminder enabled flag is invalid`);
   }
 }
 
@@ -143,6 +130,80 @@ export function assertCalendarStateIntegrity(sources: readonly CalendarSource[],
     if (itemIds.has(item.id)) throw new Error(`Duplicate calendar item: ${item.id}`);
     itemIds.add(item.id);
     if (!sourceIds.has(item.calendarId)) throw new Error(`Unknown calendar source: ${item.calendarId}`);
+  }
+}
+
+
+/** Validate the event payload shared by items and resolved occurrences. */
+function assertEventFieldsIntegrity(value: CalendarEventFields, raw: Record<string, unknown>, label: string): void {
+  requiredText(raw.calendarId, `${label} calendar id`);
+  requiredText(raw.title, `${label} title`);
+  requiredText(raw.start, `${label} start`);
+  requiredText(raw.end, `${label} end`);
+  const kind = requiredText(raw.kind, `${label} kind`);
+  const ownership = requiredText(raw.ownership, `${label} ownership`);
+  if (kind.length > 120) throw new Error(`${label} kind is too long`);
+  if (ownership.length > 120) throw new Error(`${label} ownership is too long`);
+  if (!EDIT_POLICIES.has(String(raw.editPolicy))) throw new Error(`${label} edit policy is invalid`);
+  if (raw.metadata !== undefined) assertMetadata(raw.metadata, `${label} metadata`);
+  if (raw.temporalForm !== undefined && !TEMPORAL_FORMS.has(String(raw.temporalForm))) throw new Error(`${label} temporal form is invalid`);
+  if (value.temporal) {
+    if (!TEMPORAL_KINDS.has(value.temporal.kind)) throw new Error(`${label} temporal kind is invalid`);
+    if (value.temporal.kind === "zoned" && !value.temporal.timeZone) throw new Error(`${label} zoned time requires a time zone`);
+  }
+  if (value.temporalForm === "point" && (value.temporal?.kind === "date" || value.allDay || value.precision === "date")) {
+    throw new Error(`${label} point temporal form cannot be date-only or all-day`);
+  }
+  const reminderIds = new Set<string>();
+  for (const reminder of value.reminders ?? []) {
+    requiredText(reminder.id, `${label} reminder id`);
+    if (reminderIds.has(reminder.id)) throw new Error(`${label} has duplicate reminder ${reminder.id}`);
+    reminderIds.add(reminder.id);
+    if (!Number.isFinite(reminder.minutesBefore) || reminder.minutesBefore < 0) throw new Error(`${label} reminder offset is invalid`);
+    if (typeof reminder.channel !== "string" || !reminder.channel.trim() || reminder.channel.length > 120) throw new Error(`${label} reminder channel is invalid`);
+    if (reminder.enabled !== undefined && typeof reminder.enabled !== "boolean") throw new Error(`${label} reminder enabled flag is invalid`);
+  }
+}
+
+function assertAbsoluteInstant(value: unknown, label: string): string {
+  const text = requiredText(value, label);
+  if (!hasExplicitOffset(text) || !Number.isFinite(Date.parse(text))) throw new Error(`${label} must be an absolute ISO date-time`);
+  return text;
+}
+
+/** Validate already-resolved occurrence identity/chronology without requiring a persisted backing CalendarItem. */
+export function assertCalendarOccurrenceIntegrity(sources: readonly CalendarSource[], occurrences: readonly CalendarOccurrence[]): void {
+  if (!Array.isArray(sources) || !Array.isArray(occurrences)) throw new Error("Calendar occurrence collections are invalid");
+  const sourceIds = new Set<string>();
+  for (const source of sources) {
+    assertSourceIntegrity(source);
+    if (sourceIds.has(source.id)) throw new Error(`Duplicate calendar source: ${source.id}`);
+    sourceIds.add(source.id);
+  }
+  const occurrenceIds = new Set<string>();
+  for (const occurrence of occurrences) {
+    const raw = record(occurrence, "Calendar occurrence");
+    const occurrenceId = requiredText(raw.occurrenceId, "Calendar occurrence id");
+    const label = `Calendar occurrence ${occurrenceId}`;
+    if (raw.id !== undefined) throw new Error(`${label} must use sourceItemId rather than a redundant item id`);
+    requiredText(raw.sourceItemId, `${label} source item id`);
+    const start = assertAbsoluteInstant(raw.start, `${label} start`);
+    const end = assertAbsoluteInstant(raw.end, `${label} end`);
+    assertAbsoluteInstant(raw.originalStart, `${label} original start`);
+    if (raw.recurrence !== undefined) throw new Error(`${label} must already be recurrence-expanded`);
+    if (typeof raw.recurring !== "boolean") throw new Error(`${label} recurring flag is invalid`);
+    if (raw.projectionIdentity !== undefined) assertJsonLike(raw.projectionIdentity, `${label} projection identity`, false, false);
+    assertEventFieldsIntegrity(occurrence, raw, label);
+    const startMs = Date.parse(start);
+    const endMs = Date.parse(end);
+    if (occurrence.temporalForm === "point") {
+      if (startMs !== endMs) throw new Error(`${label} point temporal form requires start and end to be identical`);
+    } else if (endMs <= startMs) {
+      throw new Error(`${label} must end after it starts`);
+    }
+    if (!sourceIds.has(occurrence.calendarId)) throw new Error(`Unknown calendar source: ${occurrence.calendarId}`);
+    if (occurrenceIds.has(occurrenceId)) throw new Error(`Duplicate calendar occurrence: ${occurrenceId}`);
+    occurrenceIds.add(occurrenceId);
   }
 }
 
@@ -165,6 +226,7 @@ export function applyCalendarItemPatch(item: CalendarItem, patch: CalendarItemPa
     ...(patch.allDay !== undefined ? { allDay: patch.allDay } : {}),
     ...(patch.precision !== undefined ? { precision: patch.precision } : {}),
     ...(temporal !== undefined ? { temporal } : { temporal: undefined }),
+    ...(patch.temporalForm !== undefined ? { temporalForm: patch.temporalForm } : {}),
     ...(patch.kind !== undefined ? { kind: patch.kind } : {}),
     ...(patch.editPolicy !== undefined ? { editPolicy: patch.editPolicy } : {}),
     ...(recurrence !== undefined ? { recurrence } : { recurrence: undefined }),

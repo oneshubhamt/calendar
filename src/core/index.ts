@@ -1,6 +1,7 @@
 export * from "./types.js";
 export * from "./time.js";
 export * from "./temporal.js";
+export * from "./civil-timeline.js";
 export * from "./recurrence.js";
 export * from "./layout.js";
 export * from "./interaction.js";

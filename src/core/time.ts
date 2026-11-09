@@ -145,6 +145,24 @@ export function overlaps(aStart: ISODateTime | Date, aEnd: ISODateTime | Date, b
   return toDate(aStart).getTime() < toDate(bEnd).getTime() && toDate(aEnd).getTime() > toDate(bStart).getTime();
 }
 
+
+/** Half-open range intersection for either an interval or a true zero-duration point. */
+export function intersectsRange(
+  start: ISODateTime | Date,
+  end: ISODateTime | Date,
+  rangeStart: ISODateTime | Date,
+  rangeEnd: ISODateTime | Date,
+  point = false,
+): boolean {
+  const startMs = toDate(start).getTime();
+  const endMs = toDate(end).getTime();
+  const rangeStartMs = toDate(rangeStart).getTime();
+  const rangeEndMs = toDate(rangeEnd).getTime();
+  return point
+    ? startMs === endMs && startMs >= rangeStartMs && startMs < rangeEndMs
+    : startMs < rangeEndMs && endMs > rangeStartMs;
+}
+
 export function contains(range: CalendarRange, value: ISODateTime | Date): boolean {
   const time = toDate(value).getTime();
   return time >= toDate(range.start).getTime() && time < toDate(range.end).getTime();

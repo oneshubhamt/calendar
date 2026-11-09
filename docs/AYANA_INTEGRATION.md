@@ -82,7 +82,7 @@ Calendar currently supports projected `CalendarItem` values that its own engine 
 
 Ayana needs a second projection boundary for already-expanded host occurrences.
 
-Conceptually:
+The implemented Calendar contract is:
 
 ```ts
 interface CalendarOccurrenceProjectionProvider {
@@ -90,9 +90,13 @@ interface CalendarOccurrenceProjectionProvider {
   projectOccurrences(range: CalendarRange): Promise<readonly CalendarOccurrence[]> | readonly CalendarOccurrence[];
   subscribe?(listener: () => void): () => void;
 }
+
+new CalendarEngine(repository, itemProjections?, occurrenceProjections?)
 ```
 
-The final API may differ, but the semantics are fixed:
+A projected occurrence carries a stable `occurrenceId`, a stable `sourceItemId`, and may carry an opaque `projectionIdentity` containing bounded JSON-like provider identity data. It does not duplicate source identity as an item `id`. `start`, `end` and `originalStart` at this already-expanded boundary must be absolute ISO date-times; Calendar canonicalizes offsets and rejects date-only/floating occurrence boundaries before range filtering. Calendar does not interpret `projectionIdentity`; an Ayana adapter may therefore preserve whatever recurrence key it needs without adding an Ayana-specific field to generic Calendar types.
+
+The semantics are:
 
 - the host owns recurrence expansion;
 - Calendar owns layout and interaction;
@@ -119,54 +123,43 @@ Examples:
 | before-leaving task | no clock drag | no | complete | yes | no |
 | recorded historical moment | normally no | no | host-dependent | host-dependent | no |
 
-Calendar therefore needs a capability provider more precise than the existing item-level `EditPolicy`.
+Calendar now exposes `CalendarOccurrenceCapabilityProvider`, with generic flags for `canMove`, `canMoveBetweenAllDayAndTimed`, `canResizeStart`, `canResizeEnd`, `canOpen`, `canEdit`, `canDelete`, `canInvokeActions` and `canChangeRecurrence`.
 
-A generic result should independently cover at least:
-
-```text
-canMove
-canMoveBetweenAllDayAndTimed
-canResizeStart
-canResizeEnd
-canEdit
-canDelete
-canInvokeInlineActions
-canChangeRecurrence
-```
-
-The command boundary must revalidate authority; UI state alone is not sufficient enforcement.
+Normal/default-path capability results can only narrow `EditPolicy` plus source authority. For authoritative host occurrences, the adapter may select `commandPath: "trusted-host"`; explicitly granted operations then route through `trustedHostCommandHandler` instead of Calendar persistence. Execution resolves the provider again, so UI state alone is not the enforcement boundary. Editor saves and add-on patches also classify the actual temporal mutation before dispatch: movement, individual endpoint resize and all-day/timed conversion therefore cannot be smuggled through a broader `canEdit` grant.
 
 ### 3. Point/deadline temporal geometry
 
-Calendar currently models duration-bearing items naturally through start/end.
+Calendar now supports true point-in-time values generically through `temporalForm: "point"`. The representation is deliberately domain-neutral: a point requires `start === end`, cannot be all-day/date-only, and carries no Calendar meaning such as deadline, payment or milestone. Omitted/`interval` values preserve existing duration behavior.
 
-Ayana also contains true point-in-time semantics: task deadlines, payment deadlines and similar milestones.
+For an Ayana adapter, a host-expanded deadline-like occurrence can therefore project its authoritative instant directly:
 
-Calendar should support a generic temporal presentation kind such as:
-
-```text
-block
-point
-all-day
-span
-background
+```ts
+{
+  start: "2026-04-14T15:00:00.000Z",
+  end: "2026-04-14T15:00:00.000Z",
+  temporalForm: "point"
+}
 ```
 
-A point occurrence is rendered at its exact time without manufacturing a fake duration.
+Calendar range-bounds the marker by that instant, renders it at the exact time in day/week grids, includes it in month/year/agenda surfaces, and gives simultaneous temporal collisions independent columns. Distinct nearby point markers that would overlap only in screen pixels use visual-only lanes; this never creates fake scheduling duration or collision. Point markers cannot be resized or converted to all-day placement through Calendar mechanics. The built-in editor treats the point as one editable instant and always preserves `start === end`; movement likewise preserves zero duration and routes through the per-occurrence authority/host-command boundary.
 
 ### 4. Rich structured occurrence presentation
 
 Ayana needs more semantic density than a generic title-only event.
 
-Calendar should retain geometry but permit structured host presentation slots such as:
+Calendar now retains geometry while permitting structured host presentation through `CalendarOccurrencePresentation`:
 
 ```text
+icon
 leading
 title
 subtitle
 trailing
 badges
+accessibleLabel
 ```
+
+These slots are deliberately text-only (`string` or `CalendarPresentationText`) so an Ayana adapter can provide semantic density without taking ownership of Calendar DOM/layout. `accessibleLabel` may replace the complete accessible label for the Calendar-owned primary occurrence target. The structured `icon` overrides ordinary display-icon fallback for that occurrence. Existing `detailRows`, agenda metadata and safe style metadata remain available; malformed dataset keys are ignored before DOM assignment.
 
 Examples:
 
@@ -198,7 +191,7 @@ Ayana should be able to expose small high-value actions directly in the day surf
 - mark a payment paid;
 - complete an ordinary plan.
 
-Calendar should expose a generic inline-action contract where identifiers and labels are host-defined and execution routes through the host command/action boundary.
+Calendar exposes this through the existing `CalendarSourceActionPort`. An action may opt into `inline: true` and provide a safe text `icon`, accessible label, generic `state`, `pressed`, `enabled` and `pending` values, plus `primary`/`danger` presentation metadata. Calendar renders the control and owns its interaction isolation; the opaque action ID is revalidated at execution and `execute(actionId, occurrence)` remains the host callback. Existing non-inline source actions continue to work unchanged in detail/context surfaces, using the same action-state renderer without breaking menu keyboard navigation.
 
 ### 6. Recurring occurrence command identity
 
@@ -254,7 +247,7 @@ Calendar must not invent a persisted duration when Ayana does not have one. A te
 
 A journey calendar normally has meaningful date bounds.
 
-Calendar should support optional generic navigation limits:
+Calendar now supports optional generic navigation limits:
 
 ```ts
 navigationBounds?: {
@@ -262,6 +255,8 @@ navigationBounds?: {
   max?: ISODate;
 }
 ```
+
+The dates are inclusive in Calendar's configured display zone. Invalid/reversed bounds fail closed. Initial/programmatic anchors clamp into the range; previous/next, Jump and keyboard navigation cannot leave it; projection/collision queries are intersected with it; and all Calendar placement paths reject create/move/resize results that cross it. Week/month/year geometry may still show surrounding dates, but those cells are non-interactive and host occurrences are not projected into them.
 
 Ayana journey Days may use the journey's first/last day. Everyday and future global calendar surfaces may remain unbounded.
 
@@ -271,22 +266,32 @@ Ayana already owns the journey header, day ribbon, navigation, sheets and captur
 
 Calendar therefore needs an embedded mode that can suppress Calendar-owned chrome while retaining the requested geometry and interactions.
 
-A granular contract is preferable to one hard-coded mode:
+The implemented contract is granular rather than one hard-coded mode:
 
-```text
-showToolbar
-showViewSwitcher
-showDateNavigation
-showSourceControls
+```ts
+chrome?: {
+  toolbar?: boolean;
+  dateNavigation?: boolean;
+  viewSwitcher?: boolean;
+  sourceControls?: boolean;
+  createControls?: boolean;
+}
 ```
 
-Ayana can then embed the day grid without looking like a second application nested inside the first.
+All controls default to visible. `toolbar: false` omits the Calendar-owned toolbar entirely; the remaining flags independently suppress their respective controls when the toolbar is present. Hiding chrome does not disable keyboard navigation, grid interaction or host callbacks. Ayana can therefore embed only the day grid without looking like a second application nested inside the first.
 
 ### 10. Optional secondary time-zone scale
 
 Travel makes dual-zone display materially useful.
 
-Calendar's primary zone continues to govern geometry, while an optional secondary scale may show another IANA zone:
+Calendar's primary zone continues to govern geometry, while `CalendarUiOptions.secondaryTimeZone` may show one validated secondary IANA reference scale in day/week views:
+
+```ts
+new CalendarUi(host, engine, {
+  timeZone: "Asia/Tokyo",
+  secondaryTimeZone: "Asia/Kolkata",
+});
+```
 
 ```text
 Tokyo       India
@@ -295,7 +300,7 @@ Tokyo       India
 11:00       07:30
 ```
 
-This remains generic and optional.
+The primary grid and all wall-clock hit-testing use the same civil-timeline mapping rather than elapsed milliseconds from midnight. Primary events therefore stay aligned with displayed wall time; nonexistent spring-forward minutes are non-targetable rather than silently shifted, and repeated fall-back minutes target the explicit `dstOverlapDisambiguation` policy (`earlier` or `later`). The built-in editor uses the same rule. The reference scale resolves primary civil hours against IANA rules: half-hour offsets remain exact, gaps are explicit, overlaps expose both secondary values, visible-week offset changes remain distinct, and previous/next civil-date values are marked `-1d`/`+1d`. The secondary zone never enters projection queries, occurrence identity or command context.
 
 ## Ayana adapter boundary
 
@@ -362,17 +367,9 @@ The same rule applies to drag/drop and resize.
 
 Embedded host operations may be asynchronous and may fail due to validation or stale graph revisions.
 
-Calendar should therefore support:
+Calendar now provides this lifecycle generically: pending state records the specific operation while retaining one-command-at-a-time suppression per occurrence, is visible through `aria-busy`/pending-operation state, and survives host invalidation/re-render. Tentative geometry is stateful rather than attached only to the current DOM node, so an intermediate reprojection can reconstruct it while the command remains unresolved. Capability authority is revalidated immediately before execution; host errors use Calendar's accessible announcement channel; and the visible range refreshes after both success and rejection. A host mutation rejection is distinct from `committed-refresh-failed`: after commit, a failed reprojection is announced as a refresh problem and must not encourage a duplicate retry. Trusted hosts may use `CalendarCommandStaleError` for explicit revision/stale rejection, and the trusted-host path never falls back to Calendar persistence. Stable command context carries `occurrenceId`, `sourceItemId`, opaque `projectionIdentity` and requested `seriesScope`.
 
-- visible pending state for the affected occurrence/interaction;
-- prevention of duplicate commands while pending;
-- host validation errors surfaced through Calendar's accessible announcement/error mechanism;
-- authoritative refresh after success;
-- rollback of visual preview after failure;
-- no silent optimistic persistence inside Calendar;
-- fail-closed handling when the host record changed after projection.
-
-Ayana's existing graph revision model should remain the concurrency authority.
+Ayana's existing graph revision model remains the concurrency authority; stale revisions should be rejected by the adapter/service and Calendar will re-query instead of overwriting newer host state.
 
 ## Broader Ayana surfaces
 

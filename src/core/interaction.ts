@@ -34,7 +34,10 @@ export function snapWithPolicy(value: Date, slotMinutes: number, strategy: Calen
 }
 
 export function intervalsOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean {
-  return aStart.getTime() < bEnd.getTime() && aEnd.getTime() > bStart.getTime();
+  const aStartMs = aStart.getTime(), aEndMs = aEnd.getTime();
+  const bStartMs = bStart.getTime(), bEndMs = bEnd.getTime();
+  if (aEndMs <= aStartMs || bEndMs <= bStartMs) return false;
+  return aStartMs < bEndMs && aEndMs > bStartMs;
 }
 
 export interface PlacementCollision {
@@ -56,16 +59,6 @@ export function placementCollisions(
     .filter(occurrence => effective.includeAllDay || (!allDay && !occurrence.allDay && occurrence.precision !== "date"))
     .filter(occurrence => intervalsOverlap(start, end, toDate(occurrence.start), toDate(occurrence.end)))
     .map(occurrence => ({ occurrence }));
-}
-
-export function dayDelta(value: Date, days: number): Date {
-  const next = new Date(value.getTime());
-  next.setDate(next.getDate() + days);
-  return next;
-}
-
-export function minuteDelta(value: Date, minutes: number): Date {
-  return new Date(value.getTime() + minutes * 60_000);
 }
 
 /** Canonical scheduling fields when an interaction converts between timed and all-day representations. */

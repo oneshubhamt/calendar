@@ -10,14 +10,24 @@ import type {
   CalendarSource,
   RecurrenceException,
 } from "./types.js";
-import { occurrenceIdentityAtOrdinal, projectOccurrencePatchToSeries, rebaseRecurrenceExceptions, recurrenceOrdinal } from "./recurrence.js";
+import { occurrenceIdentityAtOrdinal, projectOccurrencePatchToSeries, rebaseRecurrenceExceptions, recurrenceOrdinal, sameRecurrence } from "./recurrence.js";
+
+/** Host/repository command rejection caused by an obsolete authoritative revision. */
+export class CalendarCommandStaleError extends Error {
+  public readonly code = "stale" as const;
+
+  public constructor(message = "Calendar command rejected because the authoritative state changed") {
+    super(message);
+    this.name = "CalendarCommandStaleError";
+  }
+}
 
 function assertEditablePolicy(id: string, editPolicy: CalendarItem["editPolicy"]): void {
   if (editPolicy === "readonly" || editPolicy === "generated") throw new Error(`Calendar item ${id} is not directly editable`);
 }
 
 function assertEditable(occurrence: CalendarOccurrence): void {
-  assertEditablePolicy(occurrence.id, occurrence.editPolicy);
+  assertEditablePolicy(occurrence.sourceItemId, occurrence.editPolicy);
 }
 
 function assertEditableItem(item: CalendarItem): void {
@@ -29,7 +39,7 @@ const SCHEDULE_ONLY_PATCH_FIELDS = new Set(["start", "end", "allDay", "precision
 function assertPatchAllowed(item: CalendarItem | CalendarOccurrence, patch: CalendarItemPatch): void {
   if (item.editPolicy !== "schedule-only") return;
   const semantic = Object.keys(patch).filter(key => !SCHEDULE_ONLY_PATCH_FIELDS.has(key));
-  if (semantic.length) throw new Error(`Calendar item ${item.id} is schedule-only; semantic fields cannot be changed (${semantic.join(", ")})`);
+  if (semantic.length) throw new Error(`Calendar item ${"id" in item ? item.id : item.sourceItemId} is schedule-only; semantic fields cannot be changed (${semantic.join(", ")})`);
 }
 
 function withException(item: CalendarItem, occurrence: CalendarOccurrence, patch: CalendarItemPatch | null): CalendarRecurrence {
@@ -80,9 +90,6 @@ function withoutRecurrence(patch: CalendarItemPatch): CalendarItemPatch {
   return rest;
 }
 
-function sameRecurrence(a: CalendarRecurrence | undefined, b: CalendarRecurrence | null | undefined): boolean {
-  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-}
 
 function seriesPatch(
   item: CalendarItem,
