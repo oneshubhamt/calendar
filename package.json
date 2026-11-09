@@ -1,0 +1,142 @@
+{
+  "name": "@director/calendar",
+  "version": "1.0.0-rc.9",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./view": {
+      "types": "./dist/view/index.d.ts",
+      "import": "./dist/view/index.js"
+    },
+    "./storage": {
+      "types": "./dist/storage/index.d.ts",
+      "import": "./dist/storage/index.js"
+    },
+    "./interoperability": {
+      "types": "./dist/interoperability/index.d.ts",
+      "import": "./dist/interoperability/index.js"
+    },
+    "./integration/study-director": {
+      "types": "./dist/integration/study-director.d.ts",
+      "import": "./dist/integration/study-director.js"
+    },
+    "./integration/revision-director": {
+      "types": "./dist/integration/revision-director.d.ts",
+      "import": "./dist/integration/revision-director.js"
+    },
+    "./integration/practice-desk": {
+      "types": "./dist/integration/practice-desk.d.ts",
+      "import": "./dist/integration/practice-desk.js"
+    },
+    "./integration/practice-bridge": {
+      "types": "./dist/integration/practice-bridge.d.ts",
+      "import": "./dist/integration/practice-bridge.js"
+    },
+    "./integration/ecosystem": {
+      "types": "./dist/integration/ecosystem.d.ts",
+      "import": "./dist/integration/ecosystem.js"
+    },
+    "./integration/common": {
+      "types": "./dist/integration/common.d.ts",
+      "import": "./dist/integration/common.js"
+    },
+    "./package-contract": {
+      "types": "./dist/integration/package-contract.d.ts",
+      "import": "./dist/integration/package-contract.js"
+    },
+    "./adapters/study-director": {
+      "types": "./dist/adapters/study-director.d.ts",
+      "import": "./dist/adapters/study-director.js"
+    },
+    "./adapters/revision-director": {
+      "types": "./dist/adapters/revision-director.d.ts",
+      "import": "./dist/adapters/revision-director.js"
+    },
+    "./adapters/practice-desk": {
+      "types": "./dist/adapters/practice-desk.d.ts",
+      "import": "./dist/adapters/practice-desk.js"
+    },
+    "./interoperability/ics": {
+      "types": "./dist/interoperability/ics.d.ts",
+      "import": "./dist/interoperability/ics.js"
+    },
+    "./interoperability/google-calendar": {
+      "types": "./dist/interoperability/google-calendar.d.ts",
+      "import": "./dist/interoperability/google-calendar.js"
+    },
+    "./interoperability/sync": {
+      "types": "./dist/interoperability/sync.d.ts",
+      "import": "./dist/interoperability/sync.js"
+    },
+    "./interoperability/reminders": {
+      "types": "./dist/interoperability/reminders.d.ts",
+      "import": "./dist/interoperability/reminders.js"
+    },
+    "./interoperability/external-calendar": {
+      "types": "./dist/interoperability/external-calendar.d.ts",
+      "import": "./dist/interoperability/external-calendar.js"
+    },
+    "./interoperability/storage": {
+      "types": "./dist/interoperability/storage.d.ts",
+      "import": "./dist/interoperability/storage.js"
+    },
+    "./fixtures/director": {
+      "types": "./dist/fixtures/director.d.ts",
+      "import": "./dist/fixtures/director.js"
+    },
+    "./features": {
+      "types": "./dist/features/index.d.ts",
+      "import": "./dist/features/index.js"
+    },
+    "./features/personal": {
+      "types": "./dist/features/personal.d.ts",
+      "import": "./dist/features/personal.js"
+    },
+    "./features/planning": {
+      "types": "./dist/features/planning.d.ts",
+      "import": "./dist/features/planning.js"
+    },
+    "./features/personal-ui": {
+      "types": "./dist/features/personal-ui.d.ts",
+      "import": "./dist/features/personal-ui.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "docs",
+    "fixtures",
+    "demo",
+    "tests",
+    "README.md",
+    "tsconfig.json"
+  ],
+  "scripts": {
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
+    "check": "npm run typecheck && npm test && npm pack --dry-run",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  },
+  "packageManager": "npm@12.2.2",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oneshubhamt/calendar.git"
+  },
+  "bugs": {
+    "url": "https://github.com/oneshubhamt/calendar/issues"
+  },
+  "homepage": "https://github.com/oneshubhamt/calendar#readme"
+}
