@@ -178,6 +178,8 @@ Current optional adapters demonstrate the boundary:
 
 These modules are not architectural dependencies of generic calendar code. Other hosts should implement their own thin translation/command boundaries rather than add domain concepts to core/view.
 
+Ayana is the first planned consumer of the advanced host-owned temporal integration described above. Its specific mapping, UX target and non-goals are documented in `AYANA_INTEGRATION.md`; the staged delivery programme is in `AYANA_IMPLEMENTATION_PROGRAMME.md`. Those documents may name Ayana concepts, but they do not extend the generic core vocabulary.
+
 Scheduling interactions preserve one canonical temporal representation: all-day placement is date-only and timed placement is an instant unless a host/editor explicitly preserves zoned or floating semantics. Series splitting treats recurrence cardinality and exception lineage as one operation: unchanged rules retain only the remaining occurrence count, pre-split exceptions stay with the head, and surviving tail exceptions are remapped to the new series. View grouping is bounded to the requested range so long-span occurrences do not create work outside the visible surface.
 
 ## Distribution and demos
