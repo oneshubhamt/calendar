@@ -101,6 +101,73 @@ Google Calendar is an adapter with overlay/import/publish/opt-in two-way modes. 
 
 Browser reminders are opportunistic foreground delivery with receipt deduplication/retry. Reminder channel identifiers are host-extensible; built-ins use `in-app`, `browser` and `external`. Reliable closed-app delivery is delegated to OS-backed calendar paths such as ICS/Google rather than overstating browser alarm guarantees.
 
+## Advanced host-owned temporal integration
+
+Some hosts already possess a richer scheduling domain than Calendar should ever duplicate. In that mode Calendar is an embedded temporal surface over host-owned records rather than the authoritative scheduler.
+
+The generic architecture therefore distinguishes two projection levels:
+
+- **item projection** — the host supplies `CalendarItem` values and Calendar expands supported recurrence itself;
+- **occurrence projection** — the host supplies already-expanded occurrences for a requested range when recurrence, completion, exceptions, quotas or other temporal semantics are authoritative outside Calendar.
+
+An occurrence projection must preserve stable source-item identity and stable host occurrence identity. Calendar may lay out, render, move, resize, select and navigate those occurrences, but it must not reinterpret their recurrence or manufacture host-domain state.
+
+### Per-occurrence authority
+
+The coarse item-level `EditPolicy` remains useful as a fail-closed default, but embedded hosts may need finer interaction authority for each occurrence. The generic capability contract may independently govern operations such as:
+
+- move;
+- resize start;
+- resize end;
+- edit;
+- delete/cancel;
+- complete or otherwise invoke a host action;
+- change recurrence;
+- move between all-day and timed placement.
+
+Calendar must never infer these permissions from semantic kinds such as task, payment or habit. A host capability provider supplies them explicitly, and command execution revalidates them.
+
+### Temporal presentation semantics
+
+Not every temporal object is a duration-bearing appointment. Calendar should support generic presentation/layout semantics for:
+
+- duration blocks;
+- point/deadline markers;
+- all-day entries;
+- multi-day spans;
+- optional background/range annotations.
+
+A point/deadline does not acquire an invented duration merely to fit time-grid geometry. Hosts may choose how such values are rendered while Calendar retains responsibility for collision geometry and accessible navigation.
+
+### Host presentation and inline actions
+
+Embedded applications may supply structured occurrence presentation without taking over layout. Generic presentation slots may include a leading affordance/icon, title, subtitle, trailing value and badges, plus detail rows and safe styling metadata.
+
+Hosts may also contribute explicit inline actions. Calendar treats each action as an opaque command identifier with label/state/availability; semantic meaning and persistence remain entirely host-owned.
+
+### Command routing and optimistic safety
+
+For host-owned occurrences, drag/drop, resizing, keyboard scheduling and inline actions route through a host command handler. Command context carries enough stable identity to distinguish:
+
+- source item;
+- projected occurrence;
+- recurrence/nominal occurrence identity where supplied by the host;
+- requested edit scope.
+
+The host remains responsible for translating the command into its domain operation. Calendar must handle pending state, surface errors without silently mutating its projection, and refresh only from the authoritative host result. Concurrent host changes must fail closed rather than be overwritten.
+
+### Embedded mode and navigation bounds
+
+Calendar can be used as a complete calendar application or as a sub-surface inside another product. Embedded mode may suppress Calendar-owned chrome such as the toolbar, view switcher, date navigation and source controls while retaining the selected calendar geometry and interactions.
+
+Hosts may also provide navigation bounds. Calendar treats these as generic temporal limits, not as journey/study/project semantics.
+
+### Multi-zone display
+
+The primary calendar zone continues to govern geometry. An optional secondary time-zone scale may be displayed for travel, distributed work or other host use cases without changing occurrence identity or scheduling semantics.
+
+These capabilities are intentionally generic. They enable hosts with authoritative temporal domains without adding journeys, tasks, payments, habits, study sessions or any other application concept to Calendar core.
+
 ## Host integrations
 
 Current optional adapters demonstrate the boundary:
