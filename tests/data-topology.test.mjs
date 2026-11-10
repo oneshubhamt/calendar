@@ -102,15 +102,16 @@ test("queued reload retains an unmet requested revision before deciding it is ca
 
 
 test("current public contracts contain no retained compatibility aliases",async()=>{
-  const [types,ics,google,recurrenceEditor,eventEditor,personal]=await Promise.all([
+  const [types,ics,google,recurrenceEditor,eventEditor,personal,fixtures]=await Promise.all([
     read("../src/core/types.ts"),
     read("../src/interoperability/ics.ts"),
     read("../src/interoperability/google-calendar.ts"),
     read("../src/view/recurrence-editor.ts"),
     read("../src/view/event-editor.ts"),
     read("../src/features/personal.ts"),
+    read("../src/fixtures/director.ts"),
   ]);
-  const combined=[types,ics,google,recurrenceEditor,eventEditor,personal].join("\n");
+  const combined=[types,ics,google,recurrenceEditor,eventEditor,personal,fixtures].join("\n");
   assert.doesNotMatch(combined,/\bbyWeekday\b/);
   assert.doesNotMatch(ics,/readonly readOnly\?:|options\.readOnly/);
   assert.doesNotMatch(google,/publishOwnerships/);
