@@ -68,6 +68,15 @@ export interface CalendarMetadata {
  * Passive, already-resolved temporal context rendered behind ordinary calendar events.
  * Background ranges are not events and carry no scheduling/availability semantics by themselves.
  */
+export interface CalendarBackgroundDisplay {
+  /** Cosmetic background accent. Calendar uses it only through a scoped CSS custom property. */
+  readonly color?: string | undefined;
+  /** Cosmetic label color. */
+  readonly textColor?: string | undefined;
+  /** Space-separated host class tokens; reserved Calendar namespaces fail closed in the view. */
+  readonly className?: string | undefined;
+}
+
 export interface CalendarBackgroundRange {
   /** Stable identity within the Calendar query result. */
   readonly id: string;
@@ -79,8 +88,10 @@ export interface CalendarBackgroundRange {
   readonly allDay?: boolean | undefined;
   /** Optional Calendar source association. Associated ranges follow that source's visibility. */
   readonly calendarId?: CalendarId | undefined;
-  /** Optional generic text for later presentation/accessibility; Calendar assigns no domain meaning. */
+  /** Optional generic text for passive presentation/accessibility; Calendar assigns no domain meaning. */
   readonly label?: string | undefined;
+  /** Narrow cosmetic presentation contract; it never controls geometry or interaction. */
+  readonly display?: CalendarBackgroundDisplay | undefined;
   /** Opaque bounded JSON-like host data. */
   readonly metadata?: CalendarMetadata | undefined;
 }
