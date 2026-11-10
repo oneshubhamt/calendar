@@ -18,17 +18,23 @@ export class IndexedDbReminderReceiptStore implements ReminderReceiptStore {
   public async has(key: string): Promise<boolean> { return Boolean(await getRecord<{ key: string; deliveredAt: ISODateTime }>(this.dbName, REMINDER_STORE, key)); }
   public async record(key: string, deliveredAt: ISODateTime): Promise<void> { await putRecord(this.dbName, REMINDER_STORE, { key, deliveredAt }, key); }
   public async prune(before: ISODateTime): Promise<void> {
+    const cutoff = Date.parse(before);
+    if (!Number.isFinite(cutoff)) throw new RangeError("Reminder receipt prune cutoff is invalid");
     const db = await openDb(this.dbName);
-    await transactionDone(db, REMINDER_STORE, "readwrite", store => {
-      const cursor = store.openCursor();
-      cursor.onsuccess = () => {
-        const current = cursor.result;
-        if (!current) return;
-        const value = current.value as { deliveredAt?: string };
-        if (typeof value.deliveredAt === "string" && value.deliveredAt < before) current.delete();
-        current.continue();
-      };
-    });
+    try {
+      await transactionDone(db, REMINDER_STORE, "readwrite", store => {
+        const cursor = store.openCursor();
+        cursor.onsuccess = () => {
+          const current = cursor.result;
+          if (!current) return;
+          const value = current.value as { deliveredAt?: string };
+          if (typeof value.deliveredAt === "string" && Date.parse(value.deliveredAt) < cutoff) current.delete();
+          current.continue();
+        };
+      });
+    } finally {
+      db.close();
+    }
   }
 }
 
