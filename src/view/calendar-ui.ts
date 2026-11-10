@@ -49,10 +49,7 @@ import {
 import { groupAllDayBackgroundRangesByDay, groupByDay, layoutBackgroundDay, layoutTimedDay } from "../core/layout.js";
 import { sameRecurrence } from "../core/recurrence.js";
 import { normalizeSnapPolicy, placementInNavigationBounds, placementTimePatch, resizeInterval, snapMinuteCoordinate, type CalendarResizeEdge } from "../core/interaction.js";
-import {
-  type CalendarOccurrenceCapabilityKey,
-  type ResolvedCalendarOccurrenceCapabilities,
-} from "../core/authority.js";
+import type { ResolvedCalendarOccurrenceCapabilities } from "../core/authority.js";
 import { chooseSeriesScope, openEventEditor } from "./event-editor.js";
 import { CALENDAR_CSS } from "./styles.js";
 import { confirmCalendarAction, requestCalendarDate } from "./dialogs.js";
