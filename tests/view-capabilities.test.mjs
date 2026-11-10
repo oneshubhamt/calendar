@@ -301,3 +301,10 @@ test('collision validation explicitly omits passive background projection',async
   assert.match(gate,/includeBackgroundRanges: false/);
   assert.match(gate,/placementCollisions\(result\.occurrences/);
 });
+
+
+test('views that omit backgrounds also omit passive provider work',async()=>{
+  const sourceText=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
+  const refresh=sourceText.match(/public async refresh\(\): Promise<void> \{[\s\S]*?\n  }\n\n  public setView/)?.[0] ?? '';
+  assert.match(refresh,/includeBackgroundRanges: this\.view === "month" \|\| this\.view === "week" \|\| this\.view === "day"/);
+});
