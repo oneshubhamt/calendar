@@ -349,3 +349,24 @@ test('placement guard evaluation composes allow warn prevent and fails closed',a
     assert.deepEqual(result.messages,['Scheduling policy could not be evaluated.']);
   }
 });
+
+
+test('event-only engine queries do not invoke passive background providers', async()=>{
+  const source={id:'query-source',title:'Query source',visible:true};
+  const repo=new C.MemoryCalendarRepository([source],[event({id:'query-event',calendarId:'query-source',start:'2026-11-10T09:00:00Z',end:'2026-11-10T10:00:00Z'})]);
+  let backgroundCalls=0;
+  const engine=new C.CalendarEngine(repo,[],[],[{
+    id:'visual-only',
+    projectBackgroundRanges(){
+      backgroundCalls+=1;
+      throw new Error('passive provider failure');
+    },
+  }]);
+  const range={start:'2026-11-10T00:00:00Z',end:'2026-11-11T00:00:00Z'};
+  const eventOnly=await engine.query(range,{includeBackgroundRanges:false});
+  assert.equal(eventOnly.occurrences.length,1);
+  assert.deepEqual(eventOnly.backgroundRanges,[]);
+  assert.equal(backgroundCalls,0);
+  await assert.rejects(()=>engine.query(range),/passive provider failure/i);
+  assert.equal(backgroundCalls,1);
+});
