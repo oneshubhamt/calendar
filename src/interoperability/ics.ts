@@ -7,6 +7,7 @@ import {
   type PlainDateTimeParts,
 } from "../core/temporal.js";
 import { calendarInteropMetadata, linkedExternalMetadata, type ExternalEventIdentity } from "./sync.js";
+import { stableHash, temporalSpec, withoutNullishEntries } from "./internal.js";
 
 const WEEKDAY_TO_ICS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"] as const;
 const ICS_TO_WEEKDAY = new Map<string, Weekday>(WEEKDAY_TO_ICS.map((value, index) => [value, index as Weekday]));
@@ -134,7 +135,7 @@ function serializeItem(item: CalendarItem, dtstamp: string, uidDomain: string): 
   const out = [...lines];
   // Replacement exceptions are encoded as detached VEVENTs keyed by UID + RECURRENCE-ID.
   for (const exception of item.recurrence?.exceptions ?? []) if (!exception.cancelled && exception.replacement) {
-    const occurrence = { ...item, ...cleanPatch(exception.replacement as unknown as Record<string, unknown>), recurrence: undefined } as CalendarItem;
+    const occurrence = { ...item, ...withoutNullishEntries(exception.replacement as unknown as Record<string, unknown>), recurrence: undefined } as CalendarItem;
     out.push("BEGIN:VEVENT", `UID:${escapeText(uid)}`, `DTSTAMP:${utcBasic(dtstamp)}`, recurrenceIdLine(exception.originalStart, item), ...serializeStartEnd(occurrence), `SUMMARY:${escapeText(occurrence.title)}`);
     if (occurrence.description) out.push(`DESCRIPTION:${escapeText(occurrence.description)}`);
     if (occurrence.location) out.push(`LOCATION:${escapeText(occurrence.location)}`);
@@ -324,7 +325,6 @@ function recurrenceIdLine(value: string, item: CalendarItem): string {
 function propertyOf(event: ParsedEvent, name: string): ParsedProperty | undefined { return event.properties.find(property => property.name === name); }
 function propertiesOf(event: ParsedEvent, name: string): readonly ParsedProperty[] { return event.properties.filter(property => property.name === name); }
 function valueOf(event: ParsedEvent, name: string): string | undefined { return propertyOf(event, name)?.value; }
-function temporalSpec(kind: CalendarTemporalKind, timeZone?: string) { return kind === "zoned" ? { kind, timeZone: timeZone ?? "UTC" } as const : { kind } as const; }
 
 function unfoldLines(text: string): string[] { return text.replace(/\r\n/g, "\n").replace(/\n[ \t]/g, "").split("\n").map(line => line.replace(/\r$/, "")).filter(Boolean); }
 function foldLines(lines: readonly string[]): string[] { return lines.flatMap(line => foldLine(line)); }
@@ -359,6 +359,5 @@ function serializeUntil(value: string, item: CalendarItem): string { return item
 function parseDurationMinutes(value: string): number { const match = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/i.exec(value); if (!match) throw new Error(`Unsupported duration: ${value}`); return Number(match[1] ?? 0) * 1440 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0) + Math.ceil(Number(match[4] ?? 0) / 60); }
 function relativeTriggerMinutes(value: string): number | null { const negative = value.startsWith("-"); const clean = value.replace(/^[+-]/, ""); try { const minutes = parseDurationMinutes(clean); return negative ? minutes : 0; } catch { return null; } }
 function safeUid(value: string): string { return value.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 180) || stableHash(value); }
-function stableHash(value: string): string { let hash = 2166136261; for (let i = 0; i < value.length; i++) { hash ^= value.charCodeAt(i); hash = Math.imul(hash, 16777619); } return (hash >>> 0).toString(36); }
 function fingerprintCalendarItemPlaceholder(uid: string, sequence: number): string { return `${uid}:${sequence}`; }
-function cleanPatch(patch: Record<string, unknown>): Record<string, unknown> { return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== null && value !== undefined)); }
+function withoutNullishEntries(patch: Record<string, unknown>): Record<string, unknown> { return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== null && value !== undefined)); }

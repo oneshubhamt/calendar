@@ -10,6 +10,7 @@ import {
   type ExternalEventIdentity, type ExternalEventSnapshot, type SyncConflict, type SyncConflictPolicy,
   type SyncStateStore,
 } from "./sync.js";
+import { stableHash, temporalSpec, withoutNullishEntries } from "./internal.js";
 
 export interface GoogleEventDateTime {
   readonly date?: string | undefined;
@@ -561,7 +562,6 @@ function basicToIso(value: string): string {
   const iso = `${raw.slice(0,4)}-${raw.slice(4,6)}-${raw.slice(6,8)}T${raw.slice(9,11)}:${raw.slice(11,13)}:${raw.slice(13,15)}`;
   return z ? `${iso}Z` : iso;
 }
-function temporalSpec(kind: CalendarTemporalKind, timeZone?: string) { return kind === "zoned" ? { kind, timeZone: timeZone ?? "UTC" } as const : { kind } as const; }
 function remoteToLocal(remote: ExternalEventSnapshot, connection: GoogleCalendarConnection, localId?: string): CalendarItem {
   if (!remote.item) throw new Error("Remote event has no item.");
   return {
@@ -599,7 +599,7 @@ async function syncReplacementExceptions(transport: GoogleCalendarTransport, cal
   for (const exception of replacements) {
     const instance = instances.find(candidate => candidate.id && candidate.originalStartTime && recurrenceIdentityEqual(item, exception.originalStart, googleDateValue(candidate.originalStartTime).value));
     if (!instance?.id || !exception.replacement) { warnings.push(`Could not resolve Google recurring instance for ${item.title} at ${exception.originalStart}.`); continue; }
-    const replacement = { ...item, ...nonNullPatch(exception.replacement as unknown as Record<string, unknown>), recurrence: undefined, id: item.id } as CalendarItem;
+    const replacement = { ...item, ...withoutNullishEntries(exception.replacement as unknown as Record<string, unknown>), recurrence: undefined, id: item.id } as CalendarItem;
     await transport.patchEvent(calendarId, instance.id, itemToGoogleEvent(replacement), instance.etag);
   }
   return warnings;
@@ -619,7 +619,6 @@ function recurrenceIdentityEqual(item: CalendarItem, left: string, right: string
   if (/(?:Z|[+-]\d\d:\d\d)$/.test(left) && /(?:Z|[+-]\d\d:\d\d)$/.test(right)) return Date.parse(left) === Date.parse(right);
   return left.slice(0, 19) === right.slice(0, 19);
 }
-function nonNullPatch(patch: Record<string, unknown>): Record<string, unknown> { return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== null && value !== undefined)); }
+function withoutNullishEntries(patch: Record<string, unknown>): Record<string, unknown> { return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== null && value !== undefined)); }
 
-function stableHash(value: string): string { let hash = 2166136261; for (let i = 0; i < value.length; i++) { hash ^= value.charCodeAt(i); hash = Math.imul(hash, 16777619); } return (hash >>> 0).toString(36); }
 async function parseJson<T>(response: Response): Promise<T> { if (!response.ok) throw new GoogleCalendarHttpError(response.status, `Google Calendar API request failed (${response.status}).`, await response.text()); return await response.json() as T; }
