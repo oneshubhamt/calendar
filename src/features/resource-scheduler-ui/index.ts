@@ -1,24 +1,97 @@
-import type { CalendarOccurrence, CalendarRange } from "../../core/types.js";
+import type {
+  CalendarOccurrence,
+  CalendarOverlapDisambiguation,
+  CalendarRange,
+  CalendarSource,
+  SeriesEditScope,
+} from "../../core/types.js";
 import type { CalendarUiExtension } from "../../view/types.js";
 import { isSafeHostClassName, resolveOccurrencePresentation } from "../../view/presentation.js";
 import {
+  executeCalendarResourcePlacement,
   flattenCalendarResources,
   layoutResourceTimeline,
+  replaceCalendarResourceAssignment,
   type CalendarResource,
   type CalendarResourceAssignment,
   type CalendarResourceId,
   type CalendarResourceTimelineLayoutItem,
+  type CalendarResourcePlacementExecutionOptions,
+  type CalendarResourcePlacementExecutionResult,
+  type CalendarResourcePlacementRequest,
 } from "../resource-scheduler/index.js";
 import { resolveResourceTimelineRangeGeometry } from "../resource-scheduler/timeline-layout.js";
+import {
+  moveResourceOccurrenceByCivilMinutes,
+  resizeResourceOccurrenceByCivilMinutes,
+  snapResourceInteractionMinutes,
+} from "./interaction.js";
 import { RESOURCE_SCHEDULER_CSS } from "./styles.js";
 
 const MAX_AXIS_TICKS = 240;
+const POINTER_MOVE_THRESHOLD = 4;
+const AUTO_SCROLL_ZONE = 32;
+const AUTO_SCROLL_STEP = 18;
+
+type CalendarResourceInteractionMode = "move" | "resize-start" | "resize-end";
+
+interface CalendarResourceDragState {
+  readonly mode: CalendarResourceInteractionMode;
+  readonly pointerId: number;
+  readonly node: HTMLElement;
+  readonly occurrence: CalendarOccurrence;
+  readonly sourceResourceId: CalendarResourceId;
+  readonly assignment: CalendarResourceAssignment;
+  readonly originalStart: string;
+  readonly originalEnd: string;
+  readonly startClientX: number;
+  readonly startClientY: number;
+  readonly scrollStartLeft: number;
+  readonly scrollStartTop: number;
+  readonly scale: number;
+  readonly ghost: HTMLElement;
+  moved: boolean;
+  targetResourceId: CalendarResourceId;
+  candidate: CalendarResourceInteractionCandidate | undefined;
+}
+
+interface CalendarResourceInteractionCandidate {
+  readonly start: string;
+  readonly end: string;
+  readonly targetResourceId: CalendarResourceId;
+  readonly toResourceIds: readonly CalendarResourceId[];
+  readonly valid: boolean;
+}
 
 export interface CalendarResourceSchedulerProjection {
   readonly resources: readonly CalendarResource[];
   readonly occurrences: readonly CalendarOccurrence[];
   readonly assignments: readonly CalendarResourceAssignment[];
   readonly range: CalendarRange;
+}
+
+export interface CalendarResourceSchedulerInteractionOptions
+  extends Omit<CalendarResourcePlacementExecutionOptions, "source" | "acceptWarnings"> {
+  readonly snapMinutes?: number | undefined;
+  readonly minimumDurationMinutes?: number | undefined;
+  readonly dstOverlapDisambiguation?: CalendarOverlapDisambiguation | undefined;
+  readonly sourceForOccurrence?: ((occurrence: CalendarOccurrence) => CalendarSource | undefined) | undefined;
+  readonly resolveScope?: ((
+    occurrence: CalendarOccurrence,
+    action: CalendarResourcePlacementRequest["action"],
+  ) => SeriesEditScope | null | Promise<SeriesEditScope | null>) | undefined;
+  readonly confirmWarnings?: ((
+    messages: readonly string[],
+    request: CalendarResourcePlacementRequest,
+  ) => boolean | Promise<boolean>) | undefined;
+  readonly refreshProjection?: (() =>
+    | CalendarResourceSchedulerProjection
+    | void
+    | Promise<CalendarResourceSchedulerProjection | void>) | undefined;
+  readonly onResult?: ((
+    result: CalendarResourcePlacementExecutionResult,
+    request: CalendarResourcePlacementRequest,
+  ) => void) | undefined;
 }
 
 export interface CalendarResourceSchedulerUiOptions {
@@ -36,6 +109,8 @@ export interface CalendarResourceSchedulerUiOptions {
   readonly onOccurrenceActivate?: ((occurrence: CalendarOccurrence, resource: CalendarResource) => void) | undefined;
   readonly onCollapseChange?: ((collapsedResourceIds: readonly CalendarResourceId[]) => void) | undefined;
   readonly onError?: ((error: unknown) => void) | undefined;
+  /** Omit to preserve the R4 read-only surface exactly. */
+  readonly interaction?: CalendarResourceSchedulerInteractionOptions | undefined;
 }
 
 function element<K extends keyof HTMLElementTagNameMap>(
@@ -82,8 +157,12 @@ export class CalendarResourceSchedulerUi {
   private readonly onOccurrenceActivate: CalendarResourceSchedulerUiOptions["onOccurrenceActivate"];
   private readonly onCollapseChange: CalendarResourceSchedulerUiOptions["onCollapseChange"];
   private readonly onError: CalendarResourceSchedulerUiOptions["onError"];
+  private readonly interaction: CalendarResourceSchedulerInteractionOptions | undefined;
+  private readonly status: HTMLElement;
+  private readonly pendingOccurrences = new Set<string>();
   private collapsed = new Set<CalendarResourceId>();
   private projection: CalendarResourceSchedulerProjection | undefined;
+  private drag: CalendarResourceDragState | undefined;
 
   public constructor(host: HTMLElement, options: CalendarResourceSchedulerUiOptions = {}) {
     if (!host || typeof host.replaceChildren !== "function") throw new TypeError("Resource Scheduler UI requires a host element");
@@ -100,6 +179,15 @@ export class CalendarResourceSchedulerUi {
     this.onOccurrenceActivate = options.onOccurrenceActivate;
     this.onCollapseChange = options.onCollapseChange;
     this.onError = options.onError;
+    this.interaction = options.interaction;
+    if (this.interaction) {
+      positiveNumber(this.interaction.snapMinutes, 15, "interaction.snapMinutes");
+      positiveNumber(this.interaction.minimumDurationMinutes, 5, "interaction.minimumDurationMinutes");
+      if (this.interaction.dstOverlapDisambiguation !== undefined
+        && !["earlier", "later"].includes(this.interaction.dstOverlapDisambiguation)) {
+        throw new Error("interaction.dstOverlapDisambiguation must be earlier or later");
+      }
+    }
     for (const id of options.initialCollapsedResourceIds ?? []) this.collapsed.add(id);
     // Validate locale/time zone eagerly so malformed UI configuration fails before mounting.
     new Intl.DateTimeFormat(this.locale, { timeZone: this.timeZone }).format(new Date(0));
@@ -109,7 +197,11 @@ export class CalendarResourceSchedulerUi {
     this.root = element("div", "dc-rs-root");
     this.root.setAttribute("aria-label", this.ariaLabel);
     this.root.addEventListener("keydown", event => this.onKeyDown(event));
-    this.root.append(this.emptyState());
+    this.status = element("div", "dc-rs-sr-only");
+    this.status.setAttribute("role", "status");
+    this.status.setAttribute("aria-live", "polite");
+    this.status.setAttribute("aria-atomic", "true");
+    this.replaceSurface(this.emptyState());
     this.host.replaceChildren(style, this.root);
   }
 
@@ -125,7 +217,7 @@ export class CalendarResourceSchedulerUi {
     const rendered = this.renderProjection(stable, nextCollapsed);
     this.projection = stable;
     this.collapsed = nextCollapsed;
-    this.root.replaceChildren(rendered);
+    this.replaceSurface(rendered);
   }
 
   public setCollapsedResourceIds(ids: readonly CalendarResourceId[]): void {
@@ -139,7 +231,7 @@ export class CalendarResourceSchedulerUi {
     flattenCalendarResources(this.projection.resources, [...next]);
     const rendered = this.renderProjection(this.projection, next);
     this.collapsed = next;
-    this.root.replaceChildren(rendered);
+    this.replaceSurface(rendered);
     this.notifyCollapseChange();
   }
 
@@ -149,7 +241,7 @@ export class CalendarResourceSchedulerUi {
 
   public refresh(): void {
     if (!this.projection) {
-      this.root.replaceChildren(this.emptyState());
+      this.replaceSurface(this.emptyState());
       return;
     }
     const rendered = this.renderProjection(this.projection, this.collapsed);
@@ -157,9 +249,20 @@ export class CalendarResourceSchedulerUi {
   }
 
   public destroy(): void {
+    this.cancelDrag();
     this.projection = undefined;
     this.collapsed.clear();
+    this.pendingOccurrences.clear();
     this.host.replaceChildren();
+  }
+
+  private replaceSurface(surface: HTMLElement): void {
+    this.root.replaceChildren(surface, this.status);
+  }
+
+  private announce(message: string): void {
+    this.status.textContent = "";
+    queueMicrotask(() => { this.status.textContent = message; });
   }
 
   private emptyState(): HTMLElement {
@@ -189,6 +292,11 @@ export class CalendarResourceSchedulerUi {
 
     const scroll = element("div", "dc-rs-scroll");
     scroll.tabIndex = 0;
+    if (this.interaction) {
+      const help = element("div", "dc-rs-sr-only", "Use Alt plus arrow keys to move in time or between resources. Focus a resize handle and use left or right arrow to resize.");
+      help.id = "dc-rs-interaction-help";
+      scroll.append(help);
+    }
     scroll.setAttribute("role", "region");
     scroll.setAttribute("aria-label", `${this.ariaLabel} timeline; scroll horizontally for time and vertically for resources`);
 
@@ -344,13 +452,12 @@ export class CalendarResourceSchedulerUi {
       (index, error) => this.reportError({ stage: "present", index, error }),
     );
     const activatable = Boolean(this.onOccurrenceActivate);
-    const node = activatable ? element("button", "dc-rs-event") : element("div", "dc-rs-event");
-    if (node instanceof HTMLButtonElement) node.type = "button";
-    else {
-      node.tabIndex = 0;
-      node.setAttribute("role", "group");
-    }
+    const interactive = Boolean(this.interaction);
+    const node = element("div", "dc-rs-event");
+    node.tabIndex = 0;
+    node.setAttribute("role", activatable ? "button" : "group");
     if (activatable) node.classList.add("is-activatable");
+    if (interactive) node.classList.add("is-interactive");
     if (layout.temporalForm === "point") node.classList.add("is-point");
     node.dataset.renderId = layout.renderId;
     node.dataset.resourceId = layout.resourceId;
@@ -376,13 +483,428 @@ export class CalendarResourceSchedulerUi {
     const label = presentation.accessibleLabel ?? this.occurrenceAccessibleLabel(occurrence, layout.resource);
     node.setAttribute("aria-label", label);
     node.append(this.occurrenceContent(occurrence, presentation));
+    if (interactive) {
+      node.setAttribute("aria-describedby", "dc-rs-interaction-help");
+      node.addEventListener("pointerdown", event => this.onOccurrencePointerDown(event, node, occurrence, layout.resourceId, "move"));
+      if (layout.temporalForm !== "point") {
+        node.append(
+          this.resizeHandle(node, occurrence, layout.resourceId, "start"),
+          this.resizeHandle(node, occurrence, layout.resourceId, "end"),
+        );
+      }
+    }
     if (activatable) {
-      node.addEventListener("click", () => {
+      node.addEventListener("click", event => {
+        if (node.dataset.suppressActivation === "true") {
+          delete node.dataset.suppressActivation;
+          event.preventDefault();
+          return;
+        }
         try { this.onOccurrenceActivate?.(occurrence, layout.resource); }
         catch (error) { this.reportError(error); }
       });
     }
     return node;
+  }
+
+  private resizeHandle(
+    node: HTMLElement,
+    occurrence: CalendarOccurrence,
+    resourceId: CalendarResourceId,
+    edge: "start" | "end",
+  ): HTMLElement {
+    const handle = element("span", "dc-rs-resize-handle");
+    handle.tabIndex = 0;
+    handle.dataset.edge = edge;
+    handle.setAttribute("role", "separator");
+    handle.setAttribute("aria-orientation", "vertical");
+    handle.setAttribute("aria-label", `Resize ${edge} of ${occurrence.title}`);
+    handle.addEventListener("pointerdown", event => {
+      event.stopPropagation();
+      this.onOccurrencePointerDown(event, node, occurrence, resourceId, edge === "start" ? "resize-start" : "resize-end");
+    });
+    handle.addEventListener("keydown", event => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      event.stopPropagation();
+      const delta = (event.key === "ArrowRight" ? 1 : -1) * this.interactionSnapMinutes();
+      void this.keyboardResize(node, occurrence, resourceId, edge, delta);
+    });
+    return handle;
+  }
+
+  private interactionSnapMinutes(): number {
+    return positiveNumber(this.interaction?.snapMinutes, 15, "interaction.snapMinutes");
+  }
+
+  private minimumDurationMinutes(): number {
+    return positiveNumber(this.interaction?.minimumDurationMinutes, 5, "interaction.minimumDurationMinutes");
+  }
+
+  private overlapDisambiguation(): CalendarOverlapDisambiguation {
+    return this.interaction?.dstOverlapDisambiguation ?? "earlier";
+  }
+
+  private assignmentFor(occurrenceId: string): CalendarResourceAssignment | undefined {
+    return this.projection?.assignments.find(assignment => assignment.occurrenceId === occurrenceId);
+  }
+
+  private resourceById(resourceId: CalendarResourceId): CalendarResource | undefined {
+    return this.projection?.resources.find(resource => resource.id === resourceId);
+  }
+
+  private resourceAt(clientY: number): CalendarResource | undefined {
+    for (const row of this.root.querySelectorAll<HTMLElement>(".dc-rs-resource-row")) {
+      const rect = row.getBoundingClientRect();
+      if (clientY < rect.top || clientY >= rect.bottom) continue;
+      const id = row.dataset.resourceId;
+      return id ? this.resourceById(id) : undefined;
+    }
+    return undefined;
+  }
+
+  private onOccurrencePointerDown(
+    event: PointerEvent,
+    node: HTMLElement,
+    occurrence: CalendarOccurrence,
+    sourceResourceId: CalendarResourceId,
+    mode: CalendarResourceInteractionMode,
+  ): void {
+    if (!this.interaction || !this.projection || event.button !== 0 || this.pendingOccurrences.has(occurrence.occurrenceId)) return;
+    if (this.drag) this.cancelDrag();
+    const assignment = this.assignmentFor(occurrence.occurrenceId);
+    if (!assignment || !assignment.resourceIds.includes(sourceResourceId)) return;
+    const scroll = this.root.querySelector<HTMLElement>(".dc-rs-scroll");
+    if (!scroll) return;
+    const geometry = resolveResourceTimelineRangeGeometry(this.projection.range, this.timeZone);
+    const timelineWidth = Math.max(this.minTimelineWidth, geometry.widthMinutes * this.pixelsPerMinute);
+    const scale = timelineWidth / geometry.widthMinutes;
+    const rect = node.getBoundingClientRect();
+    const ghost = element("div", "dc-rs-drag-ghost", occurrence.title);
+    ghost.style.left = `${rect.left}px`;
+    ghost.style.top = `${rect.top}px`;
+    ghost.style.width = `${Math.max(10, rect.width)}px`;
+    ghost.style.height = `${Math.max(20, rect.height)}px`;
+    ghost.hidden = true;
+    this.root.append(ghost);
+    node.setPointerCapture(event.pointerId);
+    node.classList.add("is-drag-source");
+    this.drag = {
+      mode,
+      pointerId: event.pointerId,
+      node,
+      occurrence,
+      sourceResourceId,
+      assignment,
+      originalStart: occurrence.start,
+      originalEnd: occurrence.end,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      scrollStartLeft: scroll.scrollLeft,
+      scrollStartTop: scroll.scrollTop,
+      scale,
+      ghost,
+      moved: false,
+      targetResourceId: sourceResourceId,
+      candidate: undefined,
+    };
+    node.addEventListener("pointermove", this.boundPointerMove);
+    node.addEventListener("pointerup", this.boundPointerUp);
+    node.addEventListener("pointercancel", this.boundPointerCancel);
+    event.preventDefault();
+  }
+
+  private readonly boundPointerMove = (event: PointerEvent): void => {
+    const drag = this.drag;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const scroll = this.root.querySelector<HTMLElement>(".dc-rs-scroll");
+    if (!scroll) return;
+    this.autoScroll(scroll, event.clientX, event.clientY);
+    const dx = event.clientX - drag.startClientX + (scroll.scrollLeft - drag.scrollStartLeft);
+    const dy = event.clientY - drag.startClientY + (scroll.scrollTop - drag.scrollStartTop);
+    if (!drag.moved && Math.hypot(dx, dy) < POINTER_MOVE_THRESHOLD) return;
+    drag.moved = true;
+    drag.ghost.hidden = false;
+    const rawMinutes = dx / drag.scale;
+    const deltaMinutes = snapResourceInteractionMinutes(rawMinutes, this.interactionSnapMinutes());
+    const candidate = this.interactionCandidate(drag, deltaMinutes, event.clientY);
+    drag.candidate = candidate;
+    drag.targetResourceId = candidate?.targetResourceId ?? drag.sourceResourceId;
+    this.updateDragPreview(drag, candidate, event.clientX, event.clientY);
+    event.preventDefault();
+  };
+
+  private readonly boundPointerUp = (event: PointerEvent): void => {
+    const drag = this.drag;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const candidate = drag.candidate;
+    const moved = drag.moved;
+    this.cleanupDrag(drag);
+    if (!moved) return;
+    drag.node.dataset.suppressActivation = "true";
+    if (!candidate?.valid) {
+      this.announce("That placement cannot be targeted.");
+      return;
+    }
+    void this.submitCandidate(drag.node, drag.occurrence, drag.sourceResourceId, drag.assignment, drag.mode, candidate);
+  };
+
+  private readonly boundPointerCancel = (event: PointerEvent): void => {
+    if (!this.drag || event.pointerId !== this.drag.pointerId) return;
+    this.cancelDrag();
+  };
+
+  private interactionCandidate(
+    drag: CalendarResourceDragState,
+    deltaMinutes: number,
+    clientY: number,
+  ): CalendarResourceInteractionCandidate | undefined {
+    let times;
+    if (drag.mode === "move") {
+      times = moveResourceOccurrenceByCivilMinutes(
+        drag.occurrence, deltaMinutes, this.timeZone, this.overlapDisambiguation(),
+      );
+    } else {
+      times = resizeResourceOccurrenceByCivilMinutes(
+        drag.occurrence,
+        drag.mode === "resize-start" ? "start" : "end",
+        deltaMinutes,
+        this.minimumDurationMinutes(),
+        this.timeZone,
+        this.overlapDisambiguation(),
+      );
+    }
+    if (!times) return {
+      start: drag.originalStart,
+      end: drag.originalEnd,
+      targetResourceId: drag.sourceResourceId,
+      toResourceIds: drag.assignment.resourceIds,
+      valid: false,
+    };
+
+    let targetResourceId = drag.sourceResourceId;
+    let toResourceIds = drag.assignment.resourceIds;
+    let valid = true;
+    if (drag.mode === "move") {
+      const target = this.resourceAt(clientY);
+      if (target) {
+        targetResourceId = target.id;
+        valid = target.acceptsAssignments === true;
+        if (valid) {
+          try {
+            toResourceIds = replaceCalendarResourceAssignment(
+              drag.assignment.resourceIds, drag.sourceResourceId, target.id,
+            );
+          } catch {
+            valid = false;
+          }
+        }
+      }
+    }
+    return { ...times, targetResourceId, toResourceIds, valid };
+  }
+
+  private updateDragPreview(
+    drag: CalendarResourceDragState,
+    candidate: CalendarResourceInteractionCandidate | undefined,
+    clientX: number,
+    clientY: number,
+  ): void {
+    drag.ghost.style.left = `${clientX + 8}px`;
+    drag.ghost.style.top = `${clientY + 8}px`;
+    drag.ghost.classList.toggle("is-invalid", candidate?.valid === false);
+    for (const row of this.root.querySelectorAll<HTMLElement>(".dc-rs-resource-row")) {
+      row.classList.remove("is-drop-target", "is-drop-invalid");
+      if (drag.mode !== "move" || !candidate || row.dataset.resourceId !== candidate.targetResourceId) continue;
+      row.classList.add(candidate.valid ? "is-drop-target" : "is-drop-invalid");
+    }
+    if (!candidate) return;
+    const delta = (new Date(candidate.start).getTime() - new Date(drag.originalStart).getTime()) / 60_000;
+    drag.ghost.textContent = drag.mode === "move"
+      ? `${drag.occurrence.title} · ${delta >= 0 ? "+" : ""}${Math.round(delta)} min`
+      : `${drag.occurrence.title} · ${drag.mode === "resize-start" ? "start" : "end"}`;
+  }
+
+  private cleanupDrag(drag: CalendarResourceDragState): void {
+    drag.node.removeEventListener("pointermove", this.boundPointerMove);
+    drag.node.removeEventListener("pointerup", this.boundPointerUp);
+    drag.node.removeEventListener("pointercancel", this.boundPointerCancel);
+    if (drag.node.hasPointerCapture(drag.pointerId)) drag.node.releasePointerCapture(drag.pointerId);
+    drag.node.classList.remove("is-drag-source");
+    drag.ghost.remove();
+    for (const row of this.root.querySelectorAll<HTMLElement>(".dc-rs-resource-row")) {
+      row.classList.remove("is-drop-target", "is-drop-invalid");
+    }
+    if (this.drag === drag) this.drag = undefined;
+  }
+
+  private cancelDrag(): void {
+    if (this.drag) this.cleanupDrag(this.drag);
+  }
+
+  private autoScroll(scroll: HTMLElement, clientX: number, clientY: number): void {
+    const rect = scroll.getBoundingClientRect();
+    if (clientX < rect.left + AUTO_SCROLL_ZONE) scroll.scrollLeft -= AUTO_SCROLL_STEP;
+    else if (clientX > rect.right - AUTO_SCROLL_ZONE) scroll.scrollLeft += AUTO_SCROLL_STEP;
+    if (clientY < rect.top + AUTO_SCROLL_ZONE) scroll.scrollTop -= AUTO_SCROLL_STEP;
+    else if (clientY > rect.bottom - AUTO_SCROLL_ZONE) scroll.scrollTop += AUTO_SCROLL_STEP;
+  }
+
+  private async keyboardMove(
+    node: HTMLElement,
+    occurrence: CalendarOccurrence,
+    sourceResourceId: CalendarResourceId,
+    deltaMinutes: number,
+    resourceDirection: -1 | 0 | 1,
+  ): Promise<void> {
+    const assignment = this.assignmentFor(occurrence.occurrenceId);
+    if (!assignment) return;
+    const times = moveResourceOccurrenceByCivilMinutes(
+      occurrence, deltaMinutes, this.timeZone, this.overlapDisambiguation(),
+    );
+    if (!times) {
+      this.announce("That wall-clock time does not exist.");
+      return;
+    }
+    let targetResourceId = sourceResourceId;
+    let toResourceIds = assignment.resourceIds;
+    if (resourceDirection !== 0) {
+      const rows = flattenCalendarResources(this.projection?.resources ?? [], [...this.collapsed])
+        .filter(row => row.acceptsAssignments);
+      const current = rows.findIndex(row => row.resource.id === sourceResourceId);
+      const target = rows[current + resourceDirection];
+      if (!target) return;
+      targetResourceId = target.resource.id;
+      toResourceIds = replaceCalendarResourceAssignment(assignment.resourceIds, sourceResourceId, targetResourceId);
+    }
+    await this.submitCandidate(node, occurrence, sourceResourceId, assignment, "move", {
+      ...times, targetResourceId, toResourceIds, valid: true,
+    });
+  }
+
+  private async keyboardResize(
+    node: HTMLElement,
+    occurrence: CalendarOccurrence,
+    sourceResourceId: CalendarResourceId,
+    edge: "start" | "end",
+    deltaMinutes: number,
+  ): Promise<void> {
+    const assignment = this.assignmentFor(occurrence.occurrenceId);
+    if (!assignment) return;
+    const times = resizeResourceOccurrenceByCivilMinutes(
+      occurrence, edge, deltaMinutes, this.minimumDurationMinutes(), this.timeZone, this.overlapDisambiguation(),
+    );
+    if (!times) {
+      this.announce("That resize target is not available.");
+      return;
+    }
+    await this.submitCandidate(node, occurrence, sourceResourceId, assignment, edge === "start" ? "resize-start" : "resize-end", {
+      ...times,
+      targetResourceId: sourceResourceId,
+      toResourceIds: assignment.resourceIds,
+      valid: true,
+    });
+  }
+
+  private async submitCandidate(
+    node: HTMLElement,
+    occurrence: CalendarOccurrence,
+    sourceResourceId: CalendarResourceId,
+    assignment: CalendarResourceAssignment,
+    mode: CalendarResourceInteractionMode,
+    candidate: CalendarResourceInteractionCandidate,
+  ): Promise<void> {
+    const interaction = this.interaction;
+    const projection = this.projection;
+    if (!interaction || !projection || this.pendingOccurrences.has(occurrence.occurrenceId)) return;
+    const action = mode === "move"
+      ? (candidate.targetResourceId === sourceResourceId
+        ? "move"
+        : (candidate.start === occurrence.start && candidate.end === occurrence.end ? "resource-reassign" : "resource-time-move"))
+      : mode;
+    let scope: SeriesEditScope | null = "this";
+    try {
+      if (occurrence.recurring && interaction.resolveScope) {
+        scope = await interaction.resolveScope(occurrence, action);
+      }
+    } catch (error) {
+      this.reportError(error);
+      return;
+    }
+    if (scope === null) return;
+    if (!["this", "this-and-following", "all"].includes(scope)) {
+      this.reportError(new Error("Resource Scheduler interaction returned an invalid recurrence scope"));
+      return;
+    }
+    const request: CalendarResourcePlacementRequest = {
+      occurrence,
+      sourceResourceId,
+      targetResourceId: candidate.targetResourceId,
+      fromResourceIds: assignment.resourceIds,
+      toResourceIds: candidate.toResourceIds,
+      start: candidate.start,
+      end: candidate.end,
+      scope,
+      timeZone: this.timeZone,
+      action,
+      ...(assignment.version === undefined ? {} : { assignmentVersion: assignment.version }),
+    };
+
+    this.setOccurrencePending(occurrence.occurrenceId, true);
+    let result: CalendarResourcePlacementExecutionResult;
+    try {
+      const executionOptions: CalendarResourcePlacementExecutionOptions = {
+        ...interaction,
+        source: interaction.sourceForOccurrence?.(occurrence),
+        acceptWarnings: false,
+      };
+      result = await executeCalendarResourcePlacement(projection.resources, request, executionOptions);
+      if (result.status === "warning" && interaction.confirmWarnings) {
+        const accepted = await interaction.confirmWarnings(result.evaluation.messages, request);
+        if (accepted) {
+          result = await executeCalendarResourcePlacement(projection.resources, request, {
+            ...executionOptions,
+            acceptWarnings: true,
+          });
+        }
+      }
+      interaction.onResult?.(result, request);
+      this.announce(this.resultAnnouncement(result, occurrence));
+      if (result.status === "committed" || result.status === "stale") await this.refreshAuthoritativeProjection();
+    } catch (error) {
+      this.reportError(error);
+      this.announce(`${occurrence.title} was not changed.`);
+    } finally {
+      this.setOccurrencePending(occurrence.occurrenceId, false);
+    }
+    if (node.isConnected) node.focus();
+  }
+
+  private resultAnnouncement(
+    result: CalendarResourcePlacementExecutionResult,
+    occurrence: CalendarOccurrence,
+  ): string {
+    if (result.status === "committed") return `${occurrence.title} changed.`;
+    if (result.status === "stale") return `${occurrence.title} changed elsewhere; refreshing authoritative data.`;
+    if (result.status === "warning") return result.evaluation.messages.join(" ");
+    if (result.status === "prevented") return result.evaluation.messages.join(" ");
+    return `${occurrence.title} is already in that position.`;
+  }
+
+  private async refreshAuthoritativeProjection(): Promise<void> {
+    const refreshed = await this.interaction?.refreshProjection?.();
+    if (refreshed) this.setProjection(refreshed);
+  }
+
+  private setOccurrencePending(occurrenceId: string, pending: boolean): void {
+    if (pending) this.pendingOccurrences.add(occurrenceId);
+    else this.pendingOccurrences.delete(occurrenceId);
+    for (const node of this.root.querySelectorAll<HTMLElement>(".dc-rs-event")) {
+      if (node.dataset.occurrenceId !== occurrenceId) continue;
+      node.classList.toggle("is-pending", pending);
+      if (pending) node.setAttribute("aria-busy", "true");
+      else node.removeAttribute("aria-busy");
+    }
   }
 
   private occurrenceContent(
@@ -480,7 +1002,29 @@ export class CalendarResourceSchedulerUi {
     }
 
     const current = (event.target as HTMLElement | null)?.closest<HTMLElement>(".dc-rs-event");
-    if (!current || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+    if (!current) return;
+    const occurrenceId = current.dataset.occurrenceId;
+    const resourceId = current.dataset.resourceId;
+    const occurrence = this.projection?.occurrences.find(row => row.occurrenceId === occurrenceId);
+    if (this.interaction && event.altKey && occurrence && resourceId
+      && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+      event.preventDefault();
+      const horizontal = event.key === "ArrowLeft" ? -this.interactionSnapMinutes()
+        : event.key === "ArrowRight" ? this.interactionSnapMinutes() : 0;
+      const vertical = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
+      void this.keyboardMove(current, occurrence, resourceId, horizontal, vertical as -1 | 0 | 1);
+      return;
+    }
+    if (this.onOccurrenceActivate && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      const resource = resourceId ? this.resourceById(resourceId) : undefined;
+      if (occurrence && resource) {
+        try { this.onOccurrenceActivate(occurrence, resource); }
+        catch (error) { this.reportError(error); }
+      }
+      return;
+    }
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
     const events = [...this.root.querySelectorAll<HTMLElement>(".dc-rs-event")];
     const row = Number(current.dataset.resourceRow);
     const x = Number(current.dataset.xMinutes);

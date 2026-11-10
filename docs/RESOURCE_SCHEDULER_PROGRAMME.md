@@ -121,10 +121,22 @@ R5 does not add interaction handlers to Resource Scheduler UI; pointer/touch/key
 
 Add horizontal time drag, vertical resource reassignment, diagonal combined drag, resize, pointer/touch, keyboard equivalents and interaction preview. Dragging one rendering of a multi-resource occurrence replaces only that resource assignment.
 
+### R6 implementation notes
+
+Resource Scheduler UI interaction is opt-in through `CalendarResourceSchedulerInteractionOptions`; omitting it preserves the R4 read-only surface. Pointer Events provide one path for mouse, pen and touch. Horizontal movement is converted to snapped civil minutes through the existing civil timeline; vertical movement chooses a visible assignable resource; diagonal movement combines both into one R5 request. Start/end resize handles use the same civil-time shift and core interval-resize primitive. DST gaps fail closed and fall-back overlap resolution is explicit.
+
+Dragging one rendering of a multi-resource occurrence uses `replaceCalendarResourceAssignment()`: only the rendered source resource is replaced, every other assignment is retained, and targeting an already-assigned resource removes the rendered source without creating a duplicate. The resulting complete before/after sets are still canonicalized and revalidated by R5.
+
+The UI renders a non-authoritative drag ghost and target-row preview only; it never mutates its projection optimistically. On drop it resolves recurrence scope (defaulting safely to `this`), calls `executeCalendarResourcePlacement()`, optionally asks a host warning-confirmation callback, and performs no second write. Committed and stale outcomes may request a fresh authoritative projection from the host; otherwise hosts can continue to push data through `setProjection()`.
+
+Keyboard equivalents are explicit: Alt+Left/Right moves by the configured snap interval, Alt+Up/Down reassigns the rendered resource to the adjacent visible assignable resource, and focused start/end resize handles use Left/Right to resize that edge. Enter/Space still activates an occurrence when an activation callback exists. Pending state, live-region announcements, focus restoration, touch pointer capture and edge auto-scroll are UI-only concerns.
+
+R6 does not add Resource Scheduler semantics to ordinary Calendar UI, persistence or core event schemas.
+
 ## R7 — Independent closure audit and QA
 
 Verify hierarchy integrity, collapse/order, multi-resource behavior, unassigned events, resource-scoped policy, recurrence scopes, DST/cross-midnight/point occurrences, temporal/resource authority, trusted host projections, stale versions, atomic failure behavior, accessibility and negative dependency/persistence leakage. Then run the complete repository quality gate.
 
-## Current architecture after R5
+## Current architecture after R6
 
-The headless contract lives only under `src/features/resource-scheduler/` and is exported only from `@director/calendar/features/resource-scheduler`. It imports core types only. Base root/core/view remain unchanged and resource-free. R2 provides pure validation/projection mechanics, R3 adds optional headless timeline geometry, R4 adds a separate opt-in read-only DOM timeline and R5 adds a headless placement/authority/atomic-mutation coordinator. The R4 UI remains read-only until R6. Core, ordinary view and Calendar persistence remain resource-free; no Resource Scheduler code is loaded unless its explicit subpaths are imported.
+The headless contract lives only under `src/features/resource-scheduler/` and is exported only from `@director/calendar/features/resource-scheduler`. It imports core types only. Base root/core/view remain unchanged and resource-free. R2 provides pure validation/projection mechanics, R3 adds optional headless timeline geometry, R4 adds a separate opt-in read-only DOM timeline and R5 adds a headless placement/authority/atomic-mutation coordinator. R6 optionally connects the standalone Resource Scheduler UI to the R5 atomic placement executor while preserving a zero-write read-only mode when interaction options are omitted. Core, ordinary view and Calendar persistence remain resource-free; no Resource Scheduler code is loaded unless its explicit subpaths are imported.

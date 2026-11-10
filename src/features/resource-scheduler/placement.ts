@@ -323,6 +323,33 @@ function staleError(error: unknown): boolean {
 }
 
 /**
+ * Replace only the resource represented by one rendered occurrence/resource pair.
+ * Other assignments are preserved; targeting an already-assigned resource removes
+ * the rendered source assignment without creating a duplicate.
+ */
+export function replaceCalendarResourceAssignment(
+  resourceIds: readonly CalendarResourceId[],
+  sourceResourceId: CalendarResourceId,
+  targetResourceId: CalendarResourceId,
+): readonly CalendarResourceId[] {
+  if (!Array.isArray(resourceIds)) throw new Error("Resource assignments must be an array");
+  if (typeof sourceResourceId !== "string" || !sourceResourceId.trim()) throw new Error("Source resource id is invalid");
+  if (typeof targetResourceId !== "string" || !targetResourceId.trim()) throw new Error("Target resource id is invalid");
+  const sourceCount = resourceIds.filter(id => id === sourceResourceId).length;
+  if (sourceCount !== 1) throw new Error(`Rendered source resource ${sourceResourceId} must occur exactly once in the current assignment`);
+  const result: CalendarResourceId[] = [];
+  const seen = new Set<CalendarResourceId>();
+  for (const id of resourceIds) {
+    const next = id === sourceResourceId ? targetResourceId : id;
+    if (!seen.has(next)) {
+      seen.add(next);
+      result.push(next);
+    }
+  }
+  return result;
+}
+
+/**
  * Evaluate one proposed resource/time placement without mutating host state.
  * Temporal policy stays canonical in evaluateCalendarPlacement(); resource policy
  * is composed around it and remains strictly scoped to this optional feature.
@@ -332,6 +359,9 @@ export async function evaluateCalendarResourcePlacement(
   request: CalendarResourcePlacementRequest,
   options: CalendarResourcePlacementEvaluationOptions = {},
 ): Promise<CalendarResourcePlacementEvaluation> {
+  if (!["this", "this-and-following", "all"].includes(String(request.scope))) {
+    return preventedEvaluation(request, "Resource placement recurrence scope is invalid.");
+  }
   let normalized: NormalizedResourceSets;
   try {
     normalized = normalizedResourceSets(resources, request);

@@ -136,7 +136,7 @@ export { layoutResourceTimeline } from "./timeline-layout.js";
 export type { CalendarResourceTimelineLayoutItem, CalendarResourceTimelineLayoutOptions } from "./timeline-layout.js";
 
 
-export { evaluateCalendarResourcePlacement, executeCalendarResourcePlacement } from "./placement.js";
+export { evaluateCalendarResourcePlacement, executeCalendarResourcePlacement, replaceCalendarResourceAssignment } from "./placement.js";
 export type {
   CalendarResourceCollisionProjection,
   CalendarResourcePlacementCollision,

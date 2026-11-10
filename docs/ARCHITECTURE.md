@@ -106,7 +106,7 @@ The base remains resource-free: `CalendarItem`, `CalendarOccurrence` and `Calend
 
 Resource placement is intentionally separate from temporal placement. Later mutation passes compose the existing `evaluateCalendarPlacement()` pipeline with resource target validation, resource-specific guards/collision policy and resource reassignment authority, then submit one `CalendarResourcePlacementChange` through `CalendarResourceMutationPort.commit()`. A combined time/resource drag must never become two independent writes. R5's headless `executeCalendarResourcePlacement()` re-evaluates generic temporal placement plus independent resource policy/authority and then performs exactly one host `CalendarResourceMutationPort.commit()` carrying the complete before/after resource assignment, proposed time, scope and assignment version. Host version checks are atomic with the write; stale rejection is not retried.
 
-The optional DOM timeline is a separate `features/resource-scheduler-ui` subpath. Through R5 it remains a data-driven read-only surface over already-projected resources, occurrences, assignments and a range. It owns collapse/scroll/focus presentation state only, reuses the headless R3 geometry and structured occurrence-presentation resolver, renders empty resource rows and nested headers, and does not fetch providers, expand recurrence, persist data or mutate host state. It is not a `CalendarUiAddon` and does not add a `CalendarView` member.
+The optional DOM timeline is a separate `features/resource-scheduler-ui` subpath. By default it remains a data-driven read-only surface over already-projected resources, occurrences, assignments and a range. It owns collapse/scroll/focus presentation state only, reuses the headless R3 geometry and structured occurrence-presentation resolver, renders empty resource rows and nested headers, and does not fetch providers, expand recurrence, persist data or mutate host state. It is not a `CalendarUiAddon` and does not add a `CalendarView` member.
 
 ### Placement policy
 
@@ -252,3 +252,8 @@ Material changes follow:
 **audit → objectives → implementation → verify objectives → targeted QA**
 
 Run broad QA after substantial cumulative changes and before release/integration milestones. Keep this document current-state only; implementation history belongs in version control.
+
+
+### Resource Scheduler interaction boundary
+
+`features/resource-scheduler-ui` enables mutation only when an explicit interaction configuration supplies the R5 mutation port and authority/policy inputs. Pointer, touch and keyboard gestures produce tentative UI-only geometry, then submit one complete `CalendarResourcePlacementRequest` to `executeCalendarResourcePlacement()`. The UI never writes resource and time separately and never mutates its projected host snapshot optimistically. A multi-resource drag replaces only the rendered resource association; all other associations survive. Hosts remain responsible for authoritative reprojection after commit or stale-version rejection.
