@@ -90,6 +90,23 @@ test('Google publish defaults to fully editable local records rather than a rese
   await adapter.sync(); assert.equal(inserted.length,1);
 });
 
+test('concurrent reminder coordinators share one atomic delivery claim',async()=>{
+  const repo=new Core.MemoryCalendarRepository([source],[event({
+    start:'2026-01-02T10:00:00Z',end:'2026-01-02T11:00:00Z',
+    reminders:[{id:'r',minutesBefore:60,channel:'in-app'}],
+  })]);
+  const receipts=new Reminder.MemoryReminderReceiptStore();
+  let calls=0;
+  const delivery={channel:'in-app',async deliver(){calls++;await new Promise(resolve=>setTimeout(resolve,10));return true;}};
+  const options={engine:new Core.CalendarEngine(repo),receipts,deliveries:[delivery],timeZone:'UTC',lookBackMinutes:15};
+  const [first,second]=await Promise.all([
+    new Reminder.ReminderCoordinator(options).check(new Date('2026-01-02T09:00:00Z')),
+    new Reminder.ReminderCoordinator(options).check(new Date('2026-01-02T09:00:00Z')),
+  ]);
+  assert.equal(calls,1);
+  assert.equal(first.length+second.length,1);
+});
+
 test('failed reminder delivery remains retryable', async()=>{
   const repo=new Core.MemoryCalendarRepository([source],[event({start:'2026-01-02T10:00:00Z',end:'2026-01-02T11:00:00Z',reminders:[{id:'r',minutesBefore:60,channel:'in-app'}]})]);
   const receipts=new Reminder.MemoryReminderReceiptStore(); let calls=0;
