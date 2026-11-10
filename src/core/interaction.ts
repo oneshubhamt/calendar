@@ -1,6 +1,7 @@
 import type {
   CalendarCollisionPolicy,
   CalendarItemPatch,
+  CalendarNavigationBounds,
   CalendarOccurrence,
   CalendarPlacementContext,
   CalendarPlacementGuard,
@@ -8,7 +9,7 @@ import type {
   CalendarSnapPolicy,
   CalendarSnapStrategy,
 } from "./types.js";
-import { dateKey, snapDate, toDate } from "./time.js";
+import { addDays, dateKey, snapDate, startOfDay, toDate } from "./time.js";
 
 export const DEFAULT_SNAP_POLICY: Required<CalendarSnapPolicy> = Object.freeze({
   selection: "round",
@@ -90,6 +91,116 @@ export async function evaluatePlacementGuards(
     if (decision.mode === "warn") warnings.push(message ?? "This placement may violate a scheduling policy.");
   }
   return warnings.length ? { mode: "warn", messages: warnings } : { mode: "allow", messages: [] };
+}
+
+
+
+export interface CalendarPlacementEvaluation {
+  readonly mode: CalendarPlacementGuardMode;
+  readonly messages: readonly string[];
+  readonly collisions: readonly PlacementCollision[];
+}
+
+export interface CalendarPlacementEvaluationOptions {
+  readonly navigationBounds?: CalendarNavigationBounds | undefined;
+  readonly guards?: readonly CalendarPlacementGuard[] | undefined;
+  readonly collisionPolicy?: CalendarCollisionPolicy | undefined;
+  /**
+   * Lazy event-only occurrence source used only when collision policy requires it.
+   * Consumers decide how occurrences are queried; placement semantics stay centralized here.
+   */
+  readonly loadCollisionOccurrences?: (
+    context: CalendarPlacementContext,
+  ) => Promise<readonly CalendarOccurrence[]> | readonly CalendarOccurrence[];
+}
+
+export function placementInNavigationBounds(
+  start: Date,
+  end: Date,
+  bounds: CalendarNavigationBounds | undefined,
+  timeZone: string,
+): boolean {
+  const min = bounds?.min ? startOfDay(bounds.min, timeZone).getTime() : Number.NEGATIVE_INFINITY;
+  const maxExclusive = bounds?.max ? addDays(startOfDay(bounds.max, timeZone), 1, timeZone).getTime() : Number.POSITIVE_INFINITY;
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  if (startMs === endMs) return startMs >= min && startMs < maxExclusive;
+  return endMs > startMs && startMs >= min && endMs <= maxExclusive;
+}
+
+/**
+ * Canonical temporal placement evaluation shared by Calendar-owned scheduling surfaces.
+ * DOM confirmation/announcement remains a presentation responsibility of the caller.
+ */
+export async function evaluateCalendarPlacement(
+  context: CalendarPlacementContext,
+  options: CalendarPlacementEvaluationOptions = {},
+): Promise<CalendarPlacementEvaluation> {
+  const start = toDate(context.start);
+  const end = toDate(context.end);
+  if (!placementInNavigationBounds(start, end, options.navigationBounds, context.timeZone)) {
+    return {
+      mode: "prevent",
+      messages: ["This placement is outside the allowed calendar date range."],
+      collisions: [],
+    };
+  }
+
+  const guardEvaluation = await evaluatePlacementGuards(options.guards, context);
+  if (guardEvaluation.mode === "prevent") {
+    return { ...guardEvaluation, collisions: [] };
+  }
+
+  const warnings = [...guardEvaluation.messages];
+  const collisionPolicy = options.collisionPolicy ?? DEFAULT_COLLISION_POLICY;
+  let collisions: readonly PlacementCollision[] = [];
+  if (collisionPolicy.mode !== "allow") {
+    if (!options.loadCollisionOccurrences) {
+      return {
+        mode: "prevent",
+        messages: ["Scheduling conflicts could not be evaluated."],
+        collisions: [],
+      };
+    }
+
+    let occurrences: readonly CalendarOccurrence[];
+    try {
+      occurrences = await options.loadCollisionOccurrences(context);
+    } catch {
+      return {
+        mode: "prevent",
+        messages: ["Scheduling conflicts could not be evaluated."],
+        collisions: [],
+      };
+    }
+
+    collisions = placementCollisions(
+      occurrences,
+      start,
+      end,
+      context.allDay,
+      collisionPolicy,
+      context.occurrence?.occurrenceId,
+    );
+    if (collisions.length) {
+      const names = [...new Set(collisions.map(row => row.occurrence.title))];
+      const summary = names.slice(0, 3).join(", ") + (names.length > 3 ? ` and ${names.length - 3} more` : "");
+      if (collisionPolicy.mode === "prevent") {
+        return {
+          mode: "prevent",
+          messages: [`This placement overlaps ${summary}.`],
+          collisions,
+        };
+      }
+      warnings.push(`It overlaps ${summary}.`);
+    }
+  }
+
+  return {
+    mode: warnings.length ? "warn" : "allow",
+    messages: warnings,
+    collisions,
+  };
 }
 
 export function placementCollisions(
