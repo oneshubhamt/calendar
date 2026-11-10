@@ -101,14 +101,16 @@ export function validateRecurrenceRule(rule: RecurrenceRule): void {
 
 export function resolveTemporalSeriesAnchor(
   series: CalendarTemporalSeries,
+  rule?: RecurrenceRule,
   options: RecurrenceExpansionOptions = {},
 ): CalendarResolvedTemporalRange {
+  if (rule) validateRecurrenceRule(rule);
   const candidate = resolveAnchor(series, contextFor(series, options));
   return {
     originalStart: candidate.identity,
     start: new Date(candidate.startEpochMs).toISOString(),
     end: new Date(candidate.endEpochMs).toISOString(),
-    recurring: false,
+    recurring: Boolean(rule),
   };
 }
 
