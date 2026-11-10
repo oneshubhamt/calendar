@@ -417,7 +417,6 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
 
     if (typeof window === "undefined") return;
     try {
-      const storage = window.localStorage;
       const listener = (event: StorageEvent): void => {
         if (event.key !== key || event.newValue === null || !this.loaded) return;
         const revision = Number(event.newValue);
