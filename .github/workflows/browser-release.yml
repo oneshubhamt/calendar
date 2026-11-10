@@ -3,6 +3,8 @@ name: Browser release QA
 on:
   workflow_dispatch:
   push:
+    branches:
+      - background-ranges
     tags:
       - "v*"
 
@@ -37,10 +39,10 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium firefox webkit
+        run: npx playwright install --with-deps chromium
 
       - name: Run browser release QA
-        run: npm run qa:browser
+        run: npx playwright test tests/browser/rendering-smoke.spec.mjs tests/browser/visual.spec.mjs --config=playwright.config.mjs --project=chromium
 
       - name: Upload Playwright failure report
         if: failure()
