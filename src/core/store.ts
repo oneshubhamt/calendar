@@ -67,6 +67,11 @@ function assertMetadata(value: unknown, label: string): void {
   assertJsonLike(value, label, true, true);
 }
 
+/** Validate a generic Calendar metadata envelope without assigning semantic meaning to its keys. */
+export function assertCalendarMetadataIntegrity(value: unknown, label = "Calendar metadata"): void {
+  assertMetadata(value, label);
+}
+
 function assertSourceIntegrity(source: CalendarSource): void {
   const raw = record(source, "Calendar source");
   requiredText(raw.id, "Calendar source id");
