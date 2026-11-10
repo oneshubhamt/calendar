@@ -1,4 +1,4 @@
-import type { CalendarEventFields, CalendarItem, CalendarItemId, CalendarItemPatch, CalendarOccurrence, CalendarRepository, CalendarSnapshot, CalendarSource, CalendarSourcePatch } from "./types.js";
+import type { CalendarBackgroundRange, CalendarEventFields, CalendarItem, CalendarItemId, CalendarItemPatch, CalendarOccurrence, CalendarRepository, CalendarSnapshot, CalendarSource, CalendarSourcePatch } from "./types.js";
 import { occurrenceFromItem, validateRecurrenceRule } from "./recurrence.js";
 import { parsePlainDate } from "./temporal.js";
 import { hasExplicitOffset } from "./time.js";
@@ -204,6 +204,44 @@ export function assertCalendarOccurrenceIntegrity(sources: readonly CalendarSour
     if (!sourceIds.has(occurrence.calendarId)) throw new Error(`Unknown calendar source: ${occurrence.calendarId}`);
     if (occurrenceIds.has(occurrenceId)) throw new Error(`Duplicate calendar occurrence: ${occurrenceId}`);
     occurrenceIds.add(occurrenceId);
+  }
+}
+
+
+/** Validate passive, already-resolved background ranges without treating them as calendar events. */
+export function assertCalendarBackgroundRangeIntegrity(
+  sources: readonly CalendarSource[],
+  ranges: readonly CalendarBackgroundRange[],
+): void {
+  if (!Array.isArray(sources) || !Array.isArray(ranges)) throw new Error("Calendar background range collections are invalid");
+  const sourceIds = new Set<string>();
+  for (const source of sources) {
+    assertSourceIntegrity(source);
+    if (sourceIds.has(source.id)) throw new Error(`Duplicate calendar source: ${source.id}`);
+    sourceIds.add(source.id);
+  }
+
+  const rangeIds = new Set<string>();
+  for (const range of ranges) {
+    const raw = record(range, "Calendar background range");
+    const id = requiredText(raw.id, "Calendar background range id");
+    const label = `Calendar background range ${id}`;
+    const start = assertAbsoluteInstant(raw.start, `${label} start`);
+    const end = assertAbsoluteInstant(raw.end, `${label} end`);
+    if (Date.parse(end) <= Date.parse(start)) throw new Error(`${label} must end after it starts`);
+
+    if (raw.allDay !== undefined && typeof raw.allDay !== "boolean") throw new Error(`${label} allDay flag is invalid`);
+    if (raw.calendarId !== undefined) {
+      const calendarId = requiredText(raw.calendarId, `${label} calendar id`);
+      if (!sourceIds.has(calendarId)) throw new Error(`Unknown calendar source: ${calendarId}`);
+    }
+    if (raw.label !== undefined) {
+      if (typeof raw.label !== "string" || !raw.label.trim() || raw.label.length > 2048) throw new Error(`${label} label is invalid`);
+    }
+    if (raw.metadata !== undefined) assertMetadata(raw.metadata, `${label} metadata`);
+
+    if (rangeIds.has(id)) throw new Error(`Duplicate calendar background range: ${id}`);
+    rangeIds.add(id);
   }
 }
 
