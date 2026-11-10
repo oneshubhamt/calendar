@@ -133,7 +133,7 @@ B5 is complete through the explicit `features/availability` subpath. `CalendarAv
 
 B6 is complete. `CalendarPlacementGuard` is a generic core contract with `allow` / `warn` / `prevent` decisions; runtime failures and malformed/duplicate guards fail closed. The view evaluates all guards through the existing central `allowPlacement()` gate, aggregates guard and collision warnings into one confirmation, and carries the target `calendarId` so source-specific policies do not rely on inference. Built-in create/duplicate/edit, pointer and native drag/drop moves, resize, keyboard transformations and add-on mutation helpers all pass through this gate. Custom host `handleCreate` / `handleEdit` callbacks receive a `CalendarPlacementValidationPort` for validating the final draft they own. `features/availability` adds an explicit `createAvailabilityPlacementGuard()` with `exclude-unavailable` and `require-available` policies and configurable `warn` / `prevent` strength. Background providers alone remain purely visual and non-enforcing.
 
-### B7 — Targeted QA and architecture audit
+### B7 — Targeted QA and architecture audit ✅
 
 Verify at minimum:
 
@@ -148,6 +148,10 @@ Verify at minimum:
 - backgrounds never enter collision detection, event layout, agenda, event counts, search, reminders, actions or recurrence commands;
 - core/view remain generic and optional features remain removable.
 
+B7 is complete. The closure audit rechecked B1–B6 source-by-source rather than relying on the implementation notes. Existing behavioral coverage verifies spring-forward gaps, fall-back overlaps, cross-midnight clipping, overlapping background geometry, query filtering, provider invalidation, optional source visibility, navigation bounds and unchanged create/move/resize/keyboard mechanics. A dedicated architecture-closure regression now verifies that background ranges do not enter collision logic, commands, recurrence, personal search, reminders, occurrence presentation/actions, timed-event layout, Year or Agenda, and that availability remains absent from the root/view dependency graph. The optional availability feature imports core only, remains an explicit package subpath and owns no persistence. The full typecheck/test/package gate passes on the closure head.
+
+The independent source audit found no unresolved in-scope code defect. It did find stale documentation that still described placement policy as future and omitted `features/availability` from the dependency rule; those documentation defects were corrected before closure.
+
 ## Completion criterion
 
-The programme is complete only when background ranges are a small generic temporal primitive, availability remains optional policy, and existing event mechanics do not acquire hidden coupling to either concept.
+**Met.** Background ranges are a small generic temporal primitive, availability remains an optional semantic/policy feature, enforcement is explicit rather than inferred from rendering, and existing event mechanics have no hidden dependency on either concept.
