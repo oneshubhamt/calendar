@@ -34,7 +34,7 @@ export function assertCanonicalCalendarDatabase(db: IDBDatabase): void {
 }
 
 export async function openCalendarDatabase(
-  databaseName = DEFAULT_CALENDAR_DATABASE_NAME,
+  databaseName: string = DEFAULT_CALENDAR_DATABASE_NAME,
 ): Promise<IDBDatabase> {
   if (typeof indexedDB === "undefined") throw new Error("IndexedDB is unavailable");
 
