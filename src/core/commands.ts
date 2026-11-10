@@ -11,6 +11,7 @@ import type {
   RecurrenceException,
 } from "./types.js";
 import { projectTemporalPatchToSeries, rebaseTemporalSeriesExceptions, sameRecurrence, temporalSeriesIdentityAtOrdinal, temporalSeriesOrdinal } from "./recurrence.js";
+import { applyCalendarItemPatch, assertCalendarStateIntegrity } from "./store.js";
 
 /** Host/repository command rejection caused by an obsolete authoritative revision. */
 export class CalendarCommandStaleError extends Error {
@@ -222,6 +223,53 @@ async function applyOccurrencePatch(
   await repository.create(second!);
 }
 
+/**
+ * Command-local mutable staging repository. It preserves references to unchanged
+ * immutable snapshot entities and never publishes notifications or durable writes.
+ * RepositoryCommandHandler commits its final item set once through replace().
+ */
+class CommandStagingRepository implements CalendarRepository {
+  private items: CalendarItem[];
+
+  public constructor(
+    private readonly sources: readonly CalendarSource[],
+    initialItems: readonly CalendarItem[],
+    private readonly revision: number,
+  ) {
+    this.items = [...initialItems];
+  }
+
+  public read() {
+    return { sources: this.sources, items: this.items, revision: this.revision };
+  }
+
+  public create(item: CalendarItem): void {
+    const next = [...this.items, item];
+    assertCalendarStateIntegrity(this.sources, next);
+    this.items = next;
+  }
+
+  public update(id: string, patch: CalendarItemPatch): void {
+    const index = this.items.findIndex(item => item.id === id);
+    if (index < 0) throw new Error(`Calendar item not found: ${id}`);
+    const next = this.items.map((item, i) => i === index ? applyCalendarItemPatch(item, patch) : item);
+    assertCalendarStateIntegrity(this.sources, next);
+    this.items = next;
+  }
+
+  public remove(id: string): void {
+    const next = this.items.filter(item => item.id !== id);
+    if (next.length === this.items.length) throw new Error(`Calendar item not found: ${id}`);
+    assertCalendarStateIntegrity(this.sources, next);
+    this.items = next;
+  }
+
+  public replace(items: readonly CalendarItem[]): void {
+    assertCalendarStateIntegrity(this.sources, items);
+    this.items = [...items];
+  }
+}
+
 interface HistoryEntry {
   readonly before: readonly CalendarItem[];
   readonly after: readonly CalendarItem[];
@@ -289,15 +337,22 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
 
   public async execute(command: CalendarCommand, context: CalendarCommandContext): Promise<void> {
     const beforeSnapshot = this.repository.read();
-    const before = cloneItems(beforeSnapshot.items);
-    const beforeSources = cloneSources(beforeSnapshot.sources);
-    await this.executeAtomic(command, context);
+    const staged = new CommandStagingRepository(beforeSnapshot.sources, beforeSnapshot.items, beforeSnapshot.revision);
+    await this.executeAtomic(staged, command, context);
+    const stagedItems = staged.read().items;
+    if (sameItems(beforeSnapshot.items, stagedItems)) return;
+
+    // One authoritative repository mutation per logical Calendar command. This makes
+    // multi-record operations such as recurrence splitting durable atomically.
+    await this.repository.replace(stagedItems);
+
     const afterSnapshot = this.repository.read();
-    const after = cloneItems(afterSnapshot.items);
-    const afterSources = cloneSources(afterSnapshot.sources);
-    if (sameItems(before, after)) return;
-    if (!sameSources(beforeSources, afterSources)) return;
-    this.undoStack.push({ before, after, sources: afterSources });
+    if (!sameSources(beforeSnapshot.sources, afterSnapshot.sources)) return;
+    this.undoStack.push({
+      before: cloneItems(beforeSnapshot.items),
+      after: cloneItems(afterSnapshot.items),
+      sources: cloneSources(afterSnapshot.sources),
+    });
     if (this.undoStack.length > Math.max(1, this.historyLimit)) this.undoStack.shift();
     this.redoStack.length = 0;
   }

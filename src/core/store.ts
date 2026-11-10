@@ -301,67 +301,120 @@ export function applyCalendarSourcePatch(source: CalendarSource, patch: Calendar
   };
 }
 
+function deepFreezeCalendarValue<T>(value: T, seen = new WeakSet<object>()): T {
+  if (!value || typeof value !== "object") return value;
+  const object = value as object;
+  if (seen.has(object)) return value;
+  seen.add(object);
+  for (const child of Object.values(object as Record<string, unknown>)) deepFreezeCalendarValue(child, seen);
+  return Object.freeze(value);
+}
+
+function cloneFrozenCalendarValue<T>(value: T): T {
+  return deepFreezeCalendarValue(structuredClone(value));
+}
+
+function ownCalendarCollection<T extends { readonly id: string }>(
+  current: readonly T[] | undefined,
+  next: readonly T[],
+): readonly T[] {
+  const currentById = new Map((current ?? []).map(value => [value.id, value] as const));
+  const owned = next.map(value => {
+    const existing = currentById.get(value.id);
+    return existing === value && Object.isFrozen(value) ? value : cloneFrozenCalendarValue(value);
+  });
+  return Object.freeze(owned);
+}
+
+/**
+ * Build a runtime-immutable repository snapshot. Unchanged already-owned entities are
+ * structurally shared; external/new values are cloned exactly once and deeply frozen.
+ */
+export function materializeCalendarSnapshot(
+  current: CalendarSnapshot | undefined,
+  sources: readonly CalendarSource[],
+  items: readonly CalendarItem[],
+  revision: number,
+): CalendarSnapshot {
+  if (!Number.isInteger(revision) || revision < 0) throw new RangeError("Calendar revision must be a non-negative integer");
+  assertCalendarStateIntegrity(sources, items);
+  const snapshot: CalendarSnapshot = {
+    sources: ownCalendarCollection(current?.sources, sources),
+    items: ownCalendarCollection(current?.items, items),
+    revision,
+  };
+  return Object.freeze(snapshot);
+}
+
 export class MemoryCalendarRepository implements CalendarRepository {
-  private items: CalendarItem[];
-  private sources: CalendarSource[];
-  private revision = 0;
+  private snapshotValue: CalendarSnapshot;
   private readonly listeners = new Set<(snapshot: CalendarSnapshot) => void>();
 
   public constructor(initialSources: readonly CalendarSource[], initialItems: readonly CalendarItem[] = []) {
-    assertCalendarStateIntegrity(initialSources, initialItems);
-    this.sources = [...initialSources];
-    this.items = [...initialItems];
+    this.snapshotValue = materializeCalendarSnapshot(undefined, initialSources, initialItems, 0);
   }
 
   public read(): CalendarSnapshot {
-    return { sources: this.sources, items: this.items, revision: this.revision };
+    return this.snapshotValue;
   }
 
   public create(item: CalendarItem): void {
-    const next = [...this.items, item];
-    assertCalendarStateIntegrity(this.sources, next);
-    this.items = next; this.changed();
+    this.commit(this.snapshotValue.sources, [...this.snapshotValue.items, item]);
   }
 
   public update(id: CalendarItemId, patch: CalendarItemPatch): void {
-    const index = this.items.findIndex(item => item.id === id);
+    const index = this.snapshotValue.items.findIndex(item => item.id === id);
     if (index < 0) throw new Error(`Calendar item not found: ${id}`);
-    const updated = applyCalendarItemPatch(this.items[index]!, patch);
-    const next = this.items.map((item, i) => i === index ? updated : item);
-    assertCalendarStateIntegrity(this.sources, next);
-    this.items = next; this.changed();
+    const updated = applyCalendarItemPatch(this.snapshotValue.items[index]!, patch);
+    this.commit(
+      this.snapshotValue.sources,
+      this.snapshotValue.items.map((item, i) => i === index ? updated : item),
+    );
   }
 
   public remove(id: CalendarItemId): void {
-    const next = this.items.filter(item => item.id !== id);
-    if (next.length === this.items.length) throw new Error(`Calendar item not found: ${id}`);
-    this.items = next; this.changed();
+    const next = this.snapshotValue.items.filter(item => item.id !== id);
+    if (next.length === this.snapshotValue.items.length) throw new Error(`Calendar item not found: ${id}`);
+    this.commit(this.snapshotValue.sources, next);
   }
 
-  public replace(items: readonly CalendarItem[]): void { assertCalendarStateIntegrity(this.sources, items); this.items = [...items]; this.changed(); }
+  public replace(items: readonly CalendarItem[]): void {
+    this.commit(this.snapshotValue.sources, items);
+  }
 
   public createSource(source: CalendarSource): void {
-    const next = [...this.sources, source];
-    assertCalendarStateIntegrity(next, this.items);
-    this.sources = next; this.changed();
+    this.commit([...this.snapshotValue.sources, source], this.snapshotValue.items);
   }
 
   public updateSource(id: string, patch: CalendarSourcePatch): void {
-    const index = this.sources.findIndex(source => source.id === id);
+    const index = this.snapshotValue.sources.findIndex(source => source.id === id);
     if (index < 0) throw new Error(`Calendar source not found: ${id}`);
-    const next = this.sources.map((source, i) => i === index ? applyCalendarSourcePatch(source, patch) : source);
-    assertCalendarStateIntegrity(next, this.items);
-    this.sources = next; this.changed();
+    const next = this.snapshotValue.sources.map((source, i) => i === index ? applyCalendarSourcePatch(source, patch) : source);
+    this.commit(next, this.snapshotValue.items);
   }
 
   public removeSource(id: string): void {
-    const source = this.sources.find(row => row.id === id);
+    const source = this.snapshotValue.sources.find(row => row.id === id);
     if (!source) throw new Error(`Calendar source not found: ${id}`);
     if (source.removable !== true) throw new Error("Calendar source is not removable");
-    if (this.items.some(item => item.calendarId === id)) throw new Error("Move or delete events from this calendar before removing it");
-    this.sources = this.sources.filter(row => row.id !== id); this.changed();
+    if (this.snapshotValue.items.some(item => item.calendarId === id)) {
+      throw new Error("Move or delete events from this calendar before removing it");
+    }
+    this.commit(this.snapshotValue.sources.filter(row => row.id !== id), this.snapshotValue.items);
   }
 
-  public subscribe(listener: (snapshot: CalendarSnapshot) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  private changed(): void { this.revision += 1; const snapshot = this.read(); for (const listener of this.listeners) listener(snapshot); }
+  public subscribe(listener: (snapshot: CalendarSnapshot) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private commit(sources: readonly CalendarSource[], items: readonly CalendarItem[]): void {
+    this.snapshotValue = materializeCalendarSnapshot(
+      this.snapshotValue,
+      sources,
+      items,
+      this.snapshotValue.revision + 1,
+    );
+    for (const listener of this.listeners) listener(this.snapshotValue);
+  }
 }

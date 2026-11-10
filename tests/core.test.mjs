@@ -447,3 +447,84 @@ test('generic snap and absolute-instant helpers are shared fail-closed core prim
   assert.throws(()=>C.parseAbsoluteDateTime('2026-11-10T09:00:00'),/absolute ISO date-time/i);
   assert.throws(()=>C.parseAbsoluteDateTime('not-a-dateZ'),/valid absolute ISO date-time/i);
 });
+
+
+test('repository snapshots are runtime-immutable, isolated at ingress and copy-on-write',()=>{
+  const mutableSource={id:'immutable-source',title:'Immutable',visible:true,metadata:{nested:{value:'source'}}};
+  const mutableItem={
+    id:'immutable-item',calendarId:'immutable-source',title:'Original',
+    start:'2026-11-10T09:00:00.000Z',end:'2026-11-10T10:00:00.000Z',
+    kind:'event',ownership:'calendar',editPolicy:'full',
+    metadata:{nested:{value:'item'}},
+  };
+  const repo=new C.MemoryCalendarRepository([mutableSource],[mutableItem]);
+  const first=repo.read();
+
+  mutableSource.title='Mutated outside';
+  mutableSource.metadata.nested.value='mutated';
+  mutableItem.title='Mutated outside';
+  mutableItem.metadata.nested.value='mutated';
+
+  assert.equal(first.sources[0].title,'Immutable');
+  assert.equal(first.sources[0].metadata.nested.value,'source');
+  assert.equal(first.items[0].title,'Original');
+  assert.equal(first.items[0].metadata.nested.value,'item');
+  assert.equal(Object.isFrozen(first),true);
+  assert.equal(Object.isFrozen(first.sources),true);
+  assert.equal(Object.isFrozen(first.items),true);
+  assert.equal(Object.isFrozen(first.sources[0]),true);
+  assert.equal(Object.isFrozen(first.items[0].metadata.nested),true);
+  assert.throws(()=>{ first.items.push(mutableItem); },TypeError);
+  assert.throws(()=>{ first.items[0].metadata.nested.value='escape'; },TypeError);
+  assert.strictEqual(repo.read(),first,'reads reuse one immutable snapshot until state changes');
+
+  const unchanged=first.items[0];
+  repo.create({
+    id:'second-item',calendarId:'immutable-source',title:'Second',
+    start:'2026-11-10T11:00:00.000Z',end:'2026-11-10T12:00:00.000Z',
+    kind:'event',ownership:'calendar',editPolicy:'full',
+  });
+  const second=repo.read();
+  assert.notStrictEqual(second,first);
+  assert.strictEqual(second.items[0],unchanged,'unchanged owned entities are structurally shared');
+  assert.equal(second.revision,1);
+});
+
+test('RepositoryCommandHandler commits each logical command through one authoritative replace',async()=>{
+  const source={id:'atomic-source',title:'Atomic',visible:true};
+  const series={
+    id:'atomic-series',calendarId:'atomic-source',title:'Series',
+    start:'2026-11-10T09:00:00.000Z',end:'2026-11-10T10:00:00.000Z',
+    kind:'event',ownership:'calendar',editPolicy:'full',seriesId:'atomic-series',
+    recurrence:{rule:{frequency:'daily',count:4}},
+  };
+  const base=new C.MemoryCalendarRepository([source],[series]);
+  const occurrence=C.expandItem(series,{
+    start:'2026-11-12T00:00:00.000Z',end:'2026-11-13T00:00:00.000Z',
+  },{timeZone:'UTC'})[0];
+
+  let snapshot=base.read();
+  let replaces=0, directMutations=0;
+  const repository={
+    read:()=>snapshot,
+    create(){directMutations+=1;throw new Error('authoritative create must not be called');},
+    update(){directMutations+=1;throw new Error('authoritative update must not be called');},
+    remove(){directMutations+=1;throw new Error('authoritative remove must not be called');},
+    replace(items){
+      replaces+=1;
+      const next=new C.MemoryCalendarRepository(snapshot.sources,items);
+      snapshot=Object.freeze({...next.read(),revision:snapshot.revision+1});
+    },
+  };
+  const handler=new C.RepositoryCommandHandler(repository);
+  await handler.execute({
+    type:'move-occurrence',occurrence,
+    start:'2026-11-12T11:00:00.000Z',end:'2026-11-12T12:00:00.000Z',
+    scope:'this-and-following',
+  },{now:'2026-11-01T00:00:00.000Z',timeZone:'UTC'});
+
+  assert.equal(directMutations,0);
+  assert.equal(replaces,1);
+  assert.equal(snapshot.items.length,2);
+  assert.deepEqual(snapshot.items.map(item=>item.recurrence?.rule.count),[2,2]);
+});
