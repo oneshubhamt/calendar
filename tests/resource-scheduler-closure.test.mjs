@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import path from "node:path";
 import * as Calendar from "../dist/index.js";
 import {
   associateCalendarResources,
@@ -48,7 +47,7 @@ const trustedTemporal={capabilities(){return {commandPath:"trusted-host",canMove
 async function filesUnder(root){
   const out=[];
   for(const entry of await fs.readdir(root,{withFileTypes:true})){
-    const full=path.join(root,entry.name);
+    const full=new URL(entry.name+(entry.isDirectory()?"/":""),root);
     if(entry.isDirectory()) out.push(...await filesUnder(full));
     else if(entry.isFile() && /\.(?:ts|tsx|js|mjs)$/u.test(entry.name)) out.push(full);
   }
@@ -251,7 +250,6 @@ test("R7 package, accessibility and dependency/persistence isolation close indep
   assert.equal(root.layoutResourceTimeline,undefined);
   assert.equal(root.CalendarResourceSchedulerUi,undefined);
 
-  const sourceRoot=new URL("../src/",import.meta.url);
   const forbidden=/CalendarResource|resource-scheduler|resourceTimeline|\bresourceIds?\b/u;
   for(const relative of ["core","view","storage"]){
     for(const file of await filesUnder(new URL(`../src/${relative}/`,import.meta.url))){
@@ -282,5 +280,4 @@ test("R7 package, accessibility and dependency/persistence isolation close indep
   assert.match(styles,/touch-action:none/);
   assert.match(styles,/prefers-reduced-motion/);
 
-  void sourceRoot;
 });
