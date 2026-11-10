@@ -14,7 +14,6 @@ import type {
 } from "../core/types.js";
 import type { CalendarClock } from "../core/time.js";
 import type {
-  CalendarCreateDraft,
   CalendarPlacementValidationPort,
   CalendarSourceActionPort,
 } from "./types.js";
@@ -37,6 +36,14 @@ export type CalendarMutationDispatchResult = CalendarCommandLifecycleStatus | "c
 
 export function mutationCommitted(status: CalendarMutationDispatchResult): boolean {
   return status === "completed" || status === "committed-refresh-failed";
+}
+
+interface CalendarMutationPlacementDraft {
+  readonly calendarId: CalendarId;
+  readonly start: string;
+  readonly end: string;
+  readonly allDay?: boolean | undefined;
+  readonly temporal?: CalendarTemporalSpec | undefined;
 }
 
 interface CalendarMutationCoordinatorOptions {
@@ -243,7 +250,7 @@ export class CalendarMutationCoordinator {
   }
 
   public async allowDraftPlacement(
-    draft: Pick<CalendarCreateDraft, "start" | "end" | "temporal" | "allDay" | "calendarId">,
+    draft: CalendarMutationPlacementDraft,
     original: CalendarOccurrence | undefined,
     action: string,
   ): Promise<boolean> {
