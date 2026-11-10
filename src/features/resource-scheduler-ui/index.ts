@@ -32,6 +32,7 @@ const MAX_AXIS_TICKS = 240;
 const POINTER_MOVE_THRESHOLD = 4;
 const AUTO_SCROLL_ZONE = 32;
 const AUTO_SCROLL_STEP = 18;
+let schedulerUiSequence = 0;
 
 type CalendarResourceInteractionMode = "move" | "resize-start" | "resize-end";
 
@@ -51,7 +52,6 @@ interface CalendarResourceDragState {
   readonly scale: number;
   readonly ghost: HTMLElement;
   moved: boolean;
-  targetResourceId: CalendarResourceId;
   candidate: CalendarResourceInteractionCandidate | undefined;
 }
 
@@ -158,6 +158,7 @@ export class CalendarResourceSchedulerUi {
   private readonly onCollapseChange: CalendarResourceSchedulerUiOptions["onCollapseChange"];
   private readonly onError: CalendarResourceSchedulerUiOptions["onError"];
   private readonly interaction: CalendarResourceSchedulerInteractionOptions | undefined;
+  private readonly interactionHelpId: string;
   private readonly status: HTMLElement;
   private readonly pendingOccurrences = new Set<string>();
   private collapsed = new Set<CalendarResourceId>();
@@ -180,6 +181,7 @@ export class CalendarResourceSchedulerUi {
     this.onCollapseChange = options.onCollapseChange;
     this.onError = options.onError;
     this.interaction = options.interaction;
+    this.interactionHelpId = `dc-rs-interaction-help-${++schedulerUiSequence}`;
     if (this.interaction) {
       positiveNumber(this.interaction.snapMinutes, 15, "interaction.snapMinutes");
       positiveNumber(this.interaction.minimumDurationMinutes, 5, "interaction.minimumDurationMinutes");
@@ -310,7 +312,7 @@ export class CalendarResourceSchedulerUi {
     scroll.tabIndex = 0;
     if (this.interaction) {
       const help = element("div", "dc-rs-sr-only", "Use Alt+Left/Right to move in time and Alt+Up/Down to move between resources. Focus a resize handle and use Left/Right to resize.");
-      help.id = "dc-rs-interaction-help";
+      help.id = this.interactionHelpId;
       scroll.append(help);
     }
     scroll.setAttribute("role", "region");
@@ -509,7 +511,7 @@ export class CalendarResourceSchedulerUi {
     node.setAttribute("aria-label", label);
     node.append(this.occurrenceContent(occurrence, presentation));
     if (interactive) {
-      node.setAttribute("aria-describedby", "dc-rs-interaction-help");
+      node.setAttribute("aria-describedby", this.interactionHelpId);
       node.addEventListener("pointerdown", event => this.onOccurrencePointerDown(event, node, occurrence, layout.resourceId, "move"));
       if (layout.temporalForm !== "point") {
         node.append(
@@ -629,7 +631,6 @@ export class CalendarResourceSchedulerUi {
       scale,
       ghost,
       moved: false,
-      targetResourceId: sourceResourceId,
       candidate: undefined,
     };
     node.addEventListener("pointermove", this.boundPointerMove);
@@ -653,8 +654,7 @@ export class CalendarResourceSchedulerUi {
     const deltaMinutes = snapResourceInteractionMinutes(rawMinutes, this.interactionSnapMinutes());
     const candidate = this.interactionCandidate(drag, deltaMinutes, event.clientX, event.clientY);
     drag.candidate = candidate;
-    drag.targetResourceId = candidate?.targetResourceId ?? drag.sourceResourceId;
-    this.updateDragPreview(drag, candidate, event.clientX, event.clientY);
+    this.updateDragPreview(drag, candidate);
     event.preventDefault();
   };
 
@@ -732,21 +732,42 @@ export class CalendarResourceSchedulerUi {
   private updateDragPreview(
     drag: CalendarResourceDragState,
     candidate: CalendarResourceInteractionCandidate | undefined,
-    clientX: number,
-    clientY: number,
   ): void {
-    drag.ghost.style.left = `${clientX + 8}px`;
-    drag.ghost.style.top = `${clientY + 8}px`;
     drag.ghost.classList.toggle("is-invalid", candidate?.valid === false);
     for (const row of this.root.querySelectorAll<HTMLElement>(".dc-rs-resource-row")) {
       row.classList.remove("is-drop-target", "is-drop-invalid");
       if (drag.mode !== "move" || !candidate || row.dataset.resourceId !== candidate.targetResourceId) continue;
       row.classList.add(candidate.valid ? "is-drop-target" : "is-drop-invalid");
     }
-    if (!candidate) return;
-    const delta = (new Date(candidate.start).getTime() - new Date(drag.originalStart).getTime()) / 60_000;
+    if (!candidate || !this.projection) return;
+
+    const targetRow = [...this.root.querySelectorAll<HTMLElement>(".dc-rs-resource-row")]
+      .find(row => row.dataset.resourceId === candidate.targetResourceId);
+    const track = targetRow?.querySelector<HTMLElement>(".dc-rs-track");
+    if (track) {
+      const geometry = resolveResourceTimelineRangeGeometry(this.projection.range, this.timeZone);
+      const startMs = Date.parse(candidate.start);
+      const endMs = Date.parse(candidate.end);
+      const rawX = geometry.coordinate(startMs);
+      const rawEnd = geometry.coordinate(endMs);
+      const elapsedWidth = Math.max(0, (endMs - startMs) / 60_000);
+      const civilWidth = rawEnd - rawX;
+      const minuteWidth = drag.occurrence.temporalForm === "point" ? 0 : (civilWidth > 0 ? civilWidth : elapsedWidth);
+      const trackRect = track.getBoundingClientRect();
+      const left = clamp(rawX * drag.scale, 0, trackRect.width);
+      const width = drag.occurrence.temporalForm === "point"
+        ? 10
+        : Math.max(18, Math.min(minuteWidth * drag.scale, Math.max(1, trackRect.width - left)));
+      drag.ghost.style.left = `${trackRect.left + left}px`;
+      drag.ghost.style.top = `${trackRect.top + 5}px`;
+      drag.ghost.style.width = `${width}px`;
+      drag.ghost.style.height = `${Math.max(20, this.eventHeight - 2)}px`;
+    }
+
+    const delta = (Date.parse(candidate.start) - Date.parse(drag.originalStart)) / 60_000;
+    const targetName = this.resourceById(candidate.targetResourceId)?.title;
     drag.ghost.textContent = drag.mode === "move"
-      ? `${drag.occurrence.title} · ${delta >= 0 ? "+" : ""}${Math.round(delta)} min`
+      ? `${drag.occurrence.title}${candidate.targetResourceId === drag.sourceResourceId ? "" : ` · ${targetName ?? candidate.targetResourceId}`} · ${delta >= 0 ? "+" : ""}${Math.round(delta)} min`
       : `${drag.occurrence.title} · ${drag.mode === "resize-start" ? "start" : "end"}`;
   }
 

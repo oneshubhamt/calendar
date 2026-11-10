@@ -153,3 +153,17 @@ test("R6 resize controls cannot accidentally activate the occurrence and interac
   assert.match(ui,/aria-keyshortcuts/);
   assert.match(ui,/handle\.setAttribute\("aria-keyshortcuts", "ArrowLeft ArrowRight"\)/);
 });
+
+
+test("R6 interaction help IDs are instance-unique and drag ghosts preview snapped scheduler geometry",async()=>{
+  const ui=await read("../src/features/resource-scheduler-ui/index.ts");
+  assert.match(ui,/let schedulerUiSequence = 0/);
+  assert.match(ui,/dc-rs-interaction-help-\$\{\+\+schedulerUiSequence\}/);
+  assert.match(ui,/node\.setAttribute\("aria-describedby", this\.interactionHelpId\)/);
+  const preview=ui.match(/private updateDragPreview\([\s\S]*?\n  }\n\n  private cleanupDrag/)?.[0] ?? "";
+  assert.match(preview,/resolveResourceTimelineRangeGeometry/);
+  assert.match(preview,/geometry\.coordinate\(startMs\)/);
+  assert.match(preview,/track\.getBoundingClientRect\(\)/);
+  assert.match(preview,/candidate\.targetResourceId/);
+  assert.doesNotMatch(ui,/targetResourceId: CalendarResourceId;\s*readonly assignment/);
+});
