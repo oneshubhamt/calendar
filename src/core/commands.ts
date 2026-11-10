@@ -10,7 +10,7 @@ import type {
   CalendarSource,
   RecurrenceException,
 } from "./types.js";
-import { occurrenceIdentityAtOrdinal, projectOccurrencePatchToSeries, rebaseRecurrenceExceptions, recurrenceOrdinal, sameRecurrence } from "./recurrence.js";
+import { occurrenceIdentityAtOrdinal, projectOccurrencePatchToSeries, rebaseRecurrenceExceptions, recurrenceOrdinal, sameRecurrence } from "./event-series.js";
 
 /** Host/repository command rejection caused by an obsolete authoritative revision. */
 export class CalendarCommandStaleError extends Error {
