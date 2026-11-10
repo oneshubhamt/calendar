@@ -59,12 +59,12 @@ export interface CalendarSourceActionPort {
 }
 
 export interface CalendarUiCallbacks {
-  /** Return true when the host handled creation and the built-in editor must not open. */
-  readonly handleCreate?: (selection: CalendarSelection) => boolean | Promise<boolean>;
+  /** Return true when the host handled creation and the built-in editor must not open. Custom editors can validate their final draft through placement.canPlaceDraft(). */
+  readonly handleCreate?: (selection: CalendarSelection, placement: CalendarPlacementValidationPort) => boolean | Promise<boolean>;
   /** Return true when the host handled opening/details and the built-in details dialog must not open. */
   readonly handleOpen?: (occurrence: CalendarOccurrence) => boolean | Promise<boolean>;
-  /** Return true when the host handled editing and the built-in editor must not open. */
-  readonly handleEdit?: (occurrence: CalendarOccurrence) => boolean | Promise<boolean>;
+  /** Return true when the host handled editing and the built-in editor must not open. Custom editors can validate their final draft through placement.canPlaceDraft(). */
+  readonly handleEdit?: (occurrence: CalendarOccurrence, placement: CalendarPlacementValidationPort) => boolean | Promise<boolean>;
   readonly onCreate?: (selection: CalendarSelection) => void;
   readonly onOpen?: (occurrence: CalendarOccurrence) => void;
   readonly onCommand?: (command: CalendarCommand) => void;
@@ -100,6 +100,9 @@ export interface CalendarCreateDraft {
   readonly reminders?: readonly CalendarReminder[];
   readonly display?: CalendarDisplay;
   readonly metadata?: CalendarItem["metadata"];
+}
+
+export interface CalendarPlacementValidationPort {
 }
 
 export interface CalendarItemFactoryInput {
@@ -172,7 +175,7 @@ export interface CalendarUiAction {
 }
 
 /** Narrow capability surface exposed to optional UI add-ons. */
-export interface CalendarUiAddonContext {
+export interface CalendarUiAddonContext extends CalendarPlacementValidationPort {
   readonly host: HTMLElement;
   readonly locale: string;
   readonly timeZone: string;
