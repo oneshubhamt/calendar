@@ -1,4 +1,6 @@
 import type {
+  CalendarBackgroundProjectionProvider,
+  CalendarBackgroundRange,
   CalendarOccurrence,
   CalendarOccurrenceProjectionProvider,
   CalendarProjectionProvider,
@@ -8,12 +10,13 @@ import type {
 } from "./types.js";
 import { expandItems } from "./recurrence.js";
 import { sortOccurrences } from "./layout.js";
-import { assertCalendarOccurrenceIntegrity, assertCalendarStateIntegrity } from "./store.js";
+import { assertCalendarBackgroundRangeIntegrity, assertCalendarOccurrenceIntegrity, assertCalendarStateIntegrity } from "./store.js";
 import { hasExplicitOffset, intersectsRange, toDate } from "./time.js";
 
 export interface CalendarQueryResult {
   readonly range: CalendarRange;
   readonly occurrences: readonly CalendarOccurrence[];
+  readonly backgroundRanges: readonly CalendarBackgroundRange[];
   readonly revision: number;
 }
 
@@ -42,6 +45,14 @@ function normalizeProjectedOccurrence(occurrence: CalendarOccurrence): CalendarO
   };
 }
 
+function normalizeProjectedBackgroundRange(range: CalendarBackgroundRange): CalendarBackgroundRange {
+  return {
+    ...range,
+    start: canonicalAbsolute(range.start, `Calendar background range ${range.id} start`),
+    end: canonicalAbsolute(range.end, `Calendar background range ${range.id} end`),
+  };
+}
+
 function assertRange(range: CalendarRange): void {
   if (toDate(range.end).getTime() <= toDate(range.start).getTime()) throw new RangeError("Calendar range end must be after start");
 }
@@ -51,6 +62,7 @@ export class CalendarEngine {
     private readonly repository: CalendarEngineRepository,
     private readonly projections: readonly CalendarProjectionProvider[] = [],
     private readonly occurrenceProjections: readonly CalendarOccurrenceProjectionProvider[] = [],
+    private readonly backgroundProjections: readonly CalendarBackgroundProjectionProvider[] = [],
   ) {}
 
   public snapshot(): CalendarSnapshot { return this.repository.read(); }
@@ -59,7 +71,7 @@ export class CalendarEngine {
   public subscribe(listener: (snapshot: CalendarSnapshot) => void): () => void {
     const unsubscribers: Array<() => void> = [];
     if (this.repository.subscribe) unsubscribers.push(this.repository.subscribe(listener));
-    for (const projection of [...this.projections, ...this.occurrenceProjections]) {
+    for (const projection of [...this.projections, ...this.occurrenceProjections, ...this.backgroundProjections]) {
       if (projection.subscribe) unsubscribers.push(projection.subscribe(() => listener(this.repository.read())));
     }
     return () => { for (const unsubscribe of unsubscribers.splice(0)) unsubscribe(); };
@@ -111,9 +123,23 @@ export class CalendarEngine {
     );
 
     const occurrences = [...itemOccurrences, ...visibleProjectedOccurrences].sort(sortOccurrences);
+
+    const projectedBackgroundRanges = (await Promise.all(this.backgroundProjections.map(provider => provider.projectBackgroundRanges(range))))
+      .flat()
+      .map(normalizeProjectedBackgroundRange);
+    assertCalendarBackgroundRangeIntegrity(snapshot.sources, projectedBackgroundRanges);
+    const backgroundRanges = projectedBackgroundRanges
+      .filter(background => (background.calendarId === undefined || visible.has(background.calendarId))
+        && intersectsRange(background.start, background.end, range.start, range.end, false))
+      .sort((left, right) =>
+        toDate(left.start).getTime() - toDate(right.start).getTime()
+        || toDate(left.end).getTime() - toDate(right.end).getTime()
+        || left.id.localeCompare(right.id));
+
     return {
       range,
       occurrences: options.predicate ? occurrences.filter(options.predicate) : occurrences,
+      backgroundRanges,
       revision: snapshot.revision,
     };
   }
