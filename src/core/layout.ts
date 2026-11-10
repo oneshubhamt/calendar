@@ -1,4 +1,4 @@
-import type { CalendarOccurrence, CalendarRange, ISODateTime } from "./types.js";
+import type { CalendarBackgroundRange, CalendarOccurrence, CalendarRange, ISODateTime } from "./types.js";
 import { addDays, dateKey, startOfDay, toDate } from "./time.js";
 import { civilMinuteOfInstant } from "./civil-timeline.js";
 
@@ -14,6 +14,76 @@ export interface TimedLayoutItem {
   /** Visual-only lane used when zero/real-duration items share screen pixels without claiming temporal overlap. */
   readonly visualLane: number;
   readonly visualLaneCount: number;
+}
+
+
+export interface BackgroundDayLayoutOptions {
+  readonly timeZone?: string | undefined;
+  /** First visible civil minute of the day; defaults to 00:00. */
+  readonly startMinute?: number | undefined;
+  /** Exclusive final visible civil minute of the day; defaults to 24:00. */
+  readonly endMinute?: number | undefined;
+}
+
+export interface BackgroundLayoutItem {
+  readonly range: CalendarBackgroundRange;
+  /** Civil wall-clock coordinate within the local day after day/visible-window clipping. */
+  readonly topMinutes: number;
+  /** Positive civil display height after day/visible-window clipping. */
+  readonly heightMinutes: number;
+  /** Deterministic back-to-front paint order. Background layout never creates event columns. */
+  readonly layer: number;
+}
+
+function backgroundVisibleWindow(options: BackgroundDayLayoutOptions): { start: number; end: number } {
+  const start = options.startMinute ?? 0;
+  const end = options.endMinute ?? 1440;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end > 1440 || end <= start) {
+    throw new RangeError("Background layout visible minutes must satisfy 0 <= start < end <= 1440");
+  }
+  return { start, end };
+}
+
+/**
+ * Resolve passive background ranges into one day of civil-time geometry.
+ *
+ * Ranges are clipped first to the real instants belonging to the requested local day, then mapped
+ * through the same civil timeline used by timed events. A visible-minute window is applied only
+ * after civil mapping, so spring-forward gaps and fall-back overlaps retain Calendar's existing
+ * wall-clock geometry. Overlaps remain full-width; deterministic layer order is the only stacking
+ * mechanic and has no scheduling/collision meaning.
+ */
+export function layoutBackgroundDay(
+  ranges: readonly CalendarBackgroundRange[],
+  day: ISODateTime | Date,
+  options: BackgroundDayLayoutOptions = {},
+): BackgroundLayoutItem[] {
+  const timeZone = options.timeZone;
+  const visible = backgroundVisibleWindow(options);
+  const dayStart = startOfDay(day, timeZone);
+  const dayEnd = timeZone ? addDays(dayStart, 1, timeZone) : new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate() + 1);
+
+  const layouts = ranges
+    .filter(range => toDate(range.start).getTime() < dayEnd.getTime() && toDate(range.end).getTime() > dayStart.getTime())
+    .map(range => {
+      const start = Math.max(dayStart.getTime(), toDate(range.start).getTime());
+      const end = Math.min(dayEnd.getTime(), toDate(range.end).getTime());
+      const rawTop = timeZone ? civilMinuteOfInstant(start, dayStart, timeZone) : (start - dayStart.getTime()) / 60_000;
+      const rawEnd = timeZone ? civilMinuteOfInstant(end, dayStart, timeZone) : (end - dayStart.getTime()) / 60_000;
+      const civilHeight = rawEnd - rawTop;
+      const elapsedHeight = (end - start) / 60_000;
+      const rawHeight = Math.max(1, civilHeight > 0 ? civilHeight : elapsedHeight);
+      const top = Math.max(visible.start, rawTop);
+      const bottom = Math.min(visible.end, rawTop + rawHeight);
+      return { range, topMinutes: top, heightMinutes: bottom - top };
+    })
+    .filter(layout => layout.heightMinutes > 0)
+    .sort((left, right) =>
+      left.topMinutes - right.topMinutes
+      || right.heightMinutes - left.heightMinutes
+      || left.range.id.localeCompare(right.range.id));
+
+  return layouts.map((layout, layer) => ({ ...layout, layer }));
 }
 
 
