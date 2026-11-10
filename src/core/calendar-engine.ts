@@ -157,7 +157,13 @@ export class CalendarEngine {
     assertCalendarStateIntegrity(snapshot.sources, snapshot.items);
     const visible = options.visibleSourceIds ?? new Set(snapshot.sources.filter(source => source.visible).map(source => source.id));
 
-    const projectedItems = (await Promise.all(this.projections.map(provider => provider.project(range)))).flat();
+    const projectedItemsPromise = Promise.all(this.projections.map(provider => provider.project(range)));
+    const projectedOccurrencesPromise = Promise.all(this.occurrenceProjections.map(provider => provider.projectOccurrences(range)));
+    const projectedBackgroundRangesPromise = options.includeBackgroundRanges === false
+      ? Promise.resolve([] as readonly (readonly CalendarBackgroundRange[])[])
+      : Promise.all(this.backgroundProjections.map(provider => provider.projectBackgroundRanges(range)));
+
+    const projectedItems = (await projectedItemsPromise).flat();
     assertCalendarStateIntegrity(snapshot.sources, [...snapshot.items, ...projectedItems]);
     const itemOccurrences = expandItems(
       [...snapshot.items, ...projectedItems].filter(item => visible.has(item.calendarId)),
@@ -165,7 +171,7 @@ export class CalendarEngine {
       { timeZone: options.timeZone },
     );
 
-    const projectedOccurrences = (await Promise.all(this.occurrenceProjections.map(provider => provider.projectOccurrences(range))))
+    const projectedOccurrences = (await projectedOccurrencesPromise)
       .flat()
       .map(normalizeProjectedOccurrence);
     assertCalendarOccurrenceIntegrity(snapshot.sources, projectedOccurrences);
@@ -181,7 +187,7 @@ export class CalendarEngine {
 
     let backgroundRanges: readonly CalendarBackgroundRange[] = [];
     if (options.includeBackgroundRanges !== false) {
-      const projectedBackgroundRanges = (await Promise.all(this.backgroundProjections.map(provider => provider.projectBackgroundRanges(range))))
+      const projectedBackgroundRanges = (await projectedBackgroundRangesPromise)
         .flat()
         .map(normalizeProjectedBackgroundRange);
       assertCalendarBackgroundRangeIntegrity(snapshot.sources, projectedBackgroundRanges);

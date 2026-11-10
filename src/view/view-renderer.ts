@@ -296,6 +296,6 @@ function weekdayOrder(weekStartsOn: Weekday): readonly Weekday[] {
   return Array.from({ length: 7 }, (_, index) => ((weekStartsOn + index) % 7) as Weekday);
 }
 
-function isDateLikeOccurrence(occurrence: CalendarOccurrence): boolean {
+export function isDateLikeOccurrence(occurrence: CalendarOccurrence): boolean {
   return Boolean(occurrence.allDay || occurrence.precision === "date" || occurrence.temporal?.kind === "date");
 }

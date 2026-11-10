@@ -10,7 +10,7 @@ import {
   type ExternalEventIdentity, type ExternalEventSnapshot, type SyncConflict, type SyncConflictPolicy,
   type SyncStateStore,
 } from "./sync.js";
-import { stableHash, temporalSpec, withoutNullishEntries } from "./internal.js";
+import { stableBase32HexToken, stableHash, temporalSpec, withoutNullishEntries } from "./internal.js";
 
 export interface GoogleEventDateTime {
   readonly date?: string | undefined;
@@ -196,10 +196,52 @@ export interface GoogleSyncResult {
   readonly state: CalendarSyncConnectionState;
 }
 
-interface PullResult { readonly full: boolean; readonly events: ReadonlyMap<string, ExternalEventSnapshot>; readonly nextSyncToken: string; }
+interface PullResult {
+  readonly full: boolean;
+  readonly events: ReadonlyMap<string, ExternalEventSnapshot>;
+  readonly localItemHints: ReadonlyMap<string, string>;
+  readonly nextSyncToken: string;
+}
 
 function isGooglePreconditionFailure(error: unknown): error is GoogleCalendarHttpError {
   return error instanceof GoogleCalendarHttpError && error.status === 412;
+}
+
+function publishedGoogleEventId(connection: GoogleCalendarConnection, localItemId: string): string {
+  return `dcal${stableBase32HexToken(`${connection.id}\u0000${connection.googleCalendarId}\u0000${localItemId}`)}`;
+}
+
+function hintedPublishedLocalItem(
+  snapshot: ReturnType<CalendarRepository["read"]>,
+  connection: GoogleCalendarConnection,
+  remoteEventId: string,
+  localItemHint: string | undefined,
+): CalendarItem | undefined {
+  if (!localItemHint) return undefined;
+  const local = snapshot.items.find(item => item.id === localItemHint && item.calendarId === connection.localCalendarId);
+  return local && publishedGoogleEventId(connection, local.id) === remoteEventId ? local : undefined;
+}
+
+async function insertPublishedGoogleEvent(
+  transport: GoogleCalendarTransport,
+  connection: GoogleCalendarConnection,
+  local: CalendarItem,
+): Promise<GoogleCalendarEvent> {
+  const eventId = publishedGoogleEventId(connection, local.id);
+  const payload: GoogleCalendarEvent = { ...itemToGoogleEvent(local), id: eventId };
+  try {
+    const created = await transport.insertEvent(connection.googleCalendarId, payload);
+    if (created.id !== eventId) throw new Error("Google Calendar returned an unexpected event id after deterministic insert.");
+    return created;
+  } catch (error) {
+    if (!(error instanceof GoogleCalendarHttpError) || error.status !== 409) throw error;
+    const existing = await transport.getEvent(connection.googleCalendarId, eventId);
+    const owner = existing.extendedProperties?.private?.calendarItemId;
+    if (existing.id !== eventId || owner !== local.id) {
+      throw new Error("Google Calendar event id collision does not belong to the local Calendar item.");
+    }
+    return existing;
+  }
 }
 
 async function preconditionConflict(
@@ -287,6 +329,7 @@ export class GoogleCalendarSyncAdapter {
     const snapshot = this.repository.read();
     const localById = new Map(snapshot.items.filter(item => item.calendarId === this.connection.localCalendarId).map(item => [item.id, item] as const));
     const linkedRemoteIds = new Set<string>();
+    const linkedLocalIds = new Set(state.links.map(link => link.localItemId));
 
     for (const link of state.links) {
       linkedRemoteIds.add(link.identity.eventId);
@@ -345,20 +388,30 @@ export class GoogleCalendarSyncAdapter {
 
     if (canPull(this.connection.mode)) for (const remote of remoteById.values()) {
       if (linkedRemoteIds.has(remote.identity.eventId) || remote.deleted || !remote.item || remote.identity.recurringEventId) continue;
-      const existing = snapshot.items.find(item => { const identity = externalIdentityFromMetadata(item); return identity?.connectionId === this.connection.id && identity.eventId === remote.identity.eventId; });
+      const existing = snapshot.items.find(item => {
+        const identity = externalIdentityFromMetadata(item);
+        return identity?.connectionId === this.connection.id && identity.eventId === remote.identity.eventId;
+      }) ?? hintedPublishedLocalItem(
+        snapshot,
+        this.connection,
+        remote.identity.eventId,
+        pull.localItemHints.get(remote.identity.eventId),
+      );
       const local = remoteToLocal(remote, this.connection, existing?.id);
       if (existing) await this.repository.update(existing.id, itemPatch(local)); else await this.repository.create(local);
-      nextLinks.push(linkAfterSync(local, remote)); pulled += 1;
+      nextLinks.push(linkAfterSync(local, remote));
+      linkedLocalIds.add(local.id);
+      pulled += 1;
     }
 
     if (canPush(this.connection.mode)) for (const local of snapshot.items) {
       const identity = externalIdentityFromMetadata(local);
-      if (local.calendarId !== this.connection.localCalendarId || links.has(local.id) || identity?.connectionId === this.connection.id) continue;
+      if (local.calendarId !== this.connection.localCalendarId || linkedLocalIds.has(local.id) || identity?.connectionId === this.connection.id) continue;
       const publishable = this.connection.publishPredicate
         ? this.connection.publishPredicate(local)
         : local.editPolicy === "full";
       if (!publishable) continue;
-      const created = await this.transport.insertEvent(this.connection.googleCalendarId, itemToGoogleEvent(local));
+      const created = await insertPublishedGoogleEvent(this.transport, this.connection, local);
       if (!created.id) throw new Error("Google Calendar did not return an event id after insert.");
       const exceptionWarnings = await syncReplacementExceptions(this.transport, this.connection.googleCalendarId, created.id, local); warnings.push(...exceptionWarnings);
       const remote = googleEventSnapshot(created, this.connection, local.id);
@@ -392,12 +445,17 @@ export class GoogleCalendarSyncAdapter {
     if (!nextSyncToken) throw new Error("Google Calendar sync response did not include nextSyncToken on the final page.");
 
     const events = new Map<string, ExternalEventSnapshot>();
+    const localItemHints = new Map<string, string>();
     const instanceChanges = new Map<string, GoogleCalendarEvent[]>();
     for (const event of raw) {
       if (!event.id) continue;
       if (event.recurringEventId) {
         const list = instanceChanges.get(event.recurringEventId) ?? []; list.push(event); instanceChanges.set(event.recurringEventId, list);
-      } else events.set(event.id, googleEventSnapshot(event, this.connection));
+      } else {
+        events.set(event.id, googleEventSnapshot(event, this.connection));
+        const localItemHint = event.extendedProperties?.private?.calendarItemId;
+        if (typeof localItemHint === "string" && localItemHint.trim()) localItemHints.set(event.id, localItemHint);
+      }
     }
     const baseByRemoteId = new Map(state.links.map(link => [link.identity.eventId, link.baseRemoteItem] as const));
     for (const [parentId, changes] of instanceChanges) {
@@ -419,7 +477,7 @@ export class GoogleCalendarSyncAdapter {
       const prior = baseByRemoteId.get(eventId);
       if (prior) { const item = mergePriorExceptions(snapshot.item, prior); events.set(eventId, { ...snapshot, item, fingerprint: fingerprintCalendarItem(item) }); }
     }
-    return { full: !syncToken, events, nextSyncToken };
+    return { full: !syncToken, events, localItemHints, nextSyncToken };
   }
 }
 

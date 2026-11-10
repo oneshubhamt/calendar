@@ -8,7 +8,7 @@ import type {
 } from "../../core/types.js";
 import { normalizeSnapPolicy, snapMinuteCoordinate } from "../../core/interaction.js";
 import type { CalendarUiExtension } from "../../view/types.js";
-import { resolveOccurrencePresentation } from "../../view/presentation.js";
+import { hostDataAttributeName, resolveOccurrencePresentation } from "../../view/presentation.js";
 import {
   executeCalendarResourcePlacement,
   flattenCalendarResources,
@@ -126,10 +126,6 @@ function positiveNumber(value: number | undefined, fallback: number, label: stri
   const resolved = value ?? fallback;
   if (!Number.isFinite(resolved) || resolved <= 0) throw new RangeError(`${label} must be positive and finite`);
   return resolved;
-}
-
-function hostDataAttributeName(key: string): string {
-  return key.replace(/[A-Z]/gu, letter => `-${letter.toLowerCase()}`);
 }
 
 export class CalendarResourceSchedulerUi {

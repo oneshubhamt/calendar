@@ -48,6 +48,11 @@ export interface ResolvedCalendarSourceAction extends CalendarSourceAction {
   readonly inline: boolean;
 }
 
+/** Convert a validated presentation-data key to its data-host-* attribute suffix. */
+export function hostDataAttributeName(key: string): string {
+  return key.replace(/[A-Z]/gu, letter => `-${letter.toLowerCase()}`);
+}
+
 function content(value: CalendarPresentationContent | undefined): ResolvedCalendarPresentationContent | undefined {
   if (typeof value === "string") return validText(value) ? { text: value } : undefined;
   if (!value || typeof value !== "object" || !validText(value.text)) return undefined;

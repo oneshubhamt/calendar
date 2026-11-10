@@ -53,7 +53,7 @@ async function filesUnder(root){
   return out;
 }
 
-test("R7 hierarchy, collapse, multi-resource and unassigned semantics compose deterministically",()=>{
+test("Resource Scheduler hierarchy, collapse, multi-resource and unassigned semantics compose deterministically",()=>{
   const rows=flattenCalendarResources([...resources].reverse());
   assert.deepEqual(rows.map(row=>[row.resource.id,row.depth,row.acceptsAssignments]),[
     ["rooms",0,false],["room-a",1,true],["room-b",1,true],["doctor",0,true],
@@ -80,7 +80,7 @@ test("R7 hierarchy, collapse, multi-resource and unassigned semantics compose de
   assert.deepEqual(replaceCalendarResourceAssignment(["room-a","doctor"],"room-a","room-b"),["room-b","doctor"]);
 });
 
-test("R7 unassigned host occurrences can be assigned headlessly and every recurrence scope survives the one atomic change",async()=>{
+test("Resource Scheduler unassigned host occurrences can be assigned headlessly and every recurrence scope survives the one atomic change",async()=>{
   const row=occurrence("recurring-unassigned",{recurring:true,projectionIdentity:{series:"s",slot:4}});
   for(const scope of ["this","this-and-following","all"]){
     const commits=[];
@@ -102,7 +102,7 @@ test("R7 unassigned host occurrences can be assigned headlessly and every recurr
   }
 });
 
-test("R7 trusted host occurrence projection stays opaque while temporal and resource authority remain independent",async()=>{
+test("Resource Scheduler trusted host occurrence projection stays opaque while temporal and resource authority remain independent",async()=>{
   const projected={
     ...occurrence("projected",{
       recurring:true,
@@ -147,7 +147,7 @@ test("R7 trusted host occurrence projection stays opaque while temporal and reso
   assert.equal(changes[0].scope,"this-and-following");
 });
 
-test("R7 resource collision policy is target-scoped and malformed timezone/source authority fails closed",async()=>{
+test("Resource Scheduler resource collision policy is target-scoped and malformed timezone/source authority fails closed",async()=>{
   const row=occurrence();
   const occupiedA=occurrence("occupied-a",{title:"A conflict",start:"2026-11-10T09:30:00.000Z",end:"2026-11-10T10:30:00.000Z"});
   const occupiedB=occurrence("occupied-b",{title:"B conflict",start:"2026-11-10T09:30:00.000Z",end:"2026-11-10T10:30:00.000Z"});
@@ -182,7 +182,7 @@ test("R7 resource collision policy is target-scoped and malformed timezone/sourc
   assert.match(wrongSource.messages[0],/source does not match/i);
 });
 
-test("R7 DST, cross-midnight and point interaction semantics preserve canonical civil behavior",()=>{
+test("Resource Scheduler DST, cross-midnight and point interaction semantics preserve canonical civil behavior",()=>{
   const overnight=occurrence("overnight",{
     calendarId:"host",editPolicy:"full",
     start:"2026-11-10T23:30:00.000Z",end:"2026-11-11T00:30:00.000Z",
@@ -213,7 +213,7 @@ test("R7 DST, cross-midnight and point interaction semantics preserve canonical 
   assert.equal(pointLayout[0].widthMinutes,0);
 });
 
-test("R7 stale and failed atomic writes are single-attempt and never mutate scheduler-owned projection state",async()=>{
+test("Resource Scheduler stale and failed atomic writes are single-attempt and never mutate scheduler-owned projection state",async()=>{
   const row=occurrence();
   let staleCalls=0;
   const stale=await executeCalendarResourcePlacement(resources,placementRequest(row),{

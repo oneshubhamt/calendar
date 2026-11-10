@@ -32,7 +32,9 @@ import {
   el,
   formatDateTime,
   formatTime,
+  hostDataAttributeName,
   humanizeKind,
+  isDateLikeOccurrence,
   periodTitle as renderPeriodTitle,
   renderAgendaView,
   renderMonthView,
@@ -97,10 +99,6 @@ function isPointOccurrence(occurrence: CalendarOccurrence): boolean {
 
 function durationMs(occurrence: CalendarOccurrence): number {
   return isPointOccurrence(occurrence) ? 0 : Math.max(1, toDate(occurrence.end).getTime() - toDate(occurrence.start).getTime());
-}
-
-function isDateLikeOccurrence(occurrence: CalendarOccurrence): boolean {
-  return Boolean(occurrence.allDay || occurrence.precision === "date" || occurrence.temporal?.kind === "date");
 }
 
 function withLocalTime(
@@ -2038,17 +2036,13 @@ export class CalendarUi {
     }
     const presentation = this.occurrencePresentation(occurrence);
     for (const token of presentation.classNames) element.classList.add(token);
-    for (const [key, value] of Object.entries(presentation.data)) element.setAttribute(`data-host-${this.hostDataAttributeName(key)}`, value);
+    for (const [key, value] of Object.entries(presentation.data)) element.setAttribute(`data-host-${hostDataAttributeName(key)}`, value);
     const pendingOperation = this.commandLifecycle.pendingOperation(occurrence.occurrenceId);
     if (pendingOperation) {
       element.classList.add("is-pending");
       element.setAttribute("aria-busy", "true");
       element.dataset.pendingOperation = pendingOperation;
     }
-  }
-
-  private hostDataAttributeName(key: string): string {
-    return key.replace(/[A-Z]/gu, letter => `-${letter.toLowerCase()}`);
   }
 
   private addonEmptyMessage(): string | undefined {

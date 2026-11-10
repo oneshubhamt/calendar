@@ -1,6 +1,6 @@
 # Director Calendar
 
-Release: **1.1.0**.
+Release: **1.2.0**.
 
 Director Calendar is reusable, local-first calendar software written in strict TypeScript. The calendar kernel is application-agnostic: hosts supply their own semantic kinds, ownership/provenance, metadata, editors/actions and adapters without changing calendar mechanics.
 
