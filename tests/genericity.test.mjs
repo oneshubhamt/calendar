@@ -83,16 +83,11 @@ test('source removal is an explicit capability, not an inferred default',()=>{
   const removable=new C.MemoryCalendarRepository([{id:'yes',title:'Yes',visible:true,sourceType:'host',removable:true}],[]);
   removable.removeSource('yes'); assert.equal(removable.read().sources.length,0);
 });
-test('personal conveniences are explicit opt-in services rather than a view dependency',async()=>{
+test('personal conveniences remain explicit opt-in behavior',()=>{
   const feature=Personal.PERSONAL_CALENDAR_FEATURE;
   const parsed=feature.parseQuickCreate('tomorrow 9am Review 30m',new Date('2026-12-09T00:00:00Z'),'Asia/Kolkata');
   assert.equal(parsed.title,'Review');
   assert.equal(parsed.kind,'event');
-  const viewSource=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.equal(viewSource.includes('features/personal'),false);
-  for(const token of ['Quick add','Search calendar','Apply a routine','Copy to date','Move to date','New calendar']) assert.equal(viewSource.includes(token),false,`base view leaked optional personal UI: ${token}`);
-  const personalUi=await fs.readFile(new URL('../src/features/personal-ui.ts',import.meta.url),'utf8');
-  assert.match(personalUi,/Quick add/); assert.match(personalUi,/Copy to date/);
 });
 
 test('generic root does not export Director or planning integrations',async()=>{

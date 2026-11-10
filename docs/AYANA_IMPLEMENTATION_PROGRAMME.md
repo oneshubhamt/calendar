@@ -2,7 +2,7 @@
 
 ## Status
 
-Calendar-side generic capability work is complete and has been consolidated into the current-state architecture contract. Historical C1–C11 implementation sequencing is intentionally not retained here; Git history records that work.
+Calendar-side generic capability work is complete and has been consolidated into the current-state architecture contract. Historical Calendar implementation sequencing is intentionally not retained here; Git history records that work.
 
 # Ayana-side programme
 
