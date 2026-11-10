@@ -51,6 +51,19 @@ export interface CalendarTemporalSeriesPatch {
   readonly end?: ISODateTime | undefined;
 }
 
+
+export interface CalendarTemporalSeriesEditPatch extends CalendarTemporalSeriesPatch {
+  readonly allDay?: boolean | undefined;
+  readonly precision?: TemporalPrecision | undefined;
+  readonly temporal?: CalendarTemporalSpec | null | undefined;
+  readonly temporalForm?: CalendarTemporalForm | undefined;
+}
+
+export interface CalendarResolvedTemporalPlacement {
+  readonly start: ISODateTime;
+  readonly end: ISODateTime;
+}
+
 export interface CalendarTemporalSeriesException<TPatch extends CalendarTemporalSeriesPatch = CalendarTemporalSeriesPatch> {
   readonly originalStart: ISODateTime;
   readonly cancelled?: boolean | undefined;
@@ -97,6 +110,87 @@ export function validateRecurrenceRule(rule: RecurrenceRule): void {
   if (rule.bySetPosition?.length && !(rule.byMonthDay?.length || rule.byMonth?.length || rule.byWeekday?.length || rule.byDay?.length)) throw new RangeError("BYSETPOS requires another BY rule");
   if (rule.byDay?.some(entry => entry.ordinal !== undefined && (!Number.isInteger(entry.ordinal) || entry.ordinal === 0 || entry.ordinal < -53 || entry.ordinal > 53))) throw new RangeError("Invalid ordinal BYDAY value");
   if ((rule.frequency === "daily" || rule.frequency === "weekly") && rule.byDay?.some(entry => entry.ordinal !== undefined)) throw new RangeError("Ordinal BYDAY is supported only for monthly/yearly recurrence");
+}
+
+
+/** Structural equality for recurrence definitions independent of the consumer's exception payload. */
+export function sameRecurrence<
+  TLeft extends CalendarTemporalSeriesPatch,
+  TRight extends CalendarTemporalSeriesPatch,
+>(
+  a: CalendarTemporalSeriesRecurrence<TLeft> | undefined,
+  b: CalendarTemporalSeriesRecurrence<TRight> | null | undefined,
+): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+/** Project an edited resolved placement back to a temporal series anchor while preserving temporal representation. */
+export function projectTemporalPatchToSeries<TPatch extends CalendarTemporalSeriesEditPatch>(
+  series: CalendarTemporalSeries,
+  resolved: CalendarResolvedTemporalPlacement,
+  patch: TPatch,
+  options: RecurrenceExpansionOptions = {},
+): TPatch {
+  const viewerZone = resolvedTimeZone(options.timeZone);
+  const sourceDisplayZone = displayZoneFor(series, options);
+  const targetKind = targetTemporalKind(series, patch);
+  const targetZone = targetKind === "zoned"
+    ? patch.temporal && patch.temporal !== null && patch.temporal.kind === "zoned"
+      ? patch.temporal.timeZone ?? sourceDisplayZone
+      : series.temporal?.timeZone ?? sourceDisplayZone
+    : viewerZone;
+  const patchInputZone = series.temporal?.kind === "zoned" ? sourceDisplayZone : targetZone;
+  const disambiguation = patch.temporal && patch.temporal !== null
+    ? patch.temporal.disambiguation ?? series.temporal?.disambiguation ?? "compatible"
+    : series.temporal?.disambiguation ?? "compatible";
+
+  const anchorStartPlain = displayPlain(series.start, sourceDisplayZone);
+  const anchorEndPlain = displayPlain(series.end, sourceDisplayZone);
+  const resolvedStartPlain = instantToPlain(toDate(resolved.start).getTime(), sourceDisplayZone);
+  const resolvedEndPlain = instantToPlain(toDate(resolved.end).getTime(), sourceDisplayZone);
+
+  let startPlain = anchorStartPlain;
+  let endPlain = anchorEndPlain;
+  if (patch.start !== undefined) {
+    const desiredStartPlain = displayPlain(patch.start, patchInputZone);
+    const delta = plainMinutesBetween(resolvedStartPlain, desiredStartPlain);
+    startPlain = addPlainMinutes(anchorStartPlain, delta);
+    if (patch.end === undefined) endPlain = addPlainMinutes(anchorEndPlain, delta);
+  }
+  if (patch.end !== undefined) {
+    const desiredEndPlain = displayPlain(patch.end, patchInputZone);
+    const delta = plainMinutesBetween(resolvedEndPlain, desiredEndPlain);
+    endPlain = addPlainMinutes(anchorEndPlain, delta);
+  }
+
+  return {
+    ...patch,
+    ...(patch.start !== undefined ? { start: serializeProjectedPlain(startPlain, targetKind, targetZone, disambiguation) } : {}),
+    ...(patch.end !== undefined || patch.start !== undefined ? { end: serializeProjectedPlain(endPlain, targetKind, targetZone, disambiguation) } : {}),
+  };
+}
+
+/** Rebase generic recurrence exceptions by temporal occurrence ordinal after a series rule/anchor edit. */
+export function rebaseTemporalSeriesExceptions<TPatch extends CalendarTemporalSeriesPatch>(
+  previous: CalendarTemporalSeries,
+  previousRecurrence: CalendarTemporalSeriesRecurrence<TPatch> | undefined,
+  next: CalendarTemporalSeries,
+  nextRecurrence: CalendarTemporalSeriesRecurrence<TPatch> | undefined,
+  options: RecurrenceExpansionOptions = {},
+): CalendarTemporalSeriesRecurrence<TPatch> | undefined {
+  if (!nextRecurrence) return undefined;
+  if (!previousRecurrence?.exceptions?.length) return nextRecurrence;
+  const rebased: CalendarTemporalSeriesException<TPatch>[] = [];
+  for (const exception of previousRecurrence.exceptions) {
+    try {
+      const ordinal = temporalSeriesOrdinal(previous, previousRecurrence.rule, exception.originalStart, options);
+      const originalStart = temporalSeriesIdentityAtOrdinal(next, nextRecurrence.rule, ordinal, options);
+      rebased.push({ ...exception, originalStart });
+    } catch {
+      // The edited rule no longer has a corresponding occurrence; dropping the orphan is safer than misapplying it.
+    }
+  }
+  return { ...nextRecurrence, ...(rebased.length ? { exceptions: rebased } : { exceptions: undefined }) };
 }
 
 export function resolveTemporalSeriesAnchor(
@@ -345,6 +439,37 @@ function applySetPosition(set: PlainDateTimeParts[], positions: readonly number[
 function uniqueSorted(values: PlainDateTimeParts[]): PlainDateTimeParts[] {
   const map = new Map(values.map(value => [formatPlainDateTime(value), value]));
   return [...map.values()].sort(comparePlain);
+}
+
+function displayZoneFor(series: CalendarTemporalSeries, options: RecurrenceExpansionOptions): string {
+  const viewer = resolvedTimeZone(options.timeZone);
+  return series.temporal?.kind === "zoned" ? series.temporal.timeZone ?? viewer : viewer;
+}
+
+function displayPlain(value: ISODateTime, zone: string): PlainDateTimeParts {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return parsePlainDate(value);
+  return hasExplicitOffset(value) ? instantToPlain(toDate(value).getTime(), zone) : parsePlainDateTime(value);
+}
+
+function targetTemporalKind(series: CalendarTemporalSeries, patch: CalendarTemporalSeriesEditPatch): CalendarTemporalKind {
+  if (patch.temporal && patch.temporal !== null) return patch.temporal.kind;
+  if (patch.temporal === null) {
+    const value = patch.start ?? series.start;
+    if (patch.allDay || patch.precision === "date" || /^\d{4}-\d{2}-\d{2}$/.test(value)) return "date";
+    return hasExplicitOffset(value) ? "instant" : "floating";
+  }
+  return series.temporal?.kind ?? (series.allDay || series.precision === "date" ? "date" : hasExplicitOffset(series.start) ? "instant" : "floating");
+}
+
+function serializeProjectedPlain(
+  plain: PlainDateTimeParts,
+  kind: CalendarTemporalKind,
+  targetZone: string,
+  disambiguation: "compatible" | "earlier" | "later" | "reject",
+): ISODateTime {
+  if (kind === "date") return formatPlainDate(plain);
+  if (kind === "floating" || kind === "zoned") return formatPlainDateTime(plain);
+  return new Date(plainToInstant(plain, targetZone, disambiguation)).toISOString();
 }
 
 function contextFor(series: CalendarTemporalSeries, options: RecurrenceExpansionOptions): TemporalContext {
