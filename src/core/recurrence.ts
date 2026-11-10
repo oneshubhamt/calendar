@@ -148,6 +148,9 @@ export function expandTemporalSeries<TPatch extends CalendarTemporalSeriesPatch 
         : patch?.start !== undefined
           ? startEpoch + (candidate.endEpochMs - candidate.startEpochMs)
           : candidate.endEpochMs;
+      if (series.temporalForm === "point" ? startEpoch !== endEpoch : endEpoch <= startEpoch) {
+        throw new RangeError(`Temporal series ${series.id} exception produces invalid chronology`);
+      }
       const start = new Date(startEpoch).toISOString();
       const end = new Date(endEpoch).toISOString();
       if (intersectsRange(start, end, range.start, range.end, series.temporalForm === "point")) {
