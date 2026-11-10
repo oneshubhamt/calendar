@@ -388,7 +388,6 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
 
     this.refreshPromise = (async () => {
       while (this.loaded) {
-        const requestedRevision = this.requestedRefreshRevision;
         this.requestedRefreshRevision = -1;
 
         const persisted = await this.readPersistedState();
