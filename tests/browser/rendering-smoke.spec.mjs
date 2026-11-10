@@ -22,7 +22,7 @@ test("DST fall-back day exposes duplicated local hour geometry without browser-s
     now: "2026-11-01T06:15:00.000Z",
     scrollHour: 0,
   });
-  await expect(page.locator('.dc-time-axis-label[data-transition="overlap"]')).toContainText("01:00 ×2");
+  await expect(page.locator('.dc-time-axis:not(.dc-secondary-time-axis) .dc-time-axis-label[data-transition="overlap"]')).toContainText("01:00 ×2");
   await expect(page.getByText("First 1:30", { exact: true })).toBeVisible();
   await expect(page.getByText("Second 1:30", { exact: true })).toBeVisible();
 });
