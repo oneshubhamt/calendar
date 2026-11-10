@@ -247,6 +247,49 @@ export interface MonthDayBucket {
   readonly timed: readonly CalendarOccurrence[];
 }
 
+
+/** Group only explicitly day-level background ranges across the local days they overlap. */
+export function groupAllDayBackgroundRangesByDay(
+  ranges: readonly CalendarBackgroundRange[],
+  timeZone?: string,
+  visibleRange?: CalendarRange,
+): ReadonlyMap<string, readonly CalendarBackgroundRange[]> {
+  const map = new Map<string, CalendarBackgroundRange[]>();
+  const rangeStart = visibleRange ? toDate(visibleRange.start) : undefined;
+  const rangeEnd = visibleRange ? toDate(visibleRange.end) : undefined;
+  const firstVisibleDay = rangeStart ? startOfDay(rangeStart, timeZone) : undefined;
+
+  for (const background of ranges) {
+    if (background.allDay !== true) continue;
+    const start = toDate(background.start);
+    const end = toDate(background.end);
+    if (rangeStart && rangeEnd && (end.getTime() <= rangeStart.getTime() || start.getTime() >= rangeEnd.getTime())) continue;
+
+    let cursor = startOfDay(start, timeZone);
+    if (firstVisibleDay && cursor.getTime() < firstVisibleDay.getTime()) cursor = firstVisibleDay;
+    const clippedEnd = rangeEnd && end.getTime() > rangeEnd.getTime() ? rangeEnd : end;
+
+    while (cursor.getTime() < clippedEnd.getTime()) {
+      const next = timeZone ? addDays(cursor, 1, timeZone) : new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1);
+      if (start.getTime() < next.getTime() && end.getTime() > cursor.getTime()) {
+        const key = dateKey(cursor, timeZone);
+        const bucket = map.get(key) ?? [];
+        bucket.push(background);
+        map.set(key, bucket);
+      }
+      cursor = next;
+    }
+  }
+
+  return new Map([...map.entries()].map(([key, bucket]) => [
+    key,
+    bucket.sort((left, right) =>
+      toDate(left.start).getTime() - toDate(right.start).getTime()
+      || toDate(left.end).getTime() - toDate(right.end).getTime()
+      || left.id.localeCompare(right.id)),
+  ]));
+}
+
 export function groupByDay(items: readonly CalendarOccurrence[], timeZone?: string, range?: CalendarRange): ReadonlyMap<string, MonthDayBucket> {
   const map = new Map<string, { allDay: CalendarOccurrence[]; timed: CalendarOccurrence[] }>();
   const rangeExactStart = range ? toDate(range.start) : undefined;
