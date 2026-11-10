@@ -14,7 +14,7 @@ on:
       - ".github/workflows/browser-release.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: browser-release-${{ github.ref }}
@@ -46,8 +46,21 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium firefox webkit
 
-      - name: Run browser QA and generate visual baselines
-        run: npm run qa:browser:update
+      - name: Generate and verify browser visual baselines
+        run: |
+          npm run qa:browser:update
+          npm run qa:browser
+
+      - name: Commit verified Chromium baselines
+        run: |
+          if [ -z "$(git status --porcelain -- tests/browser/__screenshots__)" ]; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/browser/__screenshots__/
+          git commit -m "test(browser): capture visual baselines"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Upload generated visual baselines
         if: always()
