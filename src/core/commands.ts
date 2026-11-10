@@ -13,12 +13,12 @@ import type {
 } from "./types.js";
 import { projectTemporalPatchToSeries, rebaseTemporalSeriesExceptions, sameRecurrence, temporalSeriesIdentityAtOrdinal, temporalSeriesOrdinal } from "./recurrence.js";
 import { applyCalendarItemPatch, assertCalendarStateIntegrity } from "./store.js";
-import { CalendarStaleRevisionError } from "./revision.js";
+import { CalendarStaleError, CalendarStaleRevisionError } from "./revision.js";
 
 /** Host command rejection caused by obsolete authoritative state. */
-export class CalendarCommandStaleError extends CalendarStaleRevisionError {
+export class CalendarCommandStaleError extends CalendarStaleError {
   public constructor(message = "Calendar command rejected because the authoritative state changed") {
-    super(-1, undefined, message);
+    super(message);
     this.name = "CalendarCommandStaleError";
   }
 }

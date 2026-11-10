@@ -82,3 +82,22 @@ test("D2 cross-tab reload coordinator drains newer invalidations instead of drop
   assert.match(reload,/if \(this\.refreshPromise\) return await this\.refreshPromise/);
   assert.match(reload,/this\.requestedRefreshRevision <= currentRevision/);
 });
+
+
+test("stale command and revision errors share a semantic base without fake revision values",async()=>{
+  const revision=await read("../src/core/revision.ts");
+  const commands=await read("../src/core/commands.ts");
+  assert.match(revision,/class CalendarStaleError extends Error/);
+  assert.match(revision,/class CalendarStaleRevisionError extends CalendarStaleError/);
+  assert.match(commands,/class CalendarCommandStaleError extends CalendarStaleError/);
+  assert.doesNotMatch(commands,/super\(-1/);
+});
+
+test("queued reload retains an unmet requested revision before deciding it is caught up",async()=>{
+  const source=await read("../src/storage/indexeddb-repository.ts");
+  const reload=source.match(/private async reloadFromStorage\([\s\S]*?\n  }\n\n  private async migrateLegacySnapshot/)?.[0] ?? "";
+  const requeue=reload.indexOf("requestedRevision > currentRevision");
+  const caughtUp=reload.indexOf("this.requestedRefreshRevision <= currentRevision");
+  assert.ok(requeue>=0 && caughtUp>requeue);
+  assert.match(reload,/Math\.max\(this\.requestedRefreshRevision, requestedRevision\)/);
+});
