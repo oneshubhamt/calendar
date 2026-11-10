@@ -69,7 +69,7 @@ export class CalendarEngine {
 
   public snapshot(): CalendarSnapshot { return this.repository.read(); }
 
-  /** Observe repository changes and invalidations from either host projection boundary. */
+  /** Observe repository changes and invalidations from all configured projection boundaries. */
   public subscribe(listener: (snapshot: CalendarSnapshot) => void): () => void {
     const unsubscribers: Array<() => void> = [];
     if (this.repository.subscribe) unsubscribers.push(this.repository.subscribe(listener));
