@@ -231,3 +231,53 @@ test('background range projections stay passive, canonical and fail closed', asy
     /duplicate calendar background range/i,
   );
 });
+
+
+test('background day geometry uses civil time, clips visibly and layers deterministically',()=>{
+  const range=(id,start,end,patch={})=>({id,start,end,...patch});
+
+  const normal=[
+    range('broad','2026-11-09T23:00:00Z','2026-11-10T17:00:00Z'),
+    range('narrow','2026-11-10T10:00:00Z','2026-11-10T11:00:00Z'),
+    range('peer','2026-11-10T10:00:00Z','2026-11-10T12:00:00Z'),
+    range('carry-out','2026-11-10T20:00:00Z','2026-11-11T03:00:00Z'),
+    range('outside','2026-11-11T02:00:00Z','2026-11-11T03:00:00Z'),
+  ];
+  const options={timeZone:'UTC',startMinute:360,endMinute:1320};
+  const layout=C.layoutBackgroundDay(normal,new Date('2026-11-10T12:00:00Z'),options);
+  assert.deepEqual(layout.map(x=>x.range.id),['broad','peer','narrow','carry-out']);
+  assert.deepEqual(layout.map(x=>[x.range.id,x.topMinutes,x.heightMinutes,x.layer]),[
+    ['broad',360,660,0],
+    ['peer',600,120,1],
+    ['narrow',600,60,2],
+    ['carry-out',1200,120,3],
+  ]);
+  assert.deepEqual(
+    C.layoutBackgroundDay([...normal].reverse(),new Date('2026-11-10T12:00:00Z'),options).map(x=>x.range.id),
+    layout.map(x=>x.range.id),
+  );
+
+  const spring=C.layoutBackgroundDay([
+    range('spring','2026-03-08T06:30:00Z','2026-03-08T07:30:00Z'),
+  ],new Date('2026-03-08T17:00:00Z'),{timeZone:'America/New_York'});
+  assert.equal(spring[0].topMinutes,90);
+  assert.equal(spring[0].heightMinutes,120);
+
+  const fall=C.layoutBackgroundDay([
+    range('fall','2026-11-01T04:30:00Z','2026-11-01T07:30:00Z'),
+    range('repeated','2026-11-01T05:30:00Z','2026-11-01T06:30:00Z'),
+  ],new Date('2026-11-01T17:00:00Z'),{timeZone:'America/New_York'});
+  const fallById=new Map(fall.map(x=>[x.range.id,x]));
+  assert.deepEqual([fallById.get('fall').topMinutes,fallById.get('fall').heightMinutes],[30,120]);
+  assert.deepEqual([fallById.get('repeated').topMinutes,fallById.get('repeated').heightMinutes],[90,60]);
+
+  assert.throws(
+    ()=>C.layoutBackgroundDay([],new Date('2026-11-10T00:00:00Z'),{timeZone:'UTC',startMinute:600,endMinute:600}),
+    /visible minutes/i,
+  );
+
+  const eventLayout=C.layoutTimedDay([
+    C.occurrenceFromItem(event({id:'geometry-event',start:'2026-11-10T10:00:00Z',end:'2026-11-10T11:00:00Z'})),
+  ],new Date('2026-11-10T12:00:00Z'),'UTC');
+  assert.equal(eventLayout[0].columnCount,1);
+});
