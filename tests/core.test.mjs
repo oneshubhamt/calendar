@@ -308,3 +308,44 @@ test('explicit all-day backgrounds group by local day without promoting timed ra
   assert.deepEqual(grouped.get('2026-11-11').map(range=>range.id),['all-day']);
   assert.equal([...grouped.values()].flat().some(range=>range.id==='timed'),false);
 });
+
+
+test('placement guard evaluation composes allow warn prevent and fails closed',async()=>{
+  const context={
+    start:'2026-11-10T09:00:00.000Z',
+    end:'2026-11-10T10:00:00.000Z',
+    allDay:false,
+    action:'create',
+    timeZone:'UTC',
+    calendarId:'personal',
+  };
+
+  const warned=await C.evaluatePlacementGuards([
+    {id:'a',evaluate:()=>({mode:'allow'})},
+    {id:'b',evaluate:()=>({mode:'warn',message:'Outside preferred hours.'})},
+    {id:'c',evaluate:async()=>({mode:'warn'})},
+  ],context);
+  assert.deepEqual(warned,{
+    mode:'warn',
+    messages:['Outside preferred hours.','This placement may violate a scheduling policy.'],
+  });
+
+  let reached=false;
+  const prevented=await C.evaluatePlacementGuards([
+    {id:'p',evaluate:()=>({mode:'prevent',message:'Blocked by policy.'})},
+    {id:'later',evaluate:()=>{reached=true;return {mode:'allow'};}},
+  ],context);
+  assert.deepEqual(prevented,{mode:'prevent',messages:['Blocked by policy.']});
+  assert.equal(reached,false);
+
+  for(const guards of [
+    [{id:'dup',evaluate:()=>({mode:'allow'})},{id:'dup',evaluate:()=>({mode:'allow'})}],
+    [{id:'bad',evaluate:()=>({mode:'maybe'})}],
+    [{id:'throw',evaluate:()=>{throw new Error('offline');}}],
+    [{id:'message',evaluate:()=>({mode:'warn',message:'   '})}],
+  ]) {
+    const result=await C.evaluatePlacementGuards(guards,context);
+    assert.equal(result.mode,'prevent');
+    assert.deepEqual(result.messages,['Scheduling policy could not be evaluated.']);
+  }
+});
