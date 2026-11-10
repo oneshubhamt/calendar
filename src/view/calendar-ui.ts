@@ -1,5 +1,6 @@
 import type {
   CalendarAgendaSpan,
+  CalendarBackgroundRange,
   CalendarCollisionPolicy,
   CalendarOverlapDisambiguation,
   CalendarCommand,
@@ -23,7 +24,7 @@ import { addDays, addMonths, addYears, dateKey, rangeForView, resolvedTimeZone, 
 import { instantToPlain } from "../core/temporal.js";
 import { civilMinuteOfInstant, civilMinuteResolution, instantAtCivilMinute, shiftCivilMinutes } from "../core/civil-timeline.js";
 import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from "./time-zone-scale.js";
-import { groupAgendaByDay, groupByDay, layoutTimedDay } from "../core/layout.js";
+import { groupAgendaByDay, groupByDay, layoutBackgroundDay, layoutTimedDay } from "../core/layout.js";
 import { sameRecurrence } from "../core/recurrence.js";
 import { normalizeSnapPolicy, placementCollisions, placementTimePatch, resizeInterval, resizePreview, type CalendarResizeEdge } from "../core/interaction.js";
 import {
@@ -186,6 +187,7 @@ export class CalendarUi {
   private anchor: Date;
   private visibleRange: CalendarRange;
   private occurrences: readonly CalendarOccurrence[] = [];
+  private backgroundRanges: readonly CalendarBackgroundRange[] = [];
   private destroyed = false;
   private drag: DragState | null = null;
   private selectionDrag: SelectionDragState | null = null;
@@ -264,6 +266,7 @@ export class CalendarUi {
     });
     if (this.destroyed || generation !== this.renderGeneration) return;
     this.occurrences = result.occurrences;
+    this.backgroundRanges = result.backgroundRanges;
     const extensionContext = { occurrences: this.occurrences, range: this.visibleRange, timeZone: this.timeZone, now: new Date() };
     for (const [index, extension] of (this.options.extensions ?? []).entries()) this.hostHook(`Calendar extension ${index + 1} prepare`, () => extension.prepare?.(extensionContext), undefined);
     for (const addon of this.options.addons ?? []) this.hostHook(`Calendar add-on ${addon.id} refresh`, () => addon.onRefresh?.(this.addonContext()), undefined);
@@ -843,6 +846,43 @@ export class CalendarUi {
     return axis;
   }
 
+  private backgroundLayer(day: Date): HTMLElement {
+    const layer = el("div", "dc-background-layer");
+    layer.setAttribute("data-role", "background-ranges");
+    const layouts = layoutBackgroundDay(
+      this.backgroundRanges.filter(range => range.allDay !== true),
+      day,
+      {
+        timeZone: this.timeZone,
+        startMinute: this.dayStartHour * 60,
+        endMinute: this.dayEndHour * 60,
+      },
+    );
+    const visibleStart = this.dayStartHour * 60;
+    for (const layout of layouts) {
+      const range = layout.range;
+      const background = el("div", "dc-background-range");
+      background.dataset.backgroundRangeId = range.id;
+      background.style.top = `${layout.topMinutes - visibleStart}px`;
+      background.style.height = `${layout.heightMinutes}px`;
+      background.style.zIndex = String(layout.layer);
+      this.applyBackgroundPresentation(background, range);
+      if (range.label) {
+        const label = el("span", "dc-background-range-label", range.label);
+        background.append(label);
+        background.setAttribute("role", "note");
+        background.setAttribute(
+          "aria-label",
+          `${range.label}. ${formatDateTime(toDate(range.start), this.locale, this.timeZone)} to ${formatDateTime(toDate(range.end), this.locale, this.timeZone)}`,
+        );
+      } else {
+        background.setAttribute("aria-hidden", "true");
+      }
+      layer.append(background);
+    }
+    return layer;
+  }
+
   private timeColumn(day: Date): HTMLElement {
     const column = el("div", "dc-time-column");
     const inBounds = this.dateInNavigationBounds(day);
@@ -851,6 +891,7 @@ export class CalendarUi {
     if (!inBounds) column.setAttribute("aria-disabled", "true");
     column.setAttribute("role", "group");
     column.setAttribute("aria-label", `Timed events for ${new Intl.DateTimeFormat(this.locale, { weekday: "long", day: "numeric", month: "long", timeZone: this.timeZone }).format(day)}`);
+    if (inBounds) column.append(this.backgroundLayer(day));
     const layouts = layoutTimedDay(this.displayOccurrences(), day, this.timeZone);
     for (const layout of layouts) {
       const occurrence = layout.occurrence;
@@ -2328,6 +2369,17 @@ export class CalendarUi {
       void this.executeSourceAction(action.id, occurrence);
     });
     return button;
+  }
+
+  private applyBackgroundPresentation(element: HTMLElement, range: CalendarBackgroundRange): void {
+    const sourceDisplay = range.calendarId ? this.sources.find(source => source.id === range.calendarId)?.display : undefined;
+    const color = range.display?.color ?? sourceDisplay?.color;
+    const textColor = range.display?.textColor ?? sourceDisplay?.textColor;
+    if (color) element.style.setProperty("--dc-background-range-color", color);
+    if (textColor) element.style.setProperty("--dc-background-range-fg", textColor);
+    for (const token of range.display?.className?.split(/\s+/u).filter(Boolean) ?? []) {
+      if (isSafeHostClassName(token)) element.classList.add(token);
+    }
   }
 
   private applyOccurrencePresentation(element: HTMLElement, occurrence: CalendarOccurrence): void {
