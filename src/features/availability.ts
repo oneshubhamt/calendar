@@ -53,9 +53,8 @@ function requiredText(value: unknown, label: string): string {
 function definitionItem(definition: CalendarAvailabilityDefinition): CalendarItem {
   const id = requiredText(definition.id, "Availability definition id");
   if (definition.state !== "available" && definition.state !== "unavailable") throw new Error(`Availability definition ${id} state is invalid`);
-  if (!requiredText(definition.start, `Availability definition ${id} start`) || !requiredText(definition.end, `Availability definition ${id} end`)) {
-    throw new Error(`Availability definition ${id} boundaries are invalid`);
-  }
+  requiredText(definition.start, `Availability definition ${id} start`);
+  requiredText(definition.end, `Availability definition ${id} end`);
   if (definition.calendarId !== undefined) requiredText(definition.calendarId, `Availability definition ${id} calendar id`);
   if (definition.label !== undefined) requiredText(definition.label, `Availability definition ${id} label`);
 
@@ -101,6 +100,17 @@ function occurrenceBackgroundId(definition: CalendarAvailabilityDefinition, orig
   return definition.recurrence ? `${definition.id}@${originalStart}` : definition.id;
 }
 
+function backgroundDisplay(occurrence: ReturnType<typeof expandItem>[number]): CalendarBackgroundDisplay | undefined {
+  const display = occurrence.display;
+  if (!display) return undefined;
+  const background = {
+    ...(display.color ? { color: display.color } : {}),
+    ...(display.textColor ? { textColor: display.textColor } : {}),
+    ...(display.className ? { className: display.className } : {}),
+  };
+  return Object.keys(background).length ? background : undefined;
+}
+
 export function expandAvailabilityDefinitions(
   definitions: readonly CalendarAvailabilityDefinition[],
   range: CalendarRange,
@@ -117,6 +127,7 @@ export function expandAvailabilityDefinitions(
     const fallbackTitle = definition.label ?? (definition.state === "available" ? "Available" : "Unavailable");
     return expandItem(item, range, { timeZone: options.timeZone }).map(occurrence => {
       const label = definition.label !== undefined || occurrence.title !== fallbackTitle ? occurrence.title : undefined;
+      const display = backgroundDisplay(occurrence);
       return {
         id: occurrenceBackgroundId(definition, occurrence.originalStart),
         start: occurrence.start,
@@ -124,13 +135,7 @@ export function expandAvailabilityDefinitions(
         ...(occurrence.allDay ? { allDay: true } : {}),
         ...(definition.calendarId ? { calendarId: definition.calendarId } : {}),
         ...(label ? { label } : {}),
-        ...(occurrence.display ? {
-          display: {
-            ...(occurrence.display.color ? { color: occurrence.display.color } : {}),
-            ...(occurrence.display.textColor ? { textColor: occurrence.display.textColor } : {}),
-            ...(occurrence.display.className ? { className: occurrence.display.className } : {}),
-          },
-        } : {}),
+        ...(display ? { display } : {}),
         metadata: backgroundMetadata(definition, occurrence),
       };
     });
