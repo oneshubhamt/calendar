@@ -94,6 +94,10 @@ test('background ranges and availability remain isolated from event mechanics at
   assert.doesNotMatch(root,/features\/availability/);
 
   const pkg=JSON.parse(packageText);
+  assert.equal(Object.hasOwn(pkg.exports,'./features'),false);
+  for(const subpath of ['./features/personal','./features/personal-ui','./features/planning','./features/availability']) {
+    assert.equal(typeof pkg.exports[subpath]?.import,'string',`missing explicit optional feature subpath: ${subpath}`);
+  }
   assert.equal(pkg.exports['./features/availability'].import,'./dist/features/availability.js');
   assert.equal(Calendar.createAvailabilityBackgroundProvider,undefined);
   assert.equal(Calendar.createAvailabilityPlacementGuard,undefined);
