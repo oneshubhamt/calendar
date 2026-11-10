@@ -24,7 +24,7 @@ import { addDays, addMonths, addYears, dateKey, rangeForView, resolvedTimeZone, 
 import { instantToPlain } from "../core/temporal.js";
 import { civilMinuteOfInstant, civilMinuteResolution, instantAtCivilMinute, shiftCivilMinutes } from "../core/civil-timeline.js";
 import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from "./time-zone-scale.js";
-import { groupAgendaByDay, groupByDay, layoutBackgroundDay, layoutTimedDay } from "../core/layout.js";
+import { groupAgendaByDay, groupAllDayBackgroundRangesByDay, groupByDay, layoutBackgroundDay, layoutTimedDay } from "../core/layout.js";
 import { sameRecurrence } from "../core/recurrence.js";
 import { normalizeSnapPolicy, placementCollisions, placementTimePatch, resizeInterval, resizePreview, type CalendarResizeEdge } from "../core/interaction.js";
 import {
@@ -645,6 +645,7 @@ export class CalendarUi {
     for (const weekday of weekdayOrder(this.weekStartsOn)) header.append(el("div", "dc-weekday", DAY_NAMES[weekday]));
     const grid = el("div", "dc-month-grid");
     const buckets = groupByDay(this.displayOccurrences(), this.timeZone, this.visibleRange);
+    const backgroundBuckets = groupAllDayBackgroundRangesByDay(this.backgroundRanges, this.timeZone, this.visibleRange);
     const start = toDate(this.visibleRange.start);
     const end = toDate(this.visibleRange.end);
     const today = new Date();
@@ -656,7 +657,9 @@ export class CalendarUi {
       const inBounds = this.dateInNavigationBounds(date);
       cell.tabIndex = inBounds ? 0 : -1;
       cell.setAttribute("role", "group");
-      cell.setAttribute("aria-label", new Intl.DateTimeFormat(this.locale, { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: this.timeZone }).format(date));
+      const dayBackgrounds = backgroundBuckets.get(dateKey(date, this.timeZone)) ?? [];
+      const dayLabel = new Intl.DateTimeFormat(this.locale, { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: this.timeZone }).format(date);
+      cell.setAttribute("aria-label", `${dayLabel}${this.backgroundAriaSuffix(dayBackgrounds)}`);
       cell.classList.toggle("is-outside", parts.month !== anchorParts.month);
       cell.classList.toggle("is-today", sameLocalDay(date, today, this.timeZone));
       cell.classList.toggle("is-out-of-bounds", !inBounds);
@@ -677,6 +680,7 @@ export class CalendarUi {
         more.addEventListener("click", event => { event.stopPropagation(); this.openMonthOverflow(date, rows); });
         events.append(more);
       }
+      if (inBounds && dayBackgrounds.length) cell.append(this.dayLevelBackgroundLayer(dayBackgrounds));
       cell.append(number, events);
       cell.addEventListener("dragover", event => {
         if (inBounds && this.dragOccurrenceFromTransfer(event.dataTransfer)) event.preventDefault();
@@ -792,6 +796,7 @@ export class CalendarUi {
     grid.style.gridTemplateColumns = `repeat(${dayCount},minmax(0,1fr))`;
     grid.style.minHeight = `${(this.dayEndHour - this.dayStartHour) * 60}px`;
     const buckets = groupByDay(this.displayOccurrences(), this.timeZone, this.visibleRange);
+    const backgroundBuckets = groupAllDayBackgroundRangesByDay(this.backgroundRanges, this.timeZone, this.visibleRange);
 
     for (const day of days) {
       const inBounds = this.dateInNavigationBounds(day);
@@ -807,7 +812,9 @@ export class CalendarUi {
       all.classList.toggle("is-out-of-bounds", !inBounds);
       if (!inBounds) all.setAttribute("aria-disabled", "true");
       all.setAttribute("role", "group");
-      all.setAttribute("aria-label", `All-day events for ${new Intl.DateTimeFormat(this.locale, { weekday: "long", day: "numeric", month: "long", timeZone: this.timeZone }).format(day)}`);
+      const dayBackgrounds = backgroundBuckets.get(dateKey(day, this.timeZone)) ?? [];
+      all.setAttribute("aria-label", `All-day events for ${new Intl.DateTimeFormat(this.locale, { weekday: "long", day: "numeric", month: "long", timeZone: this.timeZone }).format(day)}${this.backgroundAriaSuffix(dayBackgrounds)}`);
+      if (inBounds && dayBackgrounds.length) all.append(this.dayLevelBackgroundLayer(dayBackgrounds));
       for (const occurrence of buckets.get(dateKey(day, this.timeZone))?.allDay ?? []) all.append(this.monthEvent(occurrence));
       all.addEventListener("dragover", event => {
         const occurrence = this.dragOccurrenceFromTransfer(event.dataTransfer);
@@ -844,6 +851,24 @@ export class CalendarUi {
       axis.append(node);
     }
     return axis;
+  }
+
+  private backgroundAriaSuffix(ranges: readonly CalendarBackgroundRange[]): string {
+    const labels = [...new Set(ranges.map(range => range.label?.trim()).filter((label): label is string => Boolean(label)))].slice(0, 8);
+    return labels.length ? `. Background: ${labels.join(", ")}` : "";
+  }
+
+  private dayLevelBackgroundLayer(ranges: readonly CalendarBackgroundRange[]): HTMLElement {
+    const layer = el("div", "dc-day-background-layer");
+    layer.setAttribute("aria-hidden", "true");
+    for (const [index, range] of ranges.entries()) {
+      const background = el("div", "dc-day-background-range");
+      background.dataset.backgroundRangeId = range.id;
+      background.style.zIndex = String(index);
+      this.applyBackgroundPresentation(background, range);
+      layer.append(background);
+    }
+    return layer;
   }
 
   private backgroundLayer(day: Date): HTMLElement {
