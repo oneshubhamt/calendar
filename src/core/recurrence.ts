@@ -1,3 +1,4 @@
+import { sameCanonicalValue } from "./canonical-value.js";
 import type {
   CalendarRange,
   CalendarTemporalForm,
@@ -123,7 +124,7 @@ export function sameRecurrence(
   a: TemporalRecurrenceShape | undefined,
   b: TemporalRecurrenceShape | null | undefined,
 ): boolean {
-  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  return sameCanonicalValue(a ?? null, b ?? null);
 }
 
 /** Project an edited resolved placement back to a temporal series anchor while preserving temporal representation. */

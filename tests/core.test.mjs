@@ -3,9 +3,22 @@ import assert from 'node:assert/strict';
 import * as C from '../dist/index.js';
 import * as Planning from '../dist/features/planning.js';
 import * as Personal from '../dist/features/personal.js';
+import { canonicalValueString, sameCanonicalValue } from '../dist/core/canonical-value.js';
 
 const source={id:'personal',title:'Personal',visible:true,sourceType:'personal',removable:true};
 const event=(patch={})=>({id:'e1',calendarId:'personal',title:'Event',start:'2026-03-01T14:00:00.000Z',end:'2026-03-01T15:00:00.000Z',kind:'event',ownership:'calendar',editPolicy:'full',...patch});
+
+test('canonical value comparison ignores object key order and optional undefined properties while preserving array order',()=>{
+  const left={b:2,a:{z:3,y:undefined,x:1},optional:undefined,list:[1,2,3]};
+  const right={list:[1,2,3],a:{x:1,z:3},b:2};
+  assert.equal(sameCanonicalValue(left,right),true);
+  assert.equal(canonicalValueString(left),canonicalValueString(right));
+  assert.equal(sameCanonicalValue(left,{...right,list:[1,3,2]}),false);
+  assert.equal(C.sameRecurrence(
+    {rule:{frequency:'weekly',interval:2,byDay:[{weekday:1},{weekday:3}]}},
+    {rule:{byDay:[{weekday:1},{weekday:3}],interval:2,frequency:'weekly'}},
+  ),true);
+});
 
 test('recurrence, DST and series edits remain deterministic', async()=>{
   const zoned=event({id:'dst',start:'2026-03-07T09:00:00',end:'2026-03-07T10:00:00',temporal:{kind:'zoned',timeZone:'America/New_York'},recurrence:{rule:{frequency:'daily',count:3}}});

@@ -20,6 +20,7 @@ import {
   type CalendarStateCollections,
 } from "./state-transitions.js";
 import { CalendarStaleError } from "./revision.js";
+import { canonicalValueString, sameCanonicalValue } from "./canonical-value.js";
 
 /** Host command rejection caused by obsolete authoritative state. */
 export class CalendarCommandStaleError extends CalendarStaleError {
@@ -159,7 +160,7 @@ function splitSeries(
   const secondId = `${item.id}:split:${Date.parse(occurrence.start)}`;
   const recurrencePatch = patch.recurrence;
   const recurrenceRuleChanged = recurrencePatch !== undefined && recurrencePatch !== null
-    && JSON.stringify(recurrencePatch.rule) !== JSON.stringify(item.recurrence.rule);
+    && !sameCanonicalValue(recurrencePatch.rule, item.recurrence.rule);
   const baseSecondRecurrence = recurrencePatch === null
     ? undefined
     : recurrencePatch && recurrenceRuleChanged
@@ -299,15 +300,11 @@ interface HistoryEntry {
 }
 
 function sameItem(left: CalendarItem | undefined, right: CalendarItem | undefined): boolean {
-  return left === right || (
-    left !== undefined
-    && right !== undefined
-    && JSON.stringify(left) === JSON.stringify(right)
-  );
+  return sameCanonicalValue(left, right);
 }
 
 function sourceSignature(sources: readonly CalendarSource[]): string {
-  return JSON.stringify(sources);
+  return canonicalValueString(sources);
 }
 
 function changedItemIds(

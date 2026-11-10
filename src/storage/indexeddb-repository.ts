@@ -7,6 +7,7 @@ import type {
   CalendarSourcePatch,
 } from "../core/types.js";
 import { CalendarStaleRevisionError } from "../core/revision.js";
+import { sameCanonicalValue } from "../core/canonical-value.js";
 import { notifyObservers } from "../core/notifications.js";
 import {
   assertCalendarStateIntegrity,
@@ -93,33 +94,12 @@ function storedMeta(value: unknown): StoredMetaRecord | undefined {
 function itemKey(id: string): string { return `${ITEM_PREFIX}${id}`; }
 function sourceKey(id: string): string { return `${SOURCE_PREFIX}${id}`; }
 
-function sameStoredValue(left: unknown, right: unknown): boolean {
-  if (Object.is(left, right)) return true;
-  if (left === null || right === null || typeof left !== "object" || typeof right !== "object") return false;
-  if (Array.isArray(left) || Array.isArray(right)) {
-    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
-    return left.every((value, index) => sameStoredValue(value, right[index]));
-  }
-  const leftRecord = left as Record<string, unknown>;
-  const rightRecord = right as Record<string, unknown>;
-  const leftKeys = Object.keys(leftRecord);
-  const rightKeys = Object.keys(rightRecord);
-  if (leftKeys.length !== rightKeys.length) return false;
-  return leftKeys.every(key =>
-    Object.prototype.hasOwnProperty.call(rightRecord, key)
-    && sameStoredValue(leftRecord[key], rightRecord[key]));
-}
-
-function sameEntity(left: unknown, right: unknown): boolean {
-  return left === right || sameStoredValue(left, right);
-}
-
 function changedEntities<T extends { readonly id: string }>(
   current: readonly T[],
   next: readonly T[],
 ): readonly T[] {
   const currentById = new Map(current.map(value => [value.id, value] as const));
-  return next.filter(value => !sameEntity(currentById.get(value.id), value));
+  return next.filter(value => !sameCanonicalValue(currentById.get(value.id), value));
 }
 
 function removedIds<T extends { readonly id: string }>(

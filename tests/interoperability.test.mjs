@@ -9,6 +9,12 @@ import * as Reminder from '../dist/interoperability/reminders.js';
 const source={id:'personal',title:'Personal',visible:true,sourceType:'personal'};
 const event=(patch={})=>({id:'e1',calendarId:'personal',title:'Event',start:'2026-03-01T14:00:00.000Z',end:'2026-03-01T15:00:00.000Z',kind:'event',ownership:'host-owned',editPolicy:'full',...patch});
 
+test('sync fingerprints are canonical across equivalent property insertion order',()=>{
+  const first=event({recurrence:{rule:{frequency:'weekly',interval:2,byDay:[{weekday:1},{weekday:3}]}}});
+  const second=event({recurrence:{rule:{byDay:[{weekday:1},{weekday:3}],interval:2,frequency:'weekly'}}});
+  assert.equal(Sync.fingerprintCalendarItem(first),Sync.fingerprintCalendarItem(second));
+});
+
 test('ICS alarms round-trip, imports preserve host authority, and Google reminder defaults are explicit',()=>{
   const ics=ICS.exportIcs([event({reminders:[{id:'os',minutesBefore:30,channel:'external'}]})],{now:'2026-01-01T00:00:00Z'});
   assert.match(ics,/BEGIN:VALARM/); assert.match(ics,/TRIGGER:-PT30M/);
