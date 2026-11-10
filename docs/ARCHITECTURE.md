@@ -89,6 +89,12 @@ Provides optional planning semantics and presentation: deadlines/milestones, pla
 
 A consumer that does not import this feature receives none of those semantics or CSS.
 
+### `features/availability`
+
+Provides optional DOM-free availability semantics. `CalendarAvailabilityDefinition` expresses `available` or `unavailable` time, optional source association, label/display/metadata and the existing `CalendarRecurrence` rule/exception contract. `expandAvailabilityDefinitions()` translates definitions into temporary generated Calendar items solely to reuse the established recurrence/DST/exception engine, then maps resolved occurrences into passive `CalendarBackgroundRange` values with stable identities and namespaced `metadata.calendarAvailability`.
+
+`createAvailabilityBackgroundProvider()` reads authoritative definitions on every projection request and may forward an invalidation subscription; it stores no availability state in Calendar persistence. The feature defines semantic background context only. It does not alter collisions, mutation authority or placement acceptance; any such enforcement remains a separate optional policy layer.
+
 ## Persistence
 
 `CalendarSnapshotProvider` is the minimal read/query boundary; the engine does not require mutation methods. `CalendarProjectionProvider` may expose host-owned `CalendarItem` values which Calendar recurrence-expands, while `CalendarOccurrenceProjectionProvider` supplies already-expanded `CalendarOccurrence` values for the exact requested range. Either event projection boundary may expose an invalidation subscription so host-owned data can refresh the UI without duplicating persistence. Item projections are integrity-checked before recurrence expansion; occurrence projections are validated separately for source, source-item, occurrence-identity and chronology integrity and are never recurrence-expanded again.
