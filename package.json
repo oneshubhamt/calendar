@@ -107,6 +107,10 @@
     "./features/resource-scheduler": {
       "types": "./dist/features/resource-scheduler/index.d.ts",
       "import": "./dist/features/resource-scheduler/index.js"
+    },
+    "./features/resource-scheduler-ui": {
+      "types": "./dist/features/resource-scheduler-ui/index.d.ts",
+      "import": "./dist/features/resource-scheduler-ui/index.js"
     }
   },
   "files": [

@@ -170,6 +170,34 @@ function visibleRows(
  * wall-clock mapping, including DST gaps/overlaps; otherwise elapsed minutes are used.
  * Lanes are presentation-only and never imply collision policy or mutation authority.
  */
+export interface ResourceTimelineRangeGeometry {
+  readonly start: number;
+  readonly end: number;
+  readonly widthMinutes: number;
+  coordinate(instant: number): number;
+}
+
+/** Internal shared range basis used by headless geometry and the optional DOM timeline. */
+export function resolveResourceTimelineRangeGeometry(
+  range: CalendarRange,
+  timeZone?: string | undefined,
+): ResourceTimelineRangeGeometry {
+  const start = absoluteInstant(range?.start, "Resource timeline range start");
+  const end = absoluteInstant(range?.end, "Resource timeline range end");
+  if (end <= start) throw new Error("Resource timeline range must end after it starts");
+  if (timeZone !== undefined && (typeof timeZone !== "string" || !timeZone.trim())) {
+    throw new Error("Resource timeline time zone must be a non-empty string");
+  }
+  const origin = new Date(start);
+  const originCivil = timeZone === undefined ? 0 : civilMinuteOfInstant(start, origin, timeZone);
+  const coordinate = (instant: number): number => timeZone === undefined
+    ? (instant - start) / MINUTE_MS
+    : civilMinuteOfInstant(instant, origin, timeZone) - originCivil;
+  const civilWidth = coordinate(end);
+  const elapsedWidth = (end - start) / MINUTE_MS;
+  return { start, end, widthMinutes: civilWidth > 0 ? civilWidth : elapsedWidth, coordinate };
+}
+
 export function layoutResourceTimeline(
   resources: readonly CalendarResource[],
   occurrences: readonly CalendarOccurrence[],
@@ -177,12 +205,9 @@ export function layoutResourceTimeline(
   range: CalendarRange,
   options: CalendarResourceTimelineLayoutOptions = {},
 ): readonly CalendarResourceTimelineLayoutItem[] {
-  const rangeStart = absoluteInstant(range?.start, "Resource timeline range start");
-  const rangeEnd = absoluteInstant(range?.end, "Resource timeline range end");
-  if (rangeEnd <= rangeStart) throw new Error("Resource timeline range must end after it starts");
-  if (options.timeZone !== undefined && (typeof options.timeZone !== "string" || !options.timeZone.trim())) {
-    throw new Error("Resource timeline time zone must be a non-empty string");
-  }
+  const rangeGeometry = resolveResourceTimelineRangeGeometry(range, options.timeZone);
+  const rangeStart = rangeGeometry.start;
+  const rangeEnd = rangeGeometry.end;
 
   const normalizedAssignments = validateCalendarResourceAssignments(resources, occurrences, assignments);
   const rows = visibleRows(resources, options.collapsedResourceIds);
@@ -194,16 +219,8 @@ export function layoutResourceTimeline(
     preparedByOccurrence.set(occurrence.occurrenceId, prepared);
   }
 
-  const origin = new Date(rangeStart);
-  const originCivil = options.timeZone === undefined
-    ? 0
-    : civilMinuteOfInstant(rangeStart, origin, options.timeZone);
-  const coordinate = (instant: number): number => options.timeZone === undefined
-    ? (instant - rangeStart) / MINUTE_MS
-    : civilMinuteOfInstant(instant, origin, options.timeZone) - originCivil;
-  const rangeCivilWidth = coordinate(rangeEnd);
-  const rangeElapsedWidth = (rangeEnd - rangeStart) / MINUTE_MS;
-  const rangeWidth = rangeCivilWidth > 0 ? rangeCivilWidth : rangeElapsedWidth;
+  const coordinate = rangeGeometry.coordinate;
+  const rangeWidth = rangeGeometry.widthMinutes;
 
   const preparedLayouts: PreparedLayout[] = [];
   for (const assignment of normalizedAssignments) {

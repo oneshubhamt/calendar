@@ -18,12 +18,12 @@ features/personal-ui ── optional DOM add-on built on that service
 features/planning ── optional presentation/semantics extension
 features/availability ── optional temporal context + placement-policy adapter
 features/resource-scheduler ── optional headless resource scheduling dimension
-features/resource-scheduler-ui ── planned optional DOM resource timeline built on resource-scheduler
+features/resource-scheduler-ui ── optional read-only DOM resource timeline built on resource-scheduler
 
 integration/* + adapters/* ── optional host-specific modules
 ```
 
-Generic layers never import Director integrations/adapters/fixtures. `view/` also does not import `features/personal`, `features/personal-ui`, `features/planning`, `features/availability` or `features/resource-scheduler`. The package root exports only **core + view**. IndexedDB storage, interoperability, every specialized feature and host integration require explicit subpath imports. There is deliberately no aggregate `@director/calendar/features` entry point: consumers opt into `features/personal`, `features/personal-ui`, `features/planning`, `features/availability` or future feature modules individually.
+Generic layers never import Director integrations/adapters/fixtures. `view/` also does not import `features/personal`, `features/personal-ui`, `features/planning`, `features/availability`, `features/resource-scheduler` or `features/resource-scheduler-ui`. The package root exports only **core + view**. IndexedDB storage, interoperability, every specialized feature and host integration require explicit subpath imports. There is deliberately no aggregate `@director/calendar/features` entry point: consumers opt into `features/personal`, `features/personal-ui`, `features/planning`, `features/availability` or future feature modules individually.
 
 ## Core contracts
 
@@ -106,7 +106,7 @@ The base remains resource-free: `CalendarItem`, `CalendarOccurrence` and `Calend
 
 Resource placement is intentionally separate from temporal placement. Later mutation passes compose the existing `evaluateCalendarPlacement()` pipeline with resource target validation, resource-specific guards/collision policy and resource reassignment authority, then submit one `CalendarResourcePlacementChange` through `CalendarResourceMutationPort.commit()`. A combined time/resource drag must never become two independent writes.
 
-The optional DOM timeline is a separate planned `features/resource-scheduler-ui` subpath. It is not a `CalendarUiAddon` and is not part of R1.
+The optional DOM timeline is a separate `features/resource-scheduler-ui` subpath. It is a data-driven read-only surface over already-projected resources, occurrences, assignments and a range. It owns collapse/scroll/focus presentation state only, reuses the headless R3 geometry and structured occurrence-presentation resolver, renders empty resource rows and nested headers, and does not fetch providers, expand recurrence, persist data or mutate host state. It is not a `CalendarUiAddon` and does not add a `CalendarView` member.
 
 ### Placement policy
 

@@ -91,6 +91,16 @@ R3 does not invoke recurrence or create a second time engine. It does not alter 
 
 Add the separate optional `features/resource-scheduler-ui` subpath with nested headers, expand/collapse, time axis, resource rows, event rendering, scrolling and keyboard/accessibility foundations. Do not add a Calendar view enum member or use `CalendarUiAddon`.
 
+### R4 implementation notes
+
+`CalendarResourceSchedulerUi` is a standalone data-driven DOM surface under `features/resource-scheduler-ui`. Hosts call `setProjection()` with already-projected resources, occurrences, assignments and the visible range. The UI validates and builds the replacement DOM before committing it, so malformed projections do not partially replace the current surface.
+
+The treegrid renders one row per visible resource, including empty rows, with sticky nested row headers, explicit expand/collapse controls, a horizontally scrollable time axis, R3 occurrence geometry, UI-only minimum pixel sizes and per-row visual lanes. Collapse state is caller-observable and remains UI state. Structured `CalendarUiExtension.prepare/presentOccurrence` hooks may contribute safe text/icon/badge presentation, but this module never mounts or imports `CalendarUi` and ignores mutation/action semantics.
+
+Keyboard foundations include native Enter/Space activation when a non-mutating host activation callback is supplied, Arrow/Home/End navigation between occurrence cards, ArrowLeft/ArrowRight collapse control semantics, focus-visible styling and scroll-into-view. Touch uses native pan scrolling and manipulation-sized controls; drag/reassignment/resize remain deferred to R6.
+
+The surface does not query providers, expand recurrence, interpret resource policy, invoke authority, persist data or perform mutation.
+
 After R4, audit the read-only architecture independently before writes.
 
 ## R5 — Placement policy, authority and atomic mutation
@@ -105,6 +115,6 @@ Add horizontal time drag, vertical resource reassignment, diagonal combined drag
 
 Verify hierarchy integrity, collapse/order, multi-resource behavior, unassigned events, resource-scoped policy, recurrence scopes, DST/cross-midnight/point occurrences, temporal/resource authority, trusted host projections, stale versions, atomic failure behavior, accessibility and negative dependency/persistence leakage. Then run the complete repository quality gate.
 
-## Current architecture after R3
+## Current architecture after R4
 
-The headless contract lives only under `src/features/resource-scheduler/` and is exported only from `@director/calendar/features/resource-scheduler`. It imports core types only. Base root/core/view remain unchanged and resource-free. R2 provides pure validation/projection mechanics and R3 adds only optional headless timeline geometry. No Resource Scheduler runtime module is loaded unless its explicit subpath is imported.
+The headless contract lives only under `src/features/resource-scheduler/` and is exported only from `@director/calendar/features/resource-scheduler`. It imports core types only. Base root/core/view remain unchanged and resource-free. R2 provides pure validation/projection mechanics, R3 adds optional headless timeline geometry and R4 adds a separate opt-in read-only DOM timeline. Core, ordinary view and Calendar persistence remain resource-free; no Resource Scheduler code is loaded unless its explicit subpaths are imported.
