@@ -42,17 +42,26 @@ test("live temporal chrome advances across midnight without re-querying projecti
   expect(before.today).toEqual(["2026-11-10"]);
   expect(Number.parseFloat(before.nowTop)).toBeCloseTo(1439.5, 1);
 
-  await page.clock.fastForward(90_000);
+  await page.clock.fastForward(31_000);
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
 
-  const after = await page.evaluate(() => ({
+  const midnight = await page.evaluate(() => ({
     queryCount: globalThis.__temporalCalendar.projectionCalls(),
     today: [...document.querySelectorAll(".dc-day-header.is-today")].map(node => node.dataset.calendarDate?.slice(0, 10)),
     nowTop: document.querySelector(".dc-now")?.style.top,
   }));
-  expect(after.queryCount).toBe(before.queryCount);
-  expect(after.today).toEqual(["2026-11-11"]);
-  expect(Number.parseFloat(after.nowTop)).toBeCloseTo(1, 1);
+  expect(midnight.queryCount).toBe(before.queryCount);
+  expect(midnight.today).toEqual(["2026-11-11"]);
+  expect(Number.parseFloat(midnight.nowTop)).toBeCloseTo(0, 0);
+
+  await page.clock.fastForward(60_000);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+  const afterMinute = await page.evaluate(() => ({
+    queryCount: globalThis.__temporalCalendar.projectionCalls(),
+    nowTop: document.querySelector(".dc-now")?.style.top,
+  }));
+  expect(afterMinute.queryCount).toBe(before.queryCount);
+  expect(Number.parseFloat(afterMinute.nowTop)).toBeCloseTo(1, 1);
 });
 
 test("week view renders interactive events and passive background layers in a real browser", async ({ page }) => {
