@@ -59,16 +59,16 @@ test("canonical primary IndexedDB is exactly version 1 with one keyed store and 
 
 test("primary IndexedDB rejects wrong physical topology, extra stores and later versions", async ({ page }, testInfo) => {
   const cases = [
-    { suffix: "wrong-key", version: 1, stores: [{ name: "calendar" }] },
-    { suffix: "extra-store", version: 1, stores: [{ name: "calendar", keyPath: "key" }, { name: "extra" }] },
-    { suffix: "later-version", version: 2, stores: [{ name: "calendar", keyPath: "key" }] },
+    { suffix: "wrong-key", version: 1, stores: [{ name: "calendar" }], expected: /canonical schema/i },
+    { suffix: "extra-store", version: 1, stores: [{ name: "calendar", keyPath: "key" }, { name: "extra" }], expected: /canonical schema/i },
+    { suffix: "later-version", version: 2, stores: [{ name: "calendar", keyPath: "key" }], expected: /VersionError|higher version than the version requested/i },
   ];
   for (const row of cases) {
     const databaseName = uniqueDatabaseName(testInfo, row.suffix);
     await createDatabase(page, databaseName, row.version, row.stores);
     const error = await repositoryOpenError(page, databaseName);
     expect(error).not.toBeNull();
-    expect(error).toMatch(/canonical schema|VersionError/i);
+    expect(error).toMatch(row.expected);
     await deleteDatabase(page, databaseName);
   }
 });
@@ -91,16 +91,16 @@ test("interoperability IndexedDB is exact version 1 and rejects alternate physic
   await deleteDatabase(page, canonical);
 
   const cases = [
-    { suffix: "wrong-key", version: 1, stores: [{ name: "syncStates", keyPath: "key" }, { name: "reminderReceipts" }] },
-    { suffix: "extra-store", version: 1, stores: [{ name: "syncStates" }, { name: "reminderReceipts" }, { name: "extra" }] },
-    { suffix: "later-version", version: 2, stores: [{ name: "syncStates" }, { name: "reminderReceipts" }] },
+    { suffix: "wrong-key", version: 1, stores: [{ name: "syncStates", keyPath: "key" }, { name: "reminderReceipts" }], expected: /canonical schema/i },
+    { suffix: "extra-store", version: 1, stores: [{ name: "syncStates" }, { name: "reminderReceipts" }, { name: "extra" }], expected: /canonical schema/i },
+    { suffix: "later-version", version: 2, stores: [{ name: "syncStates" }, { name: "reminderReceipts" }], expected: /VersionError|higher version than the version requested/i },
   ];
   for (const row of cases) {
     const databaseName = uniqueDatabaseName(testInfo, row.suffix);
     await createDatabase(page, databaseName, row.version, row.stores);
     const error = await interopReadError(page, databaseName);
     expect(error).not.toBeNull();
-    expect(error).toMatch(/canonical schema|VersionError/i);
+    expect(error).toMatch(row.expected);
     await deleteDatabase(page, databaseName);
   }
 });
