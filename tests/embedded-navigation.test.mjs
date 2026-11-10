@@ -5,9 +5,9 @@ import {
   boundProjectionRange,
   clampNavigationDate,
   navigationDateInBounds,
-  placementInNavigationBounds,
   resolveNavigationBounds,
 } from '../dist/view/navigation.js';
+import { placementInNavigationBounds } from '../dist/core/interaction.js';
 
 const zone='Asia/Kolkata';
 
@@ -71,7 +71,7 @@ test('jump, drag, creation and add-on placement share the same bounded enforceme
   assert.match(view,/requestCalendarDate\([^\n]*this\.navigationBounds\)/);
   assert.match(dialogs,/if \(bounds\?\.min\) input\.min = bounds\.min/);
   assert.match(dialogs,/if \(bounds\?\.max\) input\.max = bounds\.max/);
-  assert.match(view,/private async allowPlacement[\s\S]*placementInNavigationBounds\(start, end, this\.navigationBounds, this\.timeZone\)/);
+  assert.match(view,/private async allowPlacement[\s\S]*evaluateCalendarPlacement\(context/);
   assert.match(view,/private async allowPlacement[\s\S]*const queryRange = boundProjectionRange\(/);
   assert.match(view,/if \(!inBounds \|\| !occurrence \|\| !this\.canMoveOccurrenceToPlacement\(occurrence, false\)\) return/);
   assert.match(view,/canPlaceDraft:[\s\S]*self\.allowPlacement/);
