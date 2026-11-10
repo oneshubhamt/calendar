@@ -3,18 +3,11 @@ name: Browser release QA
 on:
   workflow_dispatch:
   push:
-    branches:
-      - background-ranges
-    paths:
-      - "src/**"
-      - "tests/browser/**"
-      - "playwright.config.mjs"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/browser-release.yml"
+    tags:
+      - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: browser-release-${{ github.ref }}
@@ -46,30 +39,8 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium firefox webkit
 
-      - name: Generate and verify browser visual baselines
-        run: |
-          npm run qa:browser:update
-          npm run qa:browser
-
-      - name: Commit verified Chromium baselines
-        run: |
-          if [ -z "$(git status --porcelain -- tests/browser/__screenshots__)" ]; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tests/browser/__screenshots__/
-          git commit -m "test(browser): capture visual baselines"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
-
-      - name: Upload generated visual baselines
-        if: always()
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: browser-visual-baselines
-          path: tests/browser/__screenshots__/
-          if-no-files-found: error
-          retention-days: 7
+      - name: Run browser release QA
+        run: npm run qa:browser
 
       - name: Upload Playwright failure report
         if: failure()
