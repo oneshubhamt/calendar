@@ -17,11 +17,13 @@ features/personal ── pure optional service
 features/personal-ui ── optional DOM add-on built on that service
 features/planning ── optional presentation/semantics extension
 features/availability ── optional temporal context + placement-policy adapter
+features/resource-scheduler ── optional headless resource scheduling dimension
+features/resource-scheduler-ui ── planned optional DOM resource timeline built on resource-scheduler
 
 integration/* + adapters/* ── optional host-specific modules
 ```
 
-Generic layers never import Director integrations/adapters/fixtures. `view/` also does not import `features/personal`, `features/personal-ui`, `features/planning` or `features/availability`. The package root exports only **core + view**. IndexedDB storage, interoperability, every specialized feature and host integration require explicit subpath imports. There is deliberately no aggregate `@director/calendar/features` entry point: consumers opt into `features/personal`, `features/personal-ui`, `features/planning`, `features/availability` or future feature modules individually.
+Generic layers never import Director integrations/adapters/fixtures. `view/` also does not import `features/personal`, `features/personal-ui`, `features/planning`, `features/availability` or `features/resource-scheduler`. The package root exports only **core + view**. IndexedDB storage, interoperability, every specialized feature and host integration require explicit subpath imports. There is deliberately no aggregate `@director/calendar/features` entry point: consumers opt into `features/personal`, `features/personal-ui`, `features/planning`, `features/availability` or future feature modules individually.
 
 ## Core contracts
 
@@ -95,6 +97,16 @@ A consumer that does not import this feature receives none of those semantics or
 Provides optional DOM-free availability semantics. `CalendarAvailabilityDefinition` expresses `available` or `unavailable` time, optional source association, label/display/metadata and a temporal recurrence/exception contract over the same `RecurrenceRule` model used by events. `expandAvailabilityDefinitions()` calls the generic temporal recurrence engine directly and maps resolved temporal ranges into passive `CalendarBackgroundRange` values with stable identities and namespaced `metadata.calendarAvailability`. Availability does not construct synthetic `CalendarItem` values or pass through event validation.
 
 `createAvailabilityBackgroundProvider()` reads authoritative definitions on every projection request and may forward an invalidation subscription; it stores no availability state in Calendar persistence. The feature defines semantic background context only. It does not alter collisions, mutation authority or placement acceptance; any such enforcement remains a separate optional policy layer.
+
+### `features/resource-scheduler`
+
+Resource Scheduler is an optional, DOM-free sibling capability for hosts that schedule a second dimension such as rooms, people or equipment. Resources are not Calendar sources and are never inferred from event metadata. The feature owns a flat `parentId` hierarchy contract, range-bounded resource projection, range-bounded batch assignment projection, independent reassignment authority, feature-local resource placement guards and an atomic resource/time mutation port.
+
+The base remains resource-free: `CalendarItem`, `CalendarOccurrence` and `CalendarView` gain no resource fields or resource timeline member; ordinary `CalendarUi` and `layoutTimedDay()` do not understand resource rows; Calendar persistence stores no resource tree or assignments by default. Hosts remain authoritative for resource and assignment state. A host that does not import this subpath receives no Resource Scheduler module or runtime work.
+
+Resource placement is intentionally separate from temporal placement. Later mutation passes compose the existing `evaluateCalendarPlacement()` pipeline with resource target validation, resource-specific guards/collision policy and resource reassignment authority, then submit one `CalendarResourcePlacementChange` through `CalendarResourceMutationPort.commit()`. A combined time/resource drag must never become two independent writes.
+
+The optional DOM timeline is a separate planned `features/resource-scheduler-ui` subpath. It is not a `CalendarUiAddon` and is not part of R1.
 
 ### Placement policy
 

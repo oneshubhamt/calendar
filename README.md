@@ -15,6 +15,7 @@ features/personal     pure search/filter, quick-create, calendars, copy/move, ro
 features/personal-ui  OPTIONAL DOM controls for those personal conveniences
 features/planning     OPTIONAL deadlines/milestones/planned-vs-actual presentation
 features/availability OPTIONAL recurring available/unavailable background semantics
+features/resource-scheduler OPTIONAL headless resource hierarchy, assignment, authority and mutation contracts
 storage/              IndexedDB repository
 interoperability/     ICS, Google Calendar, sync, overlays, reminders
 integration/          OPTIONAL host adapters
@@ -22,7 +23,7 @@ integration/          OPTIONAL host adapters
 
 `kind`, `ownership`, `sourceType` and host metadata are extensible identifiers/data. Generic behavior is governed by explicit capabilities and policies such as `editPolicy`, `readOnly`, `allowCreate`, `removable` and temporal semantics—not by application names or reserved domain kinds.
 
-The root export is deliberately lean: **core + view only**. `@director/calendar/core` remains available for headless consumers. IndexedDB storage, interoperability, personal conveniences, planning semantics, availability semantics and host integrations are explicit subpaths, and there is no aggregate `@director/calendar/features` export. Specialized capabilities are imported individually, so a host using only the base product receives none of their modules. The base view imports none of those optional features.
+The root export is deliberately lean: **core + view only**. `@director/calendar/core` remains available for headless consumers. IndexedDB storage, interoperability, personal conveniences, planning semantics, availability semantics, Resource Scheduler and host integrations are explicit subpaths, and there is no aggregate `@director/calendar/features` export. Specialized capabilities are imported individually, so a host using only the base product receives none of their modules. The base view imports none of those optional features.
 
 ## Host customization
 
@@ -40,6 +41,7 @@ A host can:
 - supply `CalendarProjectionProvider` items for Calendar-owned recurrence expansion, or `CalendarOccurrenceProjectionProvider` occurrences when the host has already expanded recurrence for the requested range; host-expanded `start`, `end` and `originalStart` values must be absolute ISO date-times and are canonicalized before range filtering, while any host-local recurrence key belongs in opaque `projectionIdentity`;
 - supply `CalendarBackgroundProjectionProvider` values for passive, already-expanded temporal context that remains separate from events and scheduling constraints; `layoutBackgroundDay()` provides civil/DST-safe timed geometry, day/week timed ranges render through a dedicated pointer-transparent background layer, and explicit `allDay: true` ranges shade Month cells plus Day/Week all-day lanes without entering event rows; optional background display color/text/class tokens remain cosmetic-only;
 - optionally import `features/availability` to express available/unavailable definitions with temporal recurrence/exceptions and resolve them directly through the same generic temporal-series recurrence engine used by events; availability never constructs `CalendarItem` values, owns no persistence and never enforces placement by itself;
+- optionally import `features/resource-scheduler` for a separate, host-authoritative resource dimension: flat resources, range-bounded resource/assignment projection, independent reassignment authority, feature-local placement guards and a single atomic resource/time mutation contract; the base event schema, ordinary view and Calendar persistence remain resource-free;
 - optionally install generic `placementGuards` to return `allow`, `warn` or `prevent`; the headless `evaluateCalendarPlacement()` pipeline composes navigation bounds, guards and collision policy, while Calendar UI supplies collision occurrences lazily and owns only confirmation/announcement presentation; `features/availability` can explicitly create either an `exclude-unavailable` or `require-available` guard without making background rendering itself enforce anything;
 - supply `CalendarOccurrenceCapabilityProvider` for per-occurrence move/conversion/resize/open/edit/delete/recurrence/action authority; default-path results can only narrow existing policy, while explicit `trusted-host` authority routes through `trustedHostCommandHandler` and is revalidated at execution; editor saves and add-on patches derive the same move/resize/conversion requirements from the temporal fields they actually change, and trusted-host semantic editing is not re-blocked by a legacy schedule-only editor branch;
 - Calendar applies its built-in occurrence command lifecycle for operation-specific pending state, occurrence-level duplicate suppression, stable occurrence/source/projection identity context, explicit stale-command errors, accessible failures and authoritative refresh after asynchronous host commands; pointer drag/resize previews are stateful and survive re-render until host resolution, and a committed mutation whose reprojection fails is reported distinctly from a rejected mutation so retry cannot duplicate a successful write;
@@ -90,3 +92,4 @@ See:
 - `docs/AYANA_INTEGRATION.md` — Ayana-as-host integration architecture and target calendar experience;
 - `docs/AYANA_IMPLEMENTATION_PROGRAMME.md` — staged Calendar + Ayana implementation programme and acceptance gates.
 - `docs/BACKGROUND_RANGES_PROGRAMME.md` — generic passive background-range architecture and staged availability programme.
+- `docs/RESOURCE_SCHEDULER_PROGRAMME.md` — optional Resource Scheduler architecture and staged implementation programme.

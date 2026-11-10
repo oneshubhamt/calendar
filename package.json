@@ -103,6 +103,10 @@
     "./features/availability": {
       "types": "./dist/features/availability.d.ts",
       "import": "./dist/features/availability.js"
+    },
+    "./features/resource-scheduler": {
+      "types": "./dist/features/resource-scheduler/index.d.ts",
+      "import": "./dist/features/resource-scheduler/index.js"
     }
   },
   "files": [
