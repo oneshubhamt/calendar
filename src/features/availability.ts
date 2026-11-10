@@ -160,7 +160,12 @@ export function expandAvailabilityDefinitions(
     if (ids.has(definition.id)) throw new Error(`Duplicate availability definition: ${definition.id}`);
     ids.add(definition.id);
 
-    return expandTemporalSeries(definition, definition.recurrence, range, { timeZone: options.timeZone }).map(resolved => {
+    return expandTemporalSeries<CalendarAvailabilityExceptionReplacement>(
+      definition,
+      definition.recurrence,
+      range,
+      { timeZone: options.timeZone },
+    ).map(resolved => {
       const replacement = resolved.exception?.replacement;
       const state = replacement?.state ?? definition.state;
       const calendarId = replacement?.calendarId ?? definition.calendarId;
