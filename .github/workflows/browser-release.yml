@@ -38,14 +38,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build browser modules
-        run: npm run build
-
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Run browser release QA
-        run: npx playwright test tests/browser/rendering-smoke.spec.mjs tests/browser/visual.spec.mjs --config=playwright.config.mjs --project=chromium
+        run: npm run qa:browser
 
       - name: Upload Playwright failure report
         if: failure()

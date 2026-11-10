@@ -95,12 +95,76 @@ test("pointer drag still commits a timed move through the extracted gesture cont
   await page.mouse.move(startX, startY);
   await page.mouse.down();
   await page.mouse.move(startX, startY + 8, { steps: 2 });
-  await page.mouse.move(startX, startY + 60, { steps: 6 });
+  await page.mouse.move(startX, startY + 120, { steps: 8 });
   await page.mouse.up();
 
   await expect.poll(async () => await page.evaluate(() =>
     globalThis.__visualCalendar.repository.read().items.find(item => item.id === "focus")?.start,
-  )).toBe("2026-11-09T04:30:00.000Z");
+  )).toBe("2026-11-09T05:30:00.000Z");
+});
+
+
+test("structured presentation, inline actions and embedded chrome behave through the real DOM", async ({ page }) => {
+  await page.goto("/tests/browser/harness.html");
+  await page.evaluate(async () => {
+    const [{ CalendarEngine }, { MemoryCalendarRepository }, { CalendarUi }] = await Promise.all([
+      import("/dist/core/calendar-engine.js"),
+      import("/dist/core/store.js"),
+      import("/dist/view/calendar-ui.js"),
+    ]);
+    const source = { id: "personal", title: "Personal", visible: true, removable: true };
+    const item = {
+      id: "structured", calendarId: "personal", title: "Underlying title",
+      start: "2026-11-10T09:00:00.000Z", end: "2026-11-10T10:00:00.000Z",
+      kind: "event", ownership: "calendar", editPolicy: "full",
+    };
+    let actionCalls = 0;
+    let openCalls = 0;
+    const repository = new MemoryCalendarRepository([source], [item]);
+    const calendar = new CalendarUi(document.getElementById("browser-test-host"), new CalendarEngine(repository), {
+      locale: "en-US",
+      timeZone: "UTC",
+      initialDate: "2026-11-10",
+      initialView: "day",
+      chrome: { toolbar: false },
+      extensions: [{
+        presentOccurrence() {
+          return {
+            title: "Presented title",
+            subtitle: "Safe subtitle",
+            badges: [{ label: "Confirmed" }],
+            data: { hostStatus: "ready" },
+          };
+        },
+      }],
+      sourceActions: {
+        actions() {
+          return [{ id: "toggle", label: "Toggle state", inline: true, pressed: true }];
+        },
+        execute() { actionCalls += 1; },
+      },
+      callbacks: {
+        handleOpen() { openCalls += 1; return true; },
+      },
+    });
+    await calendar.refresh();
+    globalThis.__structuredProbe = { actionCalls: () => actionCalls, openCalls: () => openCalls };
+  });
+
+  await expect(page.locator(".dc-toolbar")).toHaveCount(0);
+  const event = page.locator(".dc-time-event").filter({ hasText: "Presented title" }).first();
+  await expect(event).toContainText("Safe subtitle");
+  await expect(event).toContainText("Confirmed");
+  await expect(event).toHaveAttribute("data-host-host-status", "ready");
+
+  const action = event.getByRole("button", { name: "Toggle state" });
+  await expect(action).toHaveAttribute("aria-pressed", "true");
+  await action.click();
+  expect(await page.evaluate(() => globalThis.__structuredProbe.actionCalls())).toBe(1);
+  expect(await page.evaluate(() => globalThis.__structuredProbe.openCalls())).toBe(0);
+
+  await event.locator(".dc-occurrence-main").click();
+  expect(await page.evaluate(() => globalThis.__structuredProbe.openCalls())).toBe(1);
 });
 
 test("DST fall-back day exposes duplicated local hour geometry without browser-specific failure", async ({ page }) => {
