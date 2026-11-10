@@ -22,7 +22,7 @@ export const DIRECTOR_FIXTURE_ROUTINES: readonly CalendarRoutineTemplate[] = Obj
       { title: "Public Administration", offsetMinutes: 7 * 60 + 15, durationMinutes: 120, kind: "study-block", category: "UPSC" },
       { title: "Revision recall", offsetMinutes: 10 * 60, durationMinutes: 45, kind: "revision", category: "Revision" },
     ],
-    repeat: { frequency: "weekly", interval: 1, byDay: [1, 2, 3, 4, 5, 6].map(weekday => ({ weekday })), weekStartsOn: 1 },
+    repeat: { frequency: "weekly", interval: 1, byDay: ([1, 2, 3, 4, 5, 6] as const).map(weekday => ({ weekday })), weekStartsOn: 1 },
   },
 ]);
 
