@@ -4,6 +4,7 @@ import * as C from '../dist/index.js';
 import { baselineOccurrenceCapabilities, calendarOccurrenceCommandContext, resolveOccurrenceCapabilities, temporalMutationCapabilityRequirements } from '../dist/core/authority.js';
 import { CalendarCommandLifecycle } from '../dist/view/command-lifecycle.js';
 import { occurrenceWithPreview } from '../dist/view/occurrence-preview.js';
+import { CalendarMutationCoordinator } from '../dist/view/mutation-coordinator.js';
 import { CalendarCommandStaleError } from '../dist/core/commands.js';
 
 const source={id:'host',title:'Host',visible:true};
@@ -173,4 +174,62 @@ test('tentative occurrence geometry can be reconstructed after authoritative re-
   assert.equal(refreshed.start,'2026-11-09T12:00:00.000Z');
   assert.equal(refreshed.title,'Fresh authoritative title');
   assert.equal(row.start,'2026-11-09T10:00:00.000Z');
+});
+
+
+test('mutation coordinator revalidates occurrence authority and owns pending preview lifecycle',async()=>{
+  const row=occurrence({occurrenceId:'coordinated',sourceItemId:'source-1'});
+  let current=row;
+  let release;
+  const blocker=new Promise(resolve=>{release=resolve;});
+  const transitions=[];
+  const commands=[];
+  let refreshes=0;
+  const coordinator=new CalendarMutationCoordinator({
+    engine:new C.CalendarEngine(new C.MemoryCalendarRepository([source],[])),
+    clock:{now:()=>new Date('2026-11-09T09:00:00.000Z')},
+    timeZone:'UTC',
+    navigationBounds:{},
+    collisionPolicy:{mode:'allow',includeAllDay:false},
+    placementGuards:undefined,
+    commandHandler:{async execute(command){commands.push(command);await blocker;}},
+    trustedHostCommandHandler:undefined,
+    occurrenceCapabilities:undefined,
+    sourceActions:undefined,
+    sources:()=>[source],
+    occurrence:id=>id===current.occurrenceId?current:undefined,
+    refresh:async()=>{refreshes+=1;},
+    announce:()=>{},
+    onCommand:()=>{},
+    onPendingChange:(id,operation,pending)=>transitions.push([id,operation,pending]),
+    onSettled:()=>{},
+    confirmPlacementWarning:async()=>true,
+  });
+
+  const command={
+    type:'move-occurrence',
+    occurrence:row,
+    start:'2026-11-09T12:00:00.000Z',
+    end:'2026-11-09T13:00:00.000Z',
+    scope:'this',
+  };
+  const pending=coordinator.dispatchOccurrence(command,['canMove'],'move');
+  await Promise.resolve();
+  assert.equal(coordinator.isPending(row),true);
+  assert.equal(coordinator.previewOccurrence(row).start,'2026-11-09T12:00:00.000Z');
+  release();
+  assert.equal(await pending,'completed');
+  assert.equal(coordinator.isPending(row),false);
+  assert.equal(coordinator.previewOccurrence(row).start,row.start);
+  assert.equal(commands.length,1);
+  assert.equal(refreshes,1);
+  assert.deepEqual(transitions,[
+    ['coordinated','move',true],
+    ['coordinated','move',false],
+  ]);
+
+  current={...row,editPolicy:'readonly'};
+  const denied=await coordinator.dispatchOccurrence(command,['canMove'],'move');
+  assert.equal(denied,'rejected');
+  assert.equal(commands.length,1);
 });

@@ -51,29 +51,26 @@ import {
 } from "./gesture-controller.js";
 import { groupAllDayBackgroundRangesByDay, groupByDay, layoutBackgroundDay, layoutTimedDay } from "../core/layout.js";
 import { sameRecurrence } from "../core/recurrence.js";
-import { evaluateCalendarPlacement, normalizeSnapPolicy, placementInNavigationBounds, placementTimePatch, resizeInterval, snapMinuteCoordinate, type CalendarResizeEdge } from "../core/interaction.js";
+import { normalizeSnapPolicy, placementInNavigationBounds, placementTimePatch, resizeInterval, snapMinuteCoordinate, type CalendarResizeEdge } from "../core/interaction.js";
 import {
-  calendarOccurrenceCommandContext, resolveOccurrenceCapabilities, temporalMutationCapabilityRequirements,
-  type CalendarOccurrenceCapabilityKey, type ResolvedCalendarOccurrenceCapabilities,
+  type CalendarOccurrenceCapabilityKey,
+  type ResolvedCalendarOccurrenceCapabilities,
 } from "../core/authority.js";
 import { chooseSeriesScope, openEventEditor } from "./event-editor.js";
 import { CALENDAR_CSS } from "./styles.js";
 import { confirmCalendarAction, requestCalendarDate } from "./dialogs.js";
-import { CalendarCommandLifecycle, type CalendarCommandLifecycleStatus } from "./command-lifecycle.js";
-import { hostDataAttributeName, isSafeHostClassName, resolveOccurrencePresentation, resolveSourceActions, type ResolvedCalendarOccurrencePresentation, type ResolvedCalendarSourceAction } from "./presentation.js";
+import {
+  CalendarMutationCoordinator,
+  mutationCommitted,
+  type CalendarMutationDispatchResult,
+} from "./mutation-coordinator.js";
+import { hostDataAttributeName, isSafeHostClassName, resolveOccurrencePresentation, type ResolvedCalendarOccurrencePresentation, type ResolvedCalendarSourceAction } from "./presentation.js";
 import { calendarHostCss } from "./extension-styles.js";
-import { occurrenceWithPreview, previewPatchForCommand, type PendingOccurrencePreview } from "./occurrence-preview.js";
 import {
   boundProjectionRange, clampNavigationDate, navigationDateInBounds, resolveNavigationBounds,
   type ResolvedCalendarNavigationBounds,
 } from "./navigation.js";
 
-
-type OccurrenceDispatchResult = CalendarCommandLifecycleStatus | "cancelled";
-
-function mutationCommitted(status: OccurrenceDispatchResult): boolean {
-  return status === "completed" || status === "committed-refresh-failed";
-}
 
 interface SelectionDragState {
   readonly pointerId: number;
@@ -150,8 +147,7 @@ export class CalendarUi {
   private renderGeneration = 0;
   private contextMenu: HTMLElement | null = null;
   private readonly unsubscribeRepository: () => void;
-  private readonly commandLifecycle = new CalendarCommandLifecycle();
-  private readonly pendingPreviews = new Map<string, PendingOccurrencePreview>();
+  private readonly mutations: CalendarMutationCoordinator;
   private readonly reportedHostHookErrors = new Set<string>();
   private readonly temporalChrome: CalendarTemporalChrome;
   private readonly gestures: CalendarGestureController;
@@ -191,6 +187,36 @@ export class CalendarUi {
     this.sources = this.engine.snapshot().sources;
     for (const source of this.sources) this.sourceVisibility.set(source.id, source.visible);
     this.defaultCalendarId = options.defaultCalendarId ?? this.sources.find(source => !source.readOnly && source.allowCreate !== false)?.id ?? this.sources[0]?.id ?? "calendar";
+    this.mutations = new CalendarMutationCoordinator({
+      engine: this.engine,
+      clock: this.clock,
+      timeZone: this.timeZone,
+      navigationBounds: this.navigationBounds,
+      collisionPolicy: this.collisionPolicy,
+      placementGuards: this.options.placementGuards,
+      commandHandler: this.options.commandHandler,
+      trustedHostCommandHandler: this.options.trustedHostCommandHandler,
+      occurrenceCapabilities: this.options.occurrenceCapabilities,
+      sourceActions: this.options.sourceActions,
+      sources: () => this.sources,
+      occurrence: occurrenceId => this.occurrenceIndex.get(occurrenceId),
+      refresh: () => this.refresh(),
+      announce: message => this.announce(message),
+      onCommand: command => this.hostHook(
+        "Calendar onCommand callback",
+        () => this.options.callbacks?.onCommand?.(command),
+        undefined,
+      ),
+      onPendingChange: (occurrenceId, operation, pending) =>
+        this.setOccurrencePending(occurrenceId, operation, pending),
+      onSettled: () => { if (!this.destroyed) this.render(); },
+      confirmPlacementWarning: async messages => await confirmCalendarAction(
+        this.host,
+        "Scheduling check",
+        `${messages.join(" ")} Continue?`,
+        "Continue",
+      ),
+    });
     this.temporalChrome = new CalendarTemporalChrome({
       host: this.host,
       clock: this.clock,
@@ -329,27 +355,19 @@ export class CalendarUi {
   }
 
   private authoritativeOccurrence(occurrence: CalendarOccurrence): CalendarOccurrence {
-    return this.occurrenceIndex.get(occurrence.occurrenceId) ?? occurrence;
+    return this.mutations.authoritativeOccurrence(occurrence);
   }
 
   private occurrenceCapabilities(occurrence: CalendarOccurrence): ResolvedCalendarOccurrenceCapabilities {
-    const authoritative = this.authoritativeOccurrence(occurrence);
-    return resolveOccurrenceCapabilities(authoritative, this.sources.find(source => source.id === authoritative.calendarId), this.options.occurrenceCapabilities);
-  }
-
-  private commandHandlerFor(occurrence: CalendarOccurrence, capabilities = this.occurrenceCapabilities(occurrence)) {
-    return capabilities.commandPath === "trusted-host" ? this.options.trustedHostCommandHandler : this.options.commandHandler;
+    return this.mutations.capabilities(occurrence);
   }
 
   private canMoveOccurrence(occurrence: CalendarOccurrence): boolean {
-    const capabilities = this.occurrenceCapabilities(occurrence);
-    return capabilities.canMove && Boolean(this.commandHandlerFor(occurrence, capabilities));
+    return this.mutations.canMove(occurrence);
   }
 
   private canResizeOccurrence(occurrence: CalendarOccurrence, edge: CalendarResizeEdge): boolean {
-    const capabilities = this.occurrenceCapabilities(occurrence);
-    const allowed = edge === "start" ? capabilities.canResizeStart : capabilities.canResizeEnd;
-    return allowed && Boolean(this.commandHandlerFor(occurrence, capabilities));
+    return this.mutations.canResize(occurrence, edge);
   }
 
   private canEditOccurrence(occurrence: CalendarOccurrence): boolean {
@@ -360,7 +378,9 @@ export class CalendarUi {
       || (capabilities.canMove && capabilities.canMoveBetweenAllDayAndTimed)
       || capabilities.canChangeRecurrence
       || (isPointOccurrence(occurrence) && capabilities.canMove);
-    return editorAuthority && Boolean(this.options.callbacks?.handleEdit || this.commandHandlerFor(occurrence, capabilities));
+    return editorAuthority && Boolean(
+      this.options.callbacks?.handleEdit || this.mutations.hasCommandPath(occurrence, capabilities),
+    );
   }
 
   /** Semantic fields are governed directly by the canonical occurrence capability resolver. */
@@ -372,27 +392,23 @@ export class CalendarUi {
   }
 
   private canDeleteOccurrence(occurrence: CalendarOccurrence): boolean {
-    const capabilities = this.occurrenceCapabilities(occurrence);
-    return capabilities.canDelete && Boolean(this.commandHandlerFor(occurrence, capabilities));
+    return this.mutations.canDelete(occurrence);
   }
 
   private canOpenOccurrence(occurrence: CalendarOccurrence): boolean {
-    return this.occurrenceCapabilities(occurrence).canOpen;
+    return this.mutations.canOpen(occurrence);
   }
 
   private canInvokeActions(occurrence: CalendarOccurrence): boolean {
-    return this.occurrenceCapabilities(occurrence).canInvokeActions;
+    return this.mutations.canInvokeActions(occurrence);
   }
 
   private isOccurrencePending(occurrence: CalendarOccurrence): boolean {
-    return this.commandLifecycle.isPending(occurrence.occurrenceId);
+    return this.mutations.isPending(occurrence);
   }
 
   private canMoveOccurrenceToPlacement(occurrence: CalendarOccurrence, allDay: boolean): boolean {
-    if (!this.canMoveOccurrence(occurrence)) return false;
-    if (isPointOccurrence(occurrence) && allDay) return false;
-    if (isDateLikeOccurrence(occurrence) === allDay) return true;
-    return this.occurrenceCapabilities(occurrence).canMoveBetweenAllDayAndTimed;
+    return this.mutations.canMoveToPlacement(occurrence, allDay);
   }
 
   private canDuplicateOccurrence(): boolean {
@@ -400,12 +416,7 @@ export class CalendarUi {
   }
 
   private displayOccurrences(): readonly CalendarOccurrence[] {
-    if (this.pendingPreviews.size === 0) return this.occurrences;
-    return this.occurrences.map(occurrence => occurrenceWithPreview(
-      occurrence,
-      this.pendingPreviews.get(occurrence.occurrenceId),
-      this.timeZone,
-    ));
+    return this.occurrences.map(occurrence => this.mutations.previewOccurrence(occurrence));
   }
 
   private mountShell(): void {
@@ -1145,39 +1156,11 @@ export class CalendarUi {
     return toDate(value);
   }
 
-  private occurrencePatchRequirements(occurrence: CalendarOccurrence, patch: CalendarItemPatch): CalendarOccurrenceCapabilityKey[] {
-    const requirements = new Set<CalendarOccurrenceCapabilityKey>();
-    const semanticEdit = patch.calendarId !== undefined
-      || patch.title !== undefined
-      || patch.description !== undefined
-      || patch.location !== undefined
-      || patch.kind !== undefined
-      || patch.editPolicy !== undefined
-      || patch.reminders !== undefined
-      || patch.display !== undefined
-      || patch.metadata !== undefined
-      || patch.temporalForm !== undefined;
-    if (semanticEdit) requirements.add("canEdit");
-    if (patch.recurrence !== undefined) requirements.add("canChangeRecurrence");
-
-    const beforeTemporal = occurrence.temporal;
-    const afterTemporal = patch.temporal === null ? undefined : patch.temporal ?? beforeTemporal;
-    const beforeStart = this.resolveDraftTime(occurrence.start, beforeTemporal).getTime();
-    const beforeEnd = this.resolveDraftTime(occurrence.end, beforeTemporal).getTime();
-    const afterStart = this.resolveDraftTime(patch.start ?? occurrence.start, afterTemporal).getTime();
-    const afterEnd = this.resolveDraftTime(patch.end ?? occurrence.end, afterTemporal).getTime();
-    const targetDateLike = Boolean(
-      (patch.allDay ?? occurrence.allDay)
-      || (patch.precision ?? occurrence.precision) === "date"
-      || afterTemporal?.kind === "date",
-    );
-    const temporalRequirements = temporalMutationCapabilityRequirements({
-      beforeStart, beforeEnd, afterStart, afterEnd,
-      crossesAllDayBoundary: isDateLikeOccurrence(occurrence) !== targetDateLike,
-    });
-    for (const requirement of temporalRequirements) requirements.add(requirement);
-    if (temporalRequirements.length === 0 && (patch.temporal !== undefined || patch.precision !== undefined || patch.allDay !== undefined)) requirements.add("canEdit");
-    return [...requirements];
+  private occurrencePatchRequirements(
+    occurrence: CalendarOccurrence,
+    patch: CalendarItemPatch,
+  ): CalendarOccurrenceCapabilityKey[] {
+    return this.mutations.patchRequirements(occurrence, patch);
   }
 
   private createCalendarItem(draft: CalendarCreateDraft, purpose: CalendarItemFactoryInput["purpose"], original?: CalendarOccurrence): CalendarItem {
@@ -1240,7 +1223,7 @@ export class CalendarUi {
   }
 
   private sourceItem(occurrence: CalendarOccurrence): CalendarItem | undefined {
-    return this.engine.snapshot().items.find(item => item.id === occurrence.sourceItemId);
+    return this.mutations.sourceItem(occurrence);
   }
 
   private async openDetails(occurrence: CalendarOccurrence): Promise<void> {
@@ -1331,7 +1314,7 @@ export class CalendarUi {
     const editHandler = this.options.callbacks?.handleEdit;
     if (editHandler && await this.hostHookAsync("Calendar handleEdit callback", () => editHandler(occurrence, this.placementValidationPort()), false)) return;
     const editCapabilities = this.occurrenceCapabilities(occurrence);
-    if (!this.commandHandlerFor(occurrence, editCapabilities)) {
+    if (!this.mutations.hasCommandPath(occurrence, editCapabilities)) {
       this.announce(`${occurrence.title}: editing was not handled by the host and no built-in command path is available.`);
       return;
     }
@@ -1444,7 +1427,7 @@ export class CalendarUi {
     action: string,
     requirements: readonly CalendarOccurrenceCapabilityKey[] = ["canMove"],
     operation = "edit",
-  ): Promise<OccurrenceDispatchResult> {
+  ): Promise<CalendarMutationDispatchResult> {
     let scope: SeriesEditScope = "all";
     if (occurrence.recurring) {
       const selected = await chooseSeriesScope(this.host, action);
@@ -1458,7 +1441,7 @@ export class CalendarUi {
     command: Extract<CalendarCommand, { type: "move-occurrence" | "resize-occurrence" }>,
     action: string,
     requirements: readonly CalendarOccurrenceCapabilityKey[],
-  ): Promise<OccurrenceDispatchResult> {
+  ): Promise<CalendarMutationDispatchResult> {
     let next = command;
     if (command.occurrence.recurring) {
       const scope = await chooseSeriesScope(this.host, action);
@@ -1475,42 +1458,12 @@ export class CalendarUi {
     command: CalendarOccurrenceCommand,
     requirements: readonly CalendarOccurrenceCapabilityKey[],
     operation: string,
-  ): Promise<CalendarCommandLifecycleStatus> {
-    const occurrence = this.authoritativeOccurrence(command.occurrence);
-    if (this.commandLifecycle.isPending(occurrence.occurrenceId)) {
-      this.announce(`${occurrence.title}: a command is already pending.`);
-      return "suppressed";
-    }
-    const previewPatch = previewPatchForCommand(command);
-    if (previewPatch) this.pendingPreviews.set(occurrence.occurrenceId, { patch: previewPatch });
-    const status = await this.commandLifecycle.run(occurrence.occurrenceId, operation, async () => {
-      const capabilities = this.occurrenceCapabilities(occurrence);
-      if (requirements.some(key => capabilities[key] !== true)) throw new Error(`${occurrence.title}: this action is no longer allowed.`);
-      const handler = this.commandHandlerFor(occurrence, capabilities);
-      if (!handler) throw new Error(`${occurrence.title}: no command path is available for this action.`);
-      await handler.execute(command, calendarOccurrenceCommandContext(command, this.clock.now().toISOString(), this.timeZone));
-      this.hostHook("Calendar onCommand callback", () => this.options.callbacks?.onCommand?.(command), undefined);
-    }, {
-      onPendingChange: (group, pendingOperation, pending) => this.setOccurrencePending(group, pendingOperation, pending),
-      refresh: () => this.refresh(),
-      onError: error => this.announce(error instanceof Error ? error.message : "Calendar command could not be completed."),
-      onRefreshError: error => this.announce(error instanceof Error
-        ? `Calendar change was committed, but the authoritative refresh failed: ${error.message}`
-        : "Calendar change was committed, but the authoritative refresh failed. Do not retry the mutation; refresh Calendar instead."),
-    });
-    this.pendingPreviews.delete(occurrence.occurrenceId);
-    if (!this.destroyed) this.render();
-    return status;
+  ) {
+    return await this.mutations.dispatchOccurrence(command, requirements, operation);
   }
 
   private async dispatch(command: CalendarCommand): Promise<void> {
-    if (command.type === "update-occurrence" || command.type === "move-occurrence" || command.type === "resize-occurrence" || command.type === "cancel-occurrence") {
-      throw new Error("Occurrence commands must use the capability-aware command path");
-    }
-    if (!this.options.commandHandler) throw new Error("Calendar mutation requires a command handler");
-    await this.options.commandHandler.execute(command, { now: this.clock.now().toISOString(), timeZone: this.timeZone });
-    this.hostHook("Calendar onCommand callback", () => this.options.callbacks?.onCommand?.(command), undefined);
-    await this.refresh();
+    await this.mutations.dispatch(command);
   }
 
   private setOccurrencePending(occurrenceId: string, operation: string, pending: boolean): void {
@@ -1541,25 +1494,11 @@ export class CalendarUi {
   }
 
   public async undo(): Promise<boolean> {
-    const undo = this.options.commandHandler?.undo;
-    if (!undo) return false;
-    const changed = await undo.call(this.options.commandHandler);
-    if (changed) {
-      this.announce("Calendar change undone.");
-      await this.refresh();
-    }
-    return changed;
+    return await this.mutations.undo();
   }
 
   public async redo(): Promise<boolean> {
-    const redo = this.options.commandHandler?.redo;
-    if (!redo) return false;
-    const changed = await redo.call(this.options.commandHandler);
-    if (changed) {
-      this.announce("Calendar change redone.");
-      await this.refresh();
-    }
-    return changed;
+    return await this.mutations.redo();
   }
 
   private announce(message: string): void {
@@ -1619,51 +1558,7 @@ export class CalendarUi {
     action: string,
     calendarId: CalendarId | undefined = occurrence?.calendarId,
   ): Promise<boolean> {
-    const context = {
-      start: start.toISOString(),
-      end: end.toISOString(),
-      allDay,
-      action,
-      timeZone: this.timeZone,
-      ...(calendarId ? { calendarId } : {}),
-      ...(occurrence ? { occurrence } : {}),
-    };
-    const evaluation = await evaluateCalendarPlacement(context, {
-      navigationBounds: this.navigationBounds,
-      guards: this.options.placementGuards,
-      collisionPolicy: this.collisionPolicy,
-      loadCollisionOccurrences: async () => {
-        const queryStart = addDays(startOfDay(start, this.timeZone), -1, this.timeZone);
-        const queryEnd = addDays(startOfDay(end, this.timeZone), 2, this.timeZone);
-        const queryRange = boundProjectionRange(
-          { start: queryStart.toISOString(), end: queryEnd.toISOString() },
-          this.navigationBounds,
-          this.timeZone,
-        );
-        const allSources = new Set(this.sources.map(source => source.id));
-        const result = await this.engine.query(queryRange, {
-          visibleSourceIds: allSources,
-          timeZone: this.timeZone,
-          includeBackgroundRanges: false,
-        });
-        return result.occurrences;
-      },
-    });
-
-    if (evaluation.mode === "prevent") {
-      this.announce(`${action} blocked. ${evaluation.messages.join(" ")}`);
-      return false;
-    }
-    if (evaluation.mode === "allow") return true;
-
-    const allowed = await confirmCalendarAction(
-      this.host,
-      "Scheduling check",
-      `${evaluation.messages.join(" ")} Continue?`,
-      "Continue",
-    );
-    if (!allowed) this.announce(`${action} cancelled after a scheduling warning.`);
-    return allowed;
+    return await this.mutations.allowPlacement(start, end, allDay, occurrence, action, calendarId);
   }
 
   private async keyboardTransformOccurrence(occurrence: CalendarOccurrence, key: string, resize: boolean): Promise<void> {
@@ -1875,24 +1770,7 @@ export class CalendarUi {
   }
 
   private async executeSourceAction(actionId: string, occurrence: CalendarOccurrence): Promise<void> {
-    const port = this.options.sourceActions;
-    if (!port) return;
-    const authoritative = this.authoritativeOccurrence(occurrence);
-    const status = await this.commandLifecycle.run(authoritative.occurrenceId, `action:${actionId}`, async () => {
-      if (!this.occurrenceCapabilities(authoritative).canInvokeActions) throw new Error(`${authoritative.title}: this action is no longer allowed.`);
-      const current = this.sourceActionsFor(authoritative).find(action => action.id === actionId);
-      if (!current || !current.enabled || current.pending) throw new Error(`${authoritative.title}: this action is no longer available.`);
-      await port.execute(actionId, authoritative);
-    }, {
-      onPendingChange: (group, pendingOperation, pending) => this.setOccurrencePending(group, pendingOperation, pending),
-      refresh: () => this.refresh(),
-      onError: error => this.announce(error instanceof Error ? error.message : "Source action could not be completed."),
-      onRefreshError: error => this.announce(error instanceof Error
-        ? `Action was committed, but the authoritative refresh failed: ${error.message}`
-        : "Action was committed, but the authoritative refresh failed. Do not retry the action; refresh Calendar instead."),
-    });
-    if (status === "completed") this.announce(`${authoritative.title}: action completed.`);
-    else if (status === "suppressed") this.announce(`${authoritative.title}: a command is already pending.`);
+    await this.mutations.executeSourceAction(actionId, occurrence);
   }
 
   private occurrencePresentation(occurrence: CalendarOccurrence): ResolvedCalendarOccurrencePresentation {
@@ -1904,9 +1782,7 @@ export class CalendarUi {
   }
 
   private sourceActionsFor(occurrence: CalendarOccurrence): readonly ResolvedCalendarSourceAction[] {
-    const authoritative = this.authoritativeOccurrence(occurrence);
-    if (!this.canInvokeActions(authoritative)) return [];
-    return resolveSourceActions(this.options.sourceActions, authoritative);
+    return this.mutations.sourceActionsFor(occurrence);
   }
 
   private presentationTitle(occurrence: CalendarOccurrence): string {
@@ -1997,7 +1873,7 @@ export class CalendarUi {
     if (action.state !== undefined) button.dataset.state = action.state;
     button.setAttribute("aria-label", action.accessibleLabel ?? action.label);
     if (action.pressed !== undefined) button.setAttribute("aria-pressed", String(action.pressed));
-    const pending = action.pending || this.commandLifecycle.isPending(occurrence.occurrenceId);
+    const pending = action.pending || this.mutations.isPending(occurrence.occurrenceId);
     button.disabled = !action.enabled || pending;
     if (pending) button.setAttribute("aria-busy", "true");
     button.addEventListener("pointerdown", event => event.stopPropagation());
@@ -2036,7 +1912,7 @@ export class CalendarUi {
     const presentation = this.occurrencePresentation(occurrence);
     for (const token of presentation.classNames) element.classList.add(token);
     for (const [key, value] of Object.entries(presentation.data)) element.setAttribute(`data-host-${hostDataAttributeName(key)}`, value);
-    const pendingOperation = this.commandLifecycle.pendingOperation(occurrence.occurrenceId);
+    const pendingOperation = this.mutations.pendingOperation(occurrence.occurrenceId);
     if (pendingOperation) {
       element.classList.add("is-pending");
       element.setAttribute("aria-busy", "true");
@@ -2054,17 +1930,7 @@ export class CalendarUi {
   }
 
   private placementValidationPort(): CalendarPlacementValidationPort {
-    const self = this;
-    return {
-      canPlaceDraft: async (draft, original, action = "create") => self.allowPlacement(
-        self.resolveDraftTime(draft.start, draft.temporal),
-        self.resolveDraftTime(draft.end, draft.temporal),
-        Boolean(draft.allDay),
-        original,
-        action,
-        draft.calendarId,
-      ),
-    };
+    return this.mutations.placementValidationPort();
   }
 
   private addonContext(): CalendarUiAddonContext {

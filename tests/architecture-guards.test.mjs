@@ -75,17 +75,21 @@ test("Resource Scheduler remains optional, headless-first and renderer-separated
   assert.doesNotMatch(schedulerUi, /\.\.\/\.\.\/(?:storage|interoperability|integration|adapters)\//);
 });
 
-test("view decomposition keeps coordinators out of renderer and gesture leaves", async () => {
-  const [ui, renderer, gestures, temporal] = await Promise.all([
+test("view decomposition keeps mutation, rendering and gesture concerns separated", async () => {
+  const [ui, mutations, renderer, gestures, temporal] = await Promise.all([
     read("../src/view/calendar-ui.ts"),
+    read("../src/view/mutation-coordinator.ts"),
     read("../src/view/view-renderer.ts"),
     read("../src/view/gesture-controller.ts"),
     read("../src/view/temporal-chrome.ts"),
   ]);
+  assert.match(ui, /from "\.\/mutation-coordinator\.js"/);
   assert.match(ui, /from "\.\/view-renderer\.js"/);
   assert.match(ui, /from "\.\/gesture-controller\.js"/);
   assert.match(ui, /from "\.\/temporal-chrome\.js"/);
-  for (const leaf of [renderer, gestures, temporal]) assert.doesNotMatch(leaf, /from "\.\/calendar-ui\.js"/);
+  for (const leaf of [mutations, renderer, gestures, temporal]) assert.doesNotMatch(leaf, /from "\.\/calendar-ui\.js"/);
+  assert.doesNotMatch(mutations, /HTMLElement|document\.|querySelector|addEventListener/);
+  assert.doesNotMatch(ui, /new CalendarCommandLifecycle|evaluateCalendarPlacement\(|previewPatchForCommand|resolveOccurrenceCapabilities\(/);
   assert.doesNotMatch(gestures, /CalendarCommand|commandHandler|executeCalendarPlacement/);
 });
 
