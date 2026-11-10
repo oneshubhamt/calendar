@@ -116,11 +116,13 @@ B3 is complete. Day/week timed backgrounds render through a dedicated pointer-tr
 
 B4 is complete. Only explicit `allDay: true` background ranges enter day-level rendering. They are grouped across the local days their absolute interval overlaps, rendered as passive full-surface shading in Month cells and Day/Week all-day lanes, omitted entirely on out-of-bounds days, and represented in accessible day/all-day descriptions through bounded label summaries. Timed backgrounds remain excluded from Month/day-level shading. Year and Agenda remain intentionally unsupported for backgrounds.
 
-### B5 — Optional availability semantics
+### B5 — Optional availability semantics ✅
 
 - add an optional, DOM-free availability feature only if a real consumer needs it;
 - recurring working/available/unavailable definitions and exceptions may expand into resolved background ranges;
 - do not add domain words such as work/sleep/journey to core types.
+
+B5 is complete through the explicit `features/availability` subpath. `CalendarAvailabilityDefinition` supports available/unavailable, timed/all-day, source-associated or global definitions and reuses the existing `CalendarRecurrence` rule/exception contract. Expansion converts definitions to temporary generated Calendar items only long enough to reuse the canonical recurrence/DST/exception machinery, then emits passive background ranges with stable IDs and namespaced `metadata.calendarAvailability`. `createAvailabilityBackgroundProvider()` reads live authoritative definitions and forwards optional invalidation without owning storage. No placement/collision enforcement is introduced.
 
 ### B6 — Optional placement guard
 
