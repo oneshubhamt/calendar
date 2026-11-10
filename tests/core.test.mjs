@@ -290,3 +290,21 @@ test('background day geometry uses civil time, clips visibly and layers determin
   ],new Date('2026-11-10T12:00:00Z'),'UTC');
   assert.equal(eventLayout[0].columnCount,1);
 });
+
+
+test('explicit all-day backgrounds group by local day without promoting timed ranges',()=>{
+  const ranges=[
+    {id:'all-day',start:'2026-11-09T18:30:00.000Z',end:'2026-11-11T18:30:00.000Z',allDay:true},
+    {id:'timed',start:'2026-11-10T03:30:00.000Z',end:'2026-11-10T04:30:00.000Z'},
+    {id:'carry',start:'2026-11-08T18:00:00.000Z',end:'2026-11-09T19:00:00.000Z',allDay:true},
+  ];
+  const grouped=C.groupAllDayBackgroundRangesByDay(
+    ranges,
+    'Asia/Kolkata',
+    {start:'2026-11-09T18:30:00.000Z',end:'2026-11-12T18:30:00.000Z'},
+  );
+  assert.deepEqual([...grouped.keys()],['2026-11-10','2026-11-11']);
+  assert.deepEqual(grouped.get('2026-11-10').map(range=>range.id),['carry','all-day']);
+  assert.deepEqual(grouped.get('2026-11-11').map(range=>range.id),['all-day']);
+  assert.equal([...grouped.values()].flat().some(range=>range.id==='timed'),false);
+});
