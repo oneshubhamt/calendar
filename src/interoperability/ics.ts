@@ -286,7 +286,7 @@ export function serializeRRule(rule: RecurrenceRule, item: CalendarItem): string
   if ((rule.interval ?? 1) !== 1) parts.push(`INTERVAL=${rule.interval}`);
   if (rule.count !== undefined) parts.push(`COUNT=${rule.count}`);
   if (rule.until) parts.push(`UNTIL=${serializeUntil(rule.until, item)}`);
-  const byDay: readonly RecurrenceByDay[] | undefined = rule.byDay ?? rule.byWeekday?.map(weekday => ({ weekday }));
+  const byDay: readonly RecurrenceByDay[] | undefined = rule.byDay;
   if (byDay?.length) parts.push(`BYDAY=${byDay.map(entry => `${entry.ordinal ?? ""}${WEEKDAY_TO_ICS[entry.weekday]}`).join(",")}`);
   if (rule.byMonthDay?.length) parts.push(`BYMONTHDAY=${rule.byMonthDay.join(",")}`);
   if (rule.byMonth?.length) parts.push(`BYMONTH=${rule.byMonth.join(",")}`);
