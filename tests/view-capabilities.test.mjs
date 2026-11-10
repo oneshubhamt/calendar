@@ -193,3 +193,37 @@ test('base UI wires month overflow, year/list views and dual-edge resizing witho
   assert.match(editorText,/recurrenceFormState\(\) === initialRecurrenceFormState && nextTemporal\.kind === sourceTemporal\.kind/);
   assert.match(editorText,/!initial\.duplicate && sourceItem\?\.recurrence\?\.exceptions/);
 });
+
+
+test('day and week render passive background ranges below every interactive time-grid layer',async()=>{
+  const sourceText=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
+  const styles=await fs.readFile(new URL('../src/view/styles.ts',import.meta.url),'utf8');
+  const types=await fs.readFile(new URL('../src/core/types.ts',import.meta.url),'utf8');
+
+  assert.match(sourceText,/private backgroundRanges: readonly CalendarBackgroundRange\[\] = \[\]/);
+  assert.match(sourceText,/this\.backgroundRanges = result\.backgroundRanges/);
+  assert.match(sourceText,/private backgroundLayer\(day: Date\)/);
+  assert.match(sourceText,/layoutBackgroundDay\([\s\S]*this\.backgroundRanges\.filter\(range => range\.allDay !== true\)/);
+  assert.match(sourceText,/startMinute: this\.dayStartHour \* 60/);
+  assert.match(sourceText,/endMinute: this\.dayEndHour \* 60/);
+  assert.match(sourceText,/if \(inBounds\) column\.append\(this\.backgroundLayer\(day\)\);[\s\S]*const layouts = layoutTimedDay/);
+  assert.match(sourceText,/background\.style\.top = .*layout\.topMinutes - visibleStart/);
+  assert.match(sourceText,/background\.style\.height = .*layout\.heightMinutes/);
+  assert.match(sourceText,/background\.style\.zIndex = String\(layout\.layer\)/);
+
+  assert.match(styles,/\.dc-background-layer\{[^}]*pointer-events:none;z-index:0/);
+  assert.match(styles,/\.dc-background-range\{[^}]*pointer-events:none/);
+  assert.match(styles,/\.dc-selection-range\{[^}]*z-index:1/);
+  assert.match(styles,/\.dc-time-event\{[^}]*z-index:2/);
+  assert.match(styles,/\.dc-now\{[^}]*z-index:3/);
+
+  assert.match(types,/interface CalendarBackgroundDisplay/);
+  assert.match(types,/readonly color\?: string/);
+  assert.match(types,/readonly textColor\?: string/);
+  assert.match(types,/readonly className\?: string/);
+  assert.match(sourceText,/--dc-background-range-color/);
+  assert.match(sourceText,/--dc-background-range-fg/);
+  assert.match(sourceText,/if \(isSafeHostClassName\(token\)\) element\.classList\.add\(token\)/);
+  assert.match(sourceText,/el\("span", "dc-background-range-label", range\.label\)/);
+  assert.doesNotMatch(sourceText,/background\.addEventListener/);
+});
