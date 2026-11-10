@@ -103,6 +103,10 @@
     "./features/personal-ui": {
       "types": "./dist/features/personal-ui.d.ts",
       "import": "./dist/features/personal-ui.js"
+    },
+    "./features/availability": {
+      "types": "./dist/features/availability.d.ts",
+      "import": "./dist/features/availability.js"
     }
   },
   "files": [
