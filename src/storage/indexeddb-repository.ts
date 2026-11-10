@@ -160,7 +160,7 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   private loaded = false;
   private db: IDBDatabase | null = null;
   private channel: BroadcastChannel | null = null;
-  private storageInvalidation: { readonly key: string; readonly listener: (event: StorageEvent) => void } | null = null;
+  private storageInvalidation: { readonly key: string; readonly dispose: () => void } | null = null;
   private refreshPromise: Promise<void> | null = null;
   private requestedRefreshRevision = -1;
   private readonly listeners = new Set<(snapshot: CalendarSnapshot) => void>();
@@ -392,11 +392,13 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
     this.publishInvalidation(revision);
   }
 
-  private requestReload(revision: number): void {
+  private requestReload(revision = -1): void {
     void this.reloadFromStorage(revision).catch(() => {
-      // Cross-context invalidation is advisory. Preserve the missed target so a later
+      // Cross-context invalidation is advisory. Preserve a known missed target so a later
       // invalidation can retry; transactional revision CAS remains the write-safety boundary.
-      if (this.loaded) this.requestedRefreshRevision = Math.max(this.requestedRefreshRevision, revision);
+      if (this.loaded && revision >= 0) {
+        this.requestedRefreshRevision = Math.max(this.requestedRefreshRevision, revision);
+      }
     });
   }
 
@@ -417,27 +419,40 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
 
     if (typeof window === "undefined") return;
     try {
-      const listener = (event: StorageEvent): void => {
+      const onStorage = (event: StorageEvent): void => {
         if (event.key !== key || event.newValue === null || !this.loaded) return;
         const revision = Number(event.newValue);
         if (!Number.isInteger(revision) || revision <= this.read().revision) return;
         this.requestReload(revision);
       };
-      window.addEventListener("storage", listener);
-      this.storageInvalidation = { key, listener };
+      const onForeground = (): void => {
+        if (this.loaded) this.requestReload();
+      };
+      const onVisibility = (): void => {
+        if (document.visibilityState === "visible") onForeground();
+      };
+      window.addEventListener("storage", onStorage);
+      window.addEventListener("focus", onForeground);
+      window.addEventListener("pageshow", onForeground);
+      document.addEventListener("visibilitychange", onVisibility);
+      this.storageInvalidation = {
+        key,
+        dispose: () => {
+          window.removeEventListener("storage", onStorage);
+          window.removeEventListener("focus", onForeground);
+          window.removeEventListener("pageshow", onForeground);
+          document.removeEventListener("visibilitychange", onVisibility);
+        },
+      };
     } catch {
-      // Storage-event invalidation is optional; IndexedDB revision CAS still protects writes.
+      // Cross-context freshness is best-effort; IndexedDB revision CAS still protects writes.
     }
   }
 
   private closeInvalidationChannel(): void {
     this.channel?.close();
     this.channel = null;
-    if (!this.storageInvalidation || typeof window === "undefined") {
-      this.storageInvalidation = null;
-      return;
-    }
-    window.removeEventListener("storage", this.storageInvalidation.listener);
+    this.storageInvalidation?.dispose();
     this.storageInvalidation = null;
   }
 

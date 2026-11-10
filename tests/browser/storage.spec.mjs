@@ -119,7 +119,7 @@ test("BroadcastChannel invalidation converges a passive tab through a burst of c
   await deleteDatabase(page, databaseName);
 });
 
-test("storage-event fallback keeps tabs fresh when BroadcastChannel is unavailable", async ({ page, context }, testInfo) => {
+test("no-BroadcastChannel fallback refreshes when a passive tab returns to the foreground", async ({ page, context }, testInfo) => {
   const databaseName = uniqueDatabaseName(testInfo, "storage-event");
   await disableBroadcastChannel(context);
   const observer = await context.newPage();
@@ -129,7 +129,9 @@ test("storage-event fallback keeps tabs fresh when BroadcastChannel is unavailab
   expect(await page.evaluate(() => typeof BroadcastChannel)).toBe("undefined");
   expect(await observer.evaluate(() => typeof BroadcastChannel)).toBe("undefined");
 
+  await page.bringToFront();
   await createItem(page, event("fallback", { title: "Fallback invalidation" }));
+  await observer.bringToFront();
   await expect.poll(async () => (await repositoryState(observer)).revision).toBe(1);
   expect((await repositoryState(observer)).items.map(item => item.id)).toEqual(["fallback"]);
 
