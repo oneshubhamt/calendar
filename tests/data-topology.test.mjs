@@ -164,3 +164,12 @@ test("repository and engine observer delivery is isolated from committed state",
   assert.match(engine,/notifyObservers\(this\.invalidationListeners, invalidation\)/);
   assert.match(indexedDb,/notifyObservers\(this\.listeners, this\.snapshotValue\)/);
 });
+
+
+test("interoperability storage fails closed on an incomplete current schema instead of repairing it",async()=>{
+  const source=await read("../src/interoperability/storage.ts");
+  assert.match(source,/!db\.objectStoreNames\.contains\(SYNC_STORE\)/);
+  assert.match(source,/!db\.objectStoreNames\.contains\(REMINDER_STORE\)/);
+  assert.match(source,/Interoperability IndexedDB does not match the current schema/);
+  assert.doesNotMatch(source,/createObjectStore[\s\S]*onsuccess[\s\S]*createObjectStore/);
+});

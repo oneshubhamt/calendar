@@ -126,7 +126,7 @@ Repository snapshots are runtime-immutable ownership boundaries: external values
 
 IndexedDB keeps the public in-memory topology snapshot-oriented while persisting one metadata/revision record plus independent source/item records in one fixed Calendar object store. Every commit performs revision CAS and writes/deletes only changed entities plus compact order/revision metadata in one transaction. This is the sole durable shape at every data size; no application-level schema/format version field or alternate storage generation is carried. Runtime snapshots remain immutable and structurally shared regardless of durable representation.
 
-IndexedDB is optional. A host such as a native/Rust application may project a read-only snapshot into the engine and route commands through its own adapter instead of duplicating authoritative data in browser storage.
+IndexedDB is optional. Primary and interoperability stores create only their fixed current schema on first open and fail closed if an existing database does not match it; they do not repair or migrate alternate shapes. A host such as a native/Rust application may project a read-only snapshot into the engine and route commands through its own adapter instead of duplicating authoritative data in browser storage.
 
 ## Interoperability
 

@@ -41,7 +41,15 @@ async function openDb(dbName: string): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(SYNC_STORE)) db.createObjectStore(SYNC_STORE);
       if (!db.objectStoreNames.contains(REMINDER_STORE)) db.createObjectStore(REMINDER_STORE);
     };
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(SYNC_STORE) || !db.objectStoreNames.contains(REMINDER_STORE)) {
+        db.close();
+        reject(new Error("Interoperability IndexedDB does not match the current schema."));
+        return;
+      }
+      resolve(db);
+    };
     request.onerror = () => reject(request.error ?? new Error("Could not open interoperability IndexedDB."));
   });
 }
