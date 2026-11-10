@@ -51,7 +51,7 @@ export function recurrenceOrdinal(
 }
 
 export function occurrenceFromItem(item: CalendarItem, options: RecurrenceExpansionOptions = {}): CalendarOccurrence {
-  return occurrenceFromResolved(item, resolveTemporalSeriesAnchor(item, options), undefined);
+  return occurrenceFromResolved(item, resolveTemporalSeriesAnchor(item, item.recurrence?.rule, options), undefined);
 }
 
 export function expandItem(
