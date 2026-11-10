@@ -169,7 +169,7 @@ export function occurrenceIdentityAtOrdinal(item: CalendarItem, ordinal: number,
   if (!Number.isInteger(ordinal) || ordinal < 1) throw new RangeError("ordinal must be a positive integer");
   if (!item.recurrence) {
     if (ordinal !== 1) throw new RangeError("Non-recurring item has only one occurrence");
-    return contextFor(item, options).kind === "instant" ? toDate(series.start).toISOString() : identityForPlain(contextFor(item, options).startPlain, contextFor(item, options).kind);
+    return contextFor(item, options).kind === "instant" ? toDate(item.start).toISOString() : identityForPlain(contextFor(item, options).startPlain, contextFor(item, options).kind);
   }
   let index = 0;
   for (const candidate of resolvedCandidates(item, item.recurrence?.rule, options)) {
@@ -238,7 +238,7 @@ export function expandItems(items: readonly CalendarItem[], range: CalendarRange
 
 function displayZoneFor(item: CalendarItem, options: RecurrenceExpansionOptions): string {
   const viewer = resolvedTimeZone(options.timeZone);
-  return series.temporal?.kind === "zoned" ? item.temporal.timeZone ?? viewer : viewer;
+  return item.temporal?.kind === "zoned" ? item.temporal.timeZone ?? viewer : viewer;
 }
 
 function displayPlain(value: ISODateTime, zone: string): PlainDateTimeParts {
@@ -249,11 +249,11 @@ function displayPlain(value: ISODateTime, zone: string): PlainDateTimeParts {
 function targetTemporalKind(item: CalendarItem, patch: CalendarItemPatch): CalendarTemporalKind {
   if (patch.temporal && patch.temporal !== null) return patch.temporal.kind;
   if (patch.temporal === null) {
-    const value = patch.start ?? series.start;
+    const value = patch.start ?? item.start;
     if (patch.allDay || patch.precision === "date" || /^\d{4}-\d{2}-\d{2}$/.test(value)) return "date";
     return hasExplicitOffset(value) ? "instant" : "floating";
   }
-  return series.temporal?.kind ?? (series.allDay || series.precision === "date" ? "date" : hasExplicitOffset(series.start) ? "instant" : "floating");
+  return item.temporal?.kind ?? (item.allDay || item.precision === "date" ? "date" : hasExplicitOffset(item.start) ? "instant" : "floating");
 }
 
 function serializeProjectedPlain(
@@ -280,15 +280,15 @@ export function projectOccurrencePatchToSeries(
   const targetZone = targetKind === "zoned"
     ? patch.temporal && patch.temporal !== null && patch.temporal.kind === "zoned"
       ? patch.temporal.timeZone ?? sourceDisplayZone
-      : series.temporal?.timeZone ?? sourceDisplayZone
+      : item.temporal?.timeZone ?? sourceDisplayZone
     : viewerZone;
-  const patchInputZone = series.temporal?.kind === "zoned" ? sourceDisplayZone : targetZone;
+  const patchInputZone = item.temporal?.kind === "zoned" ? sourceDisplayZone : targetZone;
   const disambiguation = patch.temporal && patch.temporal !== null
-    ? patch.temporal.disambiguation ?? series.temporal?.disambiguation ?? "compatible"
-    : series.temporal?.disambiguation ?? "compatible";
+    ? patch.temporal.disambiguation ?? item.temporal?.disambiguation ?? "compatible"
+    : item.temporal?.disambiguation ?? "compatible";
 
-  const anchorStartPlain = displayPlain(series.start, sourceDisplayZone);
-  const anchorEndPlain = displayPlain(series.end, sourceDisplayZone);
+  const anchorStartPlain = displayPlain(item.start, sourceDisplayZone);
+  const anchorEndPlain = displayPlain(item.end, sourceDisplayZone);
   const occurrenceStartPlain = instantToPlain(toDate(occurrence.start).getTime(), sourceDisplayZone);
   const occurrenceEndPlain = instantToPlain(toDate(occurrence.end).getTime(), sourceDisplayZone);
 
@@ -480,7 +480,7 @@ function contextFor(series: CalendarTemporalSeries, options: RecurrenceExpansion
   const explicitKind = series.temporal?.kind;
   const kind: CalendarTemporalKind = explicitKind ?? (series.allDay || series.precision === "date" ? "date" : hasExplicitOffset(series.start) ? "instant" : "floating");
   const zone = kind === "instant" ? "UTC" : kind === "zoned" ? series.temporal?.timeZone ?? viewerZone : viewerZone;
-  if (kind === "zoned" && !series.temporal?.timeZone) throw new RangeError(`Zoned calendar item ${item.id} requires temporal.timeZone`);
+  if (kind === "zoned" && !series.temporal?.timeZone) throw new RangeError(`Zoned temporal series ${series.id} requires temporal.timeZone`);
   const startPlain = sourcePlain(series.start, kind, zone, viewerZone);
   const endPlain = sourcePlain(series.end, kind, zone, viewerZone);
   const elapsedDurationMs = sourceInstant(series.end, kind, zone, viewerZone) - sourceInstant(series.start, kind, zone, viewerZone);
@@ -546,10 +546,10 @@ function patchOccurrence(item: CalendarItem, base: ResolvedCandidate, patch: Cal
     ...(location !== undefined ? { location } : {}),
     start: new Date(startEpoch).toISOString(),
     end: new Date(endEpoch).toISOString(),
-    allDay: patch?.allDay ?? series.allDay,
-    precision: patch?.precision ?? series.precision,
+    allDay: patch?.allDay ?? item.allDay,
+    precision: patch?.precision ?? item.precision,
     ...(temporal !== undefined ? { temporal } : {}),
-    ...((patch?.temporalForm ?? series.temporalForm) !== undefined ? { temporalForm: patch?.temporalForm ?? series.temporalForm } : {}),
+    ...((patch?.temporalForm ?? item.temporalForm) !== undefined ? { temporalForm: patch?.temporalForm ?? item.temporalForm } : {}),
     kind: patch?.kind ?? item.kind,
     ownership: item.ownership,
     editPolicy: patch?.editPolicy ?? item.editPolicy,
