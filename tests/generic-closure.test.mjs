@@ -115,9 +115,10 @@ test('recurrence engine is temporal-only and event/availability semantics stay i
   assert.match(recurrence,/export function temporalSeriesOrdinal/);
 
   assert.match(eventSeries,/expandTemporalSeries<CalendarItemPatch>/);
-  assert.match(eventSeries,/projectOccurrencePatchToSeries/);
-  assert.match(eventSeries,/rebaseRecurrenceExceptions/);
+  assert.doesNotMatch(eventSeries,/projectOccurrencePatchToSeries|rebaseRecurrenceExceptions|temporalSeriesOrdinal|temporalSeriesIdentityAtOrdinal/);
+  assert.match(recurrence,/export function projectTemporalPatchToSeries/);
+  assert.match(recurrence,/export function rebaseTemporalSeriesExceptions/);
 
-  assert.doesNotMatch(availability,/CalendarItem|CalendarOccurrence|assertCalendarStateIntegrity|__calendar-availability__/);
+  assert.doesNotMatch(availability,/CalendarItem|CalendarOccurrence|assertCalendarStateIntegrity|__calendar-availability__|event-series/);
   assert.match(availability,/expandTemporalSeries<CalendarAvailabilityExceptionReplacement>/);
 });
