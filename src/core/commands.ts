@@ -357,44 +357,44 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
     this.redoStack.length = 0;
   }
 
-  private async executeAtomic(command: CalendarCommand, context: CalendarCommandContext): Promise<void> {
+  private async executeAtomic(repository: CalendarRepository, command: CalendarCommand, context: CalendarCommandContext): Promise<void> {
     if (command.type === "create") {
-      assertSourceAllowsCreate(this.repository, command.item.calendarId);
-      await this.repository.create(command.item);
+      assertSourceAllowsCreate(repository, command.item.calendarId);
+      await repository.create(command.item);
       return;
     }
     if (command.type === "update") {
-      const item = itemById(this.repository, command.id);
+      const item = itemById(repository, command.id);
       assertEditableItem(item);
       assertPatchAllowed(item, command.patch);
-      assertPatchSourceAllowed(this.repository, item, command.patch);
-      await this.repository.update(command.id, command.patch);
+      assertPatchSourceAllowed(repository, item, command.patch);
+      await repository.update(command.id, command.patch);
       return;
     }
     if (command.type === "remove") {
-      const item = itemById(this.repository, command.id);
+      const item = itemById(repository, command.id);
       assertEditableItem(item);
-      assertSourceMutable(this.repository, item.calendarId);
-      await this.repository.remove(command.id);
+      assertSourceMutable(repository, item.calendarId);
+      await repository.remove(command.id);
       return;
     }
     if (command.type === "update-occurrence") {
-      await applyOccurrencePatch(this.repository, command.occurrence, command.patch, command.scope, context);
+      await applyOccurrencePatch(repository, command.occurrence, command.patch, command.scope, context);
       return;
     }
 
     assertEditable(command.occurrence);
-    const item = itemById(this.repository, command.occurrence.sourceItemId);
+    const item = itemById(repository, command.occurrence.sourceItemId);
     assertEditableItem(item);
-    assertSourceMutable(this.repository, item.calendarId);
+    assertSourceMutable(repository, item.calendarId);
     if (!item.recurrence) {
-      if (command.type === "cancel-occurrence") await this.repository.remove(item.id);
-      else await this.repository.update(item.id, projectTemporalPatchToSeries(item, command.occurrence, movedPatch(command.start, command.end), { timeZone: context.timeZone }));
+      if (command.type === "cancel-occurrence") await repository.remove(item.id);
+      else await repository.update(item.id, projectTemporalPatchToSeries(item, command.occurrence, movedPatch(command.start, command.end), { timeZone: context.timeZone }));
       return;
     }
     if (command.scope === "all") {
-      if (command.type === "cancel-occurrence") await this.repository.remove(item.id);
-      else await this.repository.update(item.id, seriesPatch(item, command.occurrence, movedPatch(command.start, command.end), context));
+      if (command.type === "cancel-occurrence") await repository.remove(item.id);
+      else await repository.update(item.id, seriesPatch(item, command.occurrence, movedPatch(command.start, command.end), context));
       return;
     }
 
@@ -402,26 +402,26 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
       const recurrence = command.type === "cancel-occurrence"
         ? withException(item, command.occurrence, null)
         : withException(item, command.occurrence, movedPatch(command.start, command.end));
-      await this.repository.update(item.id, { recurrence });
+      await repository.update(item.id, { recurrence });
       return;
     }
 
     if (command.type === "cancel-occurrence") {
       if (temporalSeriesOrdinal(item, item.recurrence?.rule, command.occurrence.originalStart, { timeZone: context.timeZone }) === 1) {
-        await this.repository.remove(item.id);
+        await repository.remove(item.id);
         return;
       }
       const first = splitSeries(item, command.occurrence, {}, context)[0]!;
-      await this.repository.update(item.id, { start: first.start, end: first.end, recurrence: first.recurrence ?? null });
+      await repository.update(item.id, { start: first.start, end: first.end, recurrence: first.recurrence ?? null });
       return;
     }
 
     if (temporalSeriesOrdinal(item, item.recurrence?.rule, command.occurrence.originalStart, { timeZone: context.timeZone }) === 1) {
-      await this.repository.update(item.id, seriesPatch(item, command.occurrence, movedPatch(command.start, command.end), context));
+      await repository.update(item.id, seriesPatch(item, command.occurrence, movedPatch(command.start, command.end), context));
       return;
     }
     const [first, second] = splitSeries(item, command.occurrence, movedPatch(command.start, command.end), context);
-    await this.repository.update(item.id, { start: first!.start, end: first!.end, recurrence: first!.recurrence ?? null });
-    await this.repository.create(second!);
+    await repository.update(item.id, { start: first!.start, end: first!.end, recurrence: first!.recurrence ?? null });
+    await repository.create(second!);
   }
 }
