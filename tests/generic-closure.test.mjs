@@ -98,3 +98,26 @@ test('background ranges and availability remain isolated from event mechanics at
   assert.equal(Calendar.createAvailabilityBackgroundProvider,undefined);
   assert.equal(Calendar.createAvailabilityPlacementGuard,undefined);
 });
+
+
+test('recurrence engine is temporal-only and event/availability semantics stay in adapters', async () => {
+  const [recurrence,eventSeries,availability] = await Promise.all([
+    read('../src/core/recurrence.ts'),
+    read('../src/core/event-series.ts'),
+    read('../src/features/availability.ts'),
+  ]);
+
+  for (const token of ['CalendarItem','CalendarItemPatch','CalendarOccurrence','CalendarRecurrence','RecurrenceException']) {
+    assert.equal(recurrence.includes(token),false,`generic recurrence leaked event type: ${token}`);
+  }
+  assert.match(recurrence,/export function expandTemporalSeries/);
+  assert.match(recurrence,/export function temporalSeriesIdentityAtOrdinal/);
+  assert.match(recurrence,/export function temporalSeriesOrdinal/);
+
+  assert.match(eventSeries,/expandTemporalSeries<CalendarItemPatch>/);
+  assert.match(eventSeries,/projectOccurrencePatchToSeries/);
+  assert.match(eventSeries,/rebaseRecurrenceExceptions/);
+
+  assert.doesNotMatch(availability,/CalendarItem|CalendarOccurrence|assertCalendarStateIntegrity|__calendar-availability__/);
+  assert.match(availability,/expandTemporalSeries<CalendarAvailabilityExceptionReplacement>/);
+});
