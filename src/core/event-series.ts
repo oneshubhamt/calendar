@@ -77,7 +77,7 @@ export function expandItems(
 
 function occurrenceFromResolved(
   item: CalendarItem,
-  resolved: CalendarResolvedTemporalRange<CalendarItemPatch>,
+  resolved: Pick<CalendarResolvedTemporalRange, "originalStart" | "start" | "end" | "recurring">,
   patch: CalendarItemPatch | undefined,
 ): CalendarOccurrence {
   const metadata = patch?.metadata === null ? undefined : patch?.metadata ?? item.metadata;
