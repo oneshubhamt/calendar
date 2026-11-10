@@ -25,8 +25,6 @@ export interface IcsImportOptions {
   readonly defaultKind?: CalendarItemKind;
   readonly ownership?: CalendarOwnership;
   readonly editPolicy?: EditPolicy;
-  /** Legacy convenience. Prefer editPolicy. */
-  readonly readOnly?: boolean;
 }
 
 export interface IcsImportWarning { readonly uid?: string; readonly message: string; }
@@ -179,7 +177,7 @@ function parsedEventToItem(event: ParsedEvent, uid: string, options: IcsImportOp
     rule: parseRRule(ruleProperty.value, start.kind, start.timeZone),
     ...(exdates.length ? { exceptions: exdates.map(originalStart => ({ originalStart, cancelled: true })) } : {}),
   } satisfies CalendarRecurrence : undefined;
-  const resolvedEditPolicy = options.editPolicy ?? (options.readOnly === false ? "full" : "readonly");
+  const resolvedEditPolicy = options.editPolicy ?? "readonly";
   const reminders: CalendarReminder[] = event.alarms.flatMap((alarm, index) => {
     const trigger = alarm.find(property => property.name === "TRIGGER")?.value;
     const minutes = trigger ? relativeTriggerMinutes(trigger) : null;

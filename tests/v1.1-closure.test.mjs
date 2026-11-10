@@ -24,7 +24,7 @@ test('v1.1 occurrence projections require canonicalizable absolute instants and 
   const repo=new C.MemoryCalendarRepository([source],[]);
   const dateOnly=new C.CalendarEngine(repo,[],[{id:'date-only',projectOccurrences(){return [hostOccurrence({start:'2026-11-09',end:'2026-11-10',originalStart:'2026-11-09'})];}}]);
   await assert.rejects(()=>dateOnly.query({start:'2026-11-08T18:30:00.000Z',end:'2026-11-09T18:30:00.000Z'}),/absolute ISO date-time/i);
-  const redundantId=new C.CalendarEngine(repo,[],[{id:'redundant-id',projectOccurrences(){return [{...hostOccurrence(),id:'legacy-item-id'}];}}]);
+  const redundantId=new C.CalendarEngine(repo,[],[{id:'redundant-id',projectOccurrences(){return [{...hostOccurrence(),id:'redundant-item-id'}];}}]);
   await assert.rejects(()=>redundantId.query({start:'2026-11-09T00:00:00.000Z',end:'2026-11-10T00:00:00.000Z'}),/sourceItemId rather than a redundant item id/i);
   const offsetOccurrence=hostOccurrence({start:'2026-11-09T10:00:00+05:30',end:'2026-11-09T11:00:00+05:30',originalStart:'2026-11-09T10:00:00+05:30'});
   const engine=new C.CalendarEngine(repo,[],[{id:'offset',projectOccurrences(){return [offsetOccurrence];}}]);

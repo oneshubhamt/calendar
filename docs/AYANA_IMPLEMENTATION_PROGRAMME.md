@@ -358,7 +358,7 @@ Adding/removing the secondary axis changes presentation only and does not alter 
 - no Ayana/domain semantic names in generic `core/` or `view/`;
 - item projection and occurrence projection remain separate, with occurrence projections bypassing recurrence expansion;
 - occurrence authority has one capability-aware command path and editor/add-on temporal patches use the same mutation classifier;
-- legacy `EditPolicy` checks do not bypass trusted-host capability resolution;
+- baseline `EditPolicy` checks do not bypass trusted-host capability resolution;
 - point editing/duplication preserves true zero duration;
 - structured presentation/action metadata is bounded and fail-closed where it reaches DOM APIs;
 - command lifecycle remains authoritative-host-first;
@@ -615,7 +615,7 @@ The integration is complete only when:
 
 - Calendar core contains no Ayana semantic imports or branches;
 - Ayana persists all Ayana state;
-- Calendar may be removed/replaced without data migration;
+- Calendar may be removed/replaced without affecting authoritative Ayana data;
 - the Ayana adapter is the only translation boundary;
 - every calendar mutation passes through Ayana authority;
 - Google-like day interactions work for the temporal types that genuinely support them;

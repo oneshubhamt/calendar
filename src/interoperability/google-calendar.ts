@@ -181,8 +181,6 @@ export interface GoogleCalendarConnection {
   readonly importedKind?: CalendarItem["kind"] | undefined;
   readonly importedOwnership?: CalendarItem["ownership"] | undefined;
   readonly importedEditPolicy?: CalendarItem["editPolicy"] | undefined;
-  /** Optional compatibility filter. Prefer publishPredicate for host-owned domains. */
-  readonly publishOwnerships?: readonly CalendarItem["ownership"][] | undefined;
   readonly publishPredicate?: ((item: CalendarItem) => boolean) | undefined;
 }
 
@@ -317,7 +315,9 @@ export class GoogleCalendarSyncAdapter {
     if (canPush(this.connection.mode)) for (const local of snapshot.items) {
       const identity = externalIdentityFromMetadata(local);
       if (local.calendarId !== this.connection.localCalendarId || links.has(local.id) || identity?.connectionId === this.connection.id) continue;
-      const publishable = this.connection.publishPredicate ? this.connection.publishPredicate(local) : this.connection.publishOwnerships ? this.connection.publishOwnerships.includes(local.ownership) : local.editPolicy === "full";
+      const publishable = this.connection.publishPredicate
+        ? this.connection.publishPredicate(local)
+        : local.editPolicy === "full";
       if (!publishable) continue;
       const created = await this.transport.insertEvent(this.connection.googleCalendarId, itemToGoogleEvent(local));
       if (!created.id) throw new Error("Google Calendar did not return an event id after insert.");
