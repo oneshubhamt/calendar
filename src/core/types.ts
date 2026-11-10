@@ -310,6 +310,33 @@ export interface CalendarCollisionPolicy {
   readonly includeAllDay?: boolean;
 }
 
+
+export type CalendarPlacementGuardMode = "allow" | "warn" | "prevent";
+
+export interface CalendarPlacementContext {
+  readonly start: ISODateTime;
+  readonly end: ISODateTime;
+  readonly allDay: boolean;
+  readonly action: string;
+  readonly timeZone: string;
+  /** Target Calendar source after the proposed placement/edit, when known. */
+  readonly calendarId?: CalendarId | undefined;
+  /** Existing occurrence for move/resize/edit; omitted for creation. */
+  readonly occurrence?: CalendarOccurrence | undefined;
+}
+
+export interface CalendarPlacementDecision {
+  readonly mode: CalendarPlacementGuardMode;
+  /** Optional concise reason shown by Calendar for warn/prevent decisions. */
+  readonly message?: string | undefined;
+}
+
+/** Optional generic scheduling policy. Visual background ranges never invoke this contract implicitly. */
+export interface CalendarPlacementGuard {
+  readonly id: string;
+  evaluate(context: CalendarPlacementContext): CalendarPlacementDecision | Promise<CalendarPlacementDecision>;
+}
+
 export interface CalendarHistoryState {
   readonly canUndo: boolean;
   readonly canRedo: boolean;
