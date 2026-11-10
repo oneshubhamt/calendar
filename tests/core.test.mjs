@@ -160,3 +160,74 @@ test('series split discards pre-split exception baggage and remaps only survivin
   assert.equal(tail.recurrence.exceptions[0].replacement.title,'Tail exception');
   assert.notEqual(tail.recurrence.exceptions[0].originalStart,'2026-03-02T14:00:00.000Z');
 });
+
+
+test('background range projections stay passive, canonical and fail closed', async()=>{
+  const visible={id:'background-visible',title:'Visible',visible:true};
+  const hidden={id:'background-hidden',title:'Hidden',visible:false};
+  const repo=new C.MemoryCalendarRepository([visible,hidden],[]);
+  let invalidate;
+  const provider={
+    id:'backgrounds',
+    projectBackgroundRanges:()=>[
+      {id:'work-window',start:'2026-11-10T09:00:00+05:30',end:'2026-11-10T17:00:00+05:30',calendarId:'background-visible',label:'Context',metadata:{origin:'host'}},
+      {id:'hidden-window',start:'2026-11-10T04:00:00Z',end:'2026-11-10T05:00:00Z',calendarId:'background-hidden'},
+      {id:'global-window',start:'2026-11-10T06:00:00Z',end:'2026-11-10T07:00:00Z',allDay:false},
+      {id:'outside-window',start:'2026-11-12T06:00:00Z',end:'2026-11-12T07:00:00Z'},
+    ],
+    subscribe:listener=>{invalidate=listener; return ()=>{invalidate=undefined;};},
+  };
+  const engine=new C.CalendarEngine(repo,[],[],[provider]);
+  const notifications=[];
+  const unsubscribe=engine.subscribe(snapshot=>notifications.push(snapshot.revision));
+  assert.equal(typeof invalidate,'function');
+
+  const result=await engine.query({start:'2026-11-10T00:00:00Z',end:'2026-11-11T00:00:00Z'});
+  assert.deepEqual(result.backgroundRanges.map(range=>range.id),['work-window','global-window']);
+  assert.equal(result.backgroundRanges[0].start,'2026-11-10T03:30:00.000Z');
+  assert.equal(result.backgroundRanges[0].end,'2026-11-10T11:30:00.000Z');
+  assert.equal(result.occurrences.length,0);
+
+  const withHidden=await engine.query(
+    {start:'2026-11-10T00:00:00Z',end:'2026-11-11T00:00:00Z'},
+    {visibleSourceIds:new Set(['background-visible','background-hidden'])},
+  );
+  assert.deepEqual(withHidden.backgroundRanges.map(range=>range.id),['work-window','hidden-window','global-window']);
+
+  invalidate();
+  assert.deepEqual(notifications,[0]);
+  unsubscribe();
+  assert.equal(invalidate,undefined);
+
+  const invalidCases=[
+    {
+      expected:/absolute ISO date-time/i,
+      ranges:[{id:'floating',start:'2026-11-10T09:00:00',end:'2026-11-10T10:00:00'}],
+    },
+    {
+      expected:/must end after/i,
+      ranges:[{id:'zero',start:'2026-11-10T09:00:00Z',end:'2026-11-10T09:00:00Z'}],
+    },
+    {
+      expected:/unknown calendar source/i,
+      ranges:[{id:'unknown-source',start:'2026-11-10T09:00:00Z',end:'2026-11-10T10:00:00Z',calendarId:'missing'}],
+    },
+    {
+      expected:/label is invalid/i,
+      ranges:[{id:'bad-label',start:'2026-11-10T09:00:00Z',end:'2026-11-10T10:00:00Z',label:'   '}],
+    },
+  ];
+  for(const {expected,ranges} of invalidCases){
+    const invalidEngine=new C.CalendarEngine(repo,[],[],[{id:'invalid',projectBackgroundRanges:()=>ranges}]);
+    await assert.rejects(()=>invalidEngine.query({start:'2026-11-10T00:00:00Z',end:'2026-11-11T00:00:00Z'}),expected);
+  }
+
+  const duplicateEngine=new C.CalendarEngine(repo,[],[],[
+    {id:'one',projectBackgroundRanges:()=>[{id:'duplicate',start:'2026-11-10T09:00:00Z',end:'2026-11-10T10:00:00Z'}]},
+    {id:'two',projectBackgroundRanges:()=>[{id:'duplicate',start:'2026-11-10T11:00:00Z',end:'2026-11-10T12:00:00Z'}]},
+  ]);
+  await assert.rejects(
+    ()=>duplicateEngine.query({start:'2026-11-10T00:00:00Z',end:'2026-11-11T00:00:00Z'}),
+    /duplicate calendar background range/i,
+  );
+});
