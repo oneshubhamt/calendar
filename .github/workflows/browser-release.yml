@@ -1,0 +1,70 @@
+name: Browser release QA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - background-ranges
+    paths:
+      - "src/**"
+      - "tests/browser/**"
+      - "playwright.config.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/browser-release.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    name: Native browser storage and rendering
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Use pinned npm
+        run: npm install --global npm@12.2.2
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Run browser QA and generate visual baselines
+        run: npm run qa:browser:update
+
+      - name: Upload generated visual baselines
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: browser-visual-baselines
+          path: tests/browser/__screenshots__/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Playwright failure report
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: browser-playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
