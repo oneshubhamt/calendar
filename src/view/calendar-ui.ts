@@ -27,6 +27,21 @@ import { civilMinuteOfInstant, civilMinuteResolution, instantAtCivilMinute, shif
 import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from "./time-zone-scale.js";
 import { CalendarTemporalChrome } from "./temporal-chrome.js";
 import {
+  backgroundAriaSuffix,
+  dayLevelBackgroundLayer,
+  el,
+  formatDateTime,
+  formatTime,
+  humanizeKind,
+  periodTitle as renderPeriodTitle,
+  renderAgendaView,
+  renderMonthView,
+  renderYearView,
+  sameLocalDay,
+  type CalendarStaticRenderActions,
+  type CalendarStaticRenderModel,
+} from "./view-renderer.js";
+import {
   CalendarGestureController,
   dragResizeEdge,
   snapDragDeltaMinutes,
@@ -70,36 +85,7 @@ interface SelectionDragState {
   moved: boolean;
 }
 
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const NATIVE_DRAG_TYPE = "application/x-calendar-occurrence";
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-function sameLocalDay(a: Date, b: Date, timeZone: string): boolean {
-  return dateKey(a, timeZone) === dateKey(b, timeZone);
-}
-
-function formatTime(date: Date, locale: string, timeZone: string): string {
-  return new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit", timeZone }).format(date);
-}
-
-function formatDateTime(date: Date, locale: string, timeZone: string): string {
-  return new Intl.DateTimeFormat(locale, { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", timeZone }).format(date);
-}
-
-function humanizeKind(value: string): string {
-  const text = value.replace(/[-_]+/gu, " ").trim();
-  return text ? text[0]!.toUpperCase() + text.slice(1) : "Event";
-}
-
-function weekdayOrder(weekStartsOn: Weekday): readonly Weekday[] {
-  return Array.from({ length: 7 }, (_, i) => ((weekStartsOn + i) % 7) as Weekday);
-}
 
 function creatableSource(source: CalendarSource | undefined): boolean {
   return Boolean(source && !source.readOnly && source.allowCreate !== false);
@@ -568,138 +554,15 @@ export class CalendarUi {
   }
 
   private periodTitle(): string {
-    if (this.view === "year") return new Intl.DateTimeFormat(this.locale, { year: "numeric", timeZone: this.timeZone }).format(this.anchor);
-    if (this.view === "month" || (this.view === "agenda" && this.agendaSpan === "month")) return new Intl.DateTimeFormat(this.locale, { month: "long", year: "numeric", timeZone: this.timeZone }).format(this.anchor);
-    if (this.view === "day" || (this.view === "agenda" && this.agendaSpan === "day")) return new Intl.DateTimeFormat(this.locale, { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: this.timeZone }).format(this.anchor);
-    const start = toDate(this.visibleRange.start);
-    const end = new Date(toDate(this.visibleRange.end).getTime() - 1);
-    return `${new Intl.DateTimeFormat(this.locale, { day: "numeric", month: "short", timeZone: this.timeZone }).format(start)} – ${new Intl.DateTimeFormat(this.locale, { day: "numeric", month: "short", year: "numeric", timeZone: this.timeZone }).format(end)}`;
+    return renderPeriodTitle({ ...this.staticRenderModel(), view: this.view });
   }
 
   private renderYear(): HTMLElement {
-    const grid = el("div", "dc-year-grid");
-    const buckets = groupByDay(this.displayOccurrences(), this.timeZone, this.visibleRange);
-    const yearStart = startOfYear(this.anchor, this.timeZone);
-    const today = this.clock.now();
-    for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
-      const monthStart = addMonths(yearStart, monthIndex, this.timeZone);
-      const month = el("section", "dc-year-month");
-      const heading = el("button", "dc-year-month-title", new Intl.DateTimeFormat(this.locale, { month: "long", timeZone: this.timeZone }).format(monthStart));
-      heading.type = "button";
-      const monthEnd = addMonths(monthStart, 1, this.timeZone);
-      const monthFirstKey = dateKey(monthStart, this.timeZone);
-      const monthLastKey = dateKey(addDays(monthEnd, -1, this.timeZone), this.timeZone);
-      const monthInBounds = (!this.navigationBounds.min || monthLastKey >= this.navigationBounds.min)
-        && (!this.navigationBounds.max || monthFirstKey <= this.navigationBounds.max);
-      heading.disabled = !monthInBounds;
-      heading.addEventListener("click", () => {
-        if (!monthInBounds) return;
-        const target = this.navigationBounds.min && monthFirstKey < this.navigationBounds.min ? toDate(this.navigationBounds.min, this.timeZone) : monthStart;
-        this.anchor = clampNavigationDate(target, this.navigationBounds, this.timeZone);
-        this.setView("month");
-      });
-      month.append(heading);
-      const weekdays = el("div", "dc-year-weekdays");
-      for (const weekday of weekdayOrder(this.weekStartsOn)) weekdays.append(el("span", undefined, DAY_NAMES[weekday]!.slice(0, 1)));
-      month.append(weekdays);
-      const days = el("div", "dc-year-days");
-      const monthRange = rangeForView(monthStart, "month", this.weekStartsOn, this.timeZone);
-      for (let cursor = toDate(monthRange.start); cursor < toDate(monthRange.end); cursor = addDays(cursor, 1, this.timeZone)) {
-        const day = new Date(cursor);
-        const parts = instantToPlain(day.getTime(), this.timeZone);
-        const monthParts = instantToPlain(monthStart.getTime(), this.timeZone);
-        const outside = parts.month !== monthParts.month;
-        const button = el("button", "dc-year-day") as HTMLButtonElement;
-        button.type = "button";
-        button.dataset.calendarDate = day.toISOString();
-        button.classList.toggle("is-outside", outside);
-        button.classList.toggle("is-today", sameLocalDay(day, today, this.timeZone));
-        const inBounds = this.dateInNavigationBounds(day);
-        button.classList.toggle("is-out-of-bounds", !inBounds);
-        button.disabled = !outside && !inBounds;
-        if (outside) {
-          button.tabIndex = -1;
-          button.setAttribute("aria-hidden", "true");
-        } else {
-          const bucket = buckets.get(dateKey(day, this.timeZone));
-          const count = (bucket?.allDay.length ?? 0) + (bucket?.timed.length ?? 0);
-          button.append(el("span", "dc-year-day-number", String(parts.day)));
-          if (count) button.append(el("span", "dc-year-event-count", count > 9 ? "9+" : String(count)));
-          button.setAttribute("aria-label", `${new Intl.DateTimeFormat(this.locale, { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: this.timeZone }).format(day)}${count ? `, ${count} event${count === 1 ? "" : "s"}` : ", no events"}`);
-          button.addEventListener("click", () => this.openDay(day));
-        }
-        days.append(button);
-      }
-      month.append(days);
-      grid.append(month);
-    }
-    return grid;
+    return renderYearView(this.staticRenderModel(), this.staticRenderActions());
   }
 
   private renderMonth(): HTMLElement {
-    const wrapper = el("div");
-    const header = el("div", "dc-weekdays");
-    for (const weekday of weekdayOrder(this.weekStartsOn)) header.append(el("div", "dc-weekday", DAY_NAMES[weekday]));
-    const grid = el("div", "dc-month-grid");
-    const buckets = groupByDay(this.displayOccurrences(), this.timeZone, this.visibleRange);
-    const backgroundBuckets = groupAllDayBackgroundRangesByDay(this.backgroundRanges, this.timeZone, this.visibleRange);
-    const start = toDate(this.visibleRange.start);
-    const end = toDate(this.visibleRange.end);
-    const today = this.clock.now();
-    const anchorParts = instantToPlain(this.anchor.getTime(), this.timeZone);
-    for (let cursor = new Date(start); cursor < end; cursor = addDays(cursor, 1, this.timeZone)) {
-      const date = new Date(cursor);
-      const parts = instantToPlain(date.getTime(), this.timeZone);
-      const cell = el("div", "dc-day-cell");
-      const inBounds = this.dateInNavigationBounds(date);
-      cell.tabIndex = inBounds ? 0 : -1;
-      cell.setAttribute("role", "group");
-      const dayBackgrounds = backgroundBuckets.get(dateKey(date, this.timeZone)) ?? [];
-      const dayLabel = new Intl.DateTimeFormat(this.locale, { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: this.timeZone }).format(date);
-      cell.setAttribute("aria-label", `${dayLabel}${this.backgroundAriaSuffix(dayBackgrounds)}`);
-      cell.classList.toggle("is-outside", parts.month !== anchorParts.month);
-      cell.classList.toggle("is-today", sameLocalDay(date, today, this.timeZone));
-      cell.classList.toggle("is-out-of-bounds", !inBounds);
-      if (!inBounds) cell.setAttribute("aria-disabled", "true");
-      cell.dataset.date = date.toISOString();
-      cell.dataset.calendarDate = date.toISOString();
-      const number = el("button", "dc-day-number", String(parts.day));
-      number.type = "button";
-      number.disabled = !inBounds;
-      number.addEventListener("click", () => this.openDay(date));
-      const events = el("div", "dc-month-events");
-      const bucket = buckets.get(dateKey(date, this.timeZone));
-      const rows = [...(bucket?.allDay ?? []), ...(bucket?.timed ?? [])];
-      for (const occurrence of rows.slice(0, 4)) events.append(this.monthEvent(occurrence));
-      if (rows.length > 4) {
-        const more = el("button", "dc-more", `+${rows.length - 4} more`) as HTMLButtonElement;
-        more.type = "button";
-        more.setAttribute("aria-label", `Show all ${rows.length} events on ${new Intl.DateTimeFormat(this.locale, { day: "numeric", month: "long", year: "numeric", timeZone: this.timeZone }).format(date)}`);
-        more.addEventListener("click", event => { event.stopPropagation(); this.openMonthOverflow(date, rows); });
-        events.append(more);
-      }
-      if (inBounds && dayBackgrounds.length) cell.append(this.dayLevelBackgroundLayer(dayBackgrounds));
-      cell.append(number, events);
-      cell.addEventListener("dragover", event => {
-        if (inBounds && this.dragOccurrenceFromTransfer(event.dataTransfer)) event.preventDefault();
-      });
-      cell.addEventListener("drop", event => {
-        const occurrence = this.dragOccurrenceFromTransfer(event.dataTransfer);
-        if (!inBounds || !occurrence || !this.canMoveOccurrence(occurrence)) return;
-        event.preventDefault();
-        void this.moveToDay(occurrence, date, isDateLikeOccurrence(occurrence));
-      });
-      if (inBounds && this.canCreateItems()) {
-        cell.addEventListener("dblclick", event => {
-          if ((event.target as Element).closest(".dc-event,.dc-day-number")) return;
-          const startAt = startOfDay(date, this.timeZone);
-          void this.createFromSelection({ start: startAt.toISOString(), end: addDays(startAt, 1, this.timeZone).toISOString(), allDay: true });
-        });
-      }
-      grid.append(cell);
-    }
-    wrapper.append(header, grid);
-    return wrapper;
+    return renderMonthView(this.staticRenderModel(), this.staticRenderActions());
   }
 
   private openMonthOverflow(date: Date, rows: readonly CalendarOccurrence[]): void {
@@ -854,21 +717,11 @@ export class CalendarUi {
   }
 
   private backgroundAriaSuffix(ranges: readonly CalendarBackgroundRange[]): string {
-    const labels = [...new Set(ranges.map(range => range.label?.trim()).filter((label): label is string => Boolean(label)))].slice(0, 8);
-    return labels.length ? `. Background: ${labels.join(", ")}` : "";
+    return backgroundAriaSuffix(ranges);
   }
 
   private dayLevelBackgroundLayer(ranges: readonly CalendarBackgroundRange[]): HTMLElement {
-    const layer = el("div", "dc-day-background-layer");
-    layer.setAttribute("aria-hidden", "true");
-    for (const [index, range] of ranges.entries()) {
-      const background = el("div", "dc-day-background-range");
-      background.dataset.backgroundRangeId = range.id;
-      background.style.zIndex = String(index);
-      this.applyBackgroundPresentation(background, range);
-      layer.append(background);
-    }
-    return layer;
+    return dayLevelBackgroundLayer(ranges, (element, range) => this.applyBackgroundPresentation(element, range));
   }
 
   private backgroundLayer(day: Date): HTMLElement {
@@ -1235,58 +1088,54 @@ export class CalendarUi {
   }
 
   private renderAgenda(): HTMLElement {
-    const container = el("div", "dc-agenda");
-    const groups = groupAgendaByDay(this.displayOccurrences(), this.visibleRange, this.timeZone);
-    if (!groups.length) {
-      container.append(el("div", "dc-empty", this.addonEmptyMessage() ?? "Nothing scheduled in this range."));
-      return container;
-    }
-    for (const group of groups) {
-      const date = toDate(group.date, this.timeZone);
-      const section = el("section", "dc-agenda-day");
-      const heading = el("div", "dc-agenda-heading");
-      heading.append(el("span", undefined, new Intl.DateTimeFormat(this.locale, { weekday: "long", day: "numeric", month: "long", timeZone: this.timeZone }).format(date)));
-      const summaries = (this.options.extensions ?? [])
-        .map((extension, index) => this.hostHook(`Calendar extension ${index + 1} agenda presentation`, () => extension.presentAgendaDay?.(group.date, group.occurrences)?.summary, undefined))
+    return renderAgendaView(this.staticRenderModel(), this.staticRenderActions());
+  }
+
+  private staticRenderModel(): CalendarStaticRenderModel {
+    return {
+      locale: this.locale,
+      timeZone: this.timeZone,
+      weekStartsOn: this.weekStartsOn,
+      anchor: this.anchor,
+      visibleRange: this.visibleRange,
+      agendaSpan: this.agendaSpan,
+      occurrences: this.displayOccurrences(),
+      backgroundRanges: this.backgroundRanges,
+      now: this.clock.now(),
+    };
+  }
+
+  private staticRenderActions(): CalendarStaticRenderActions {
+    return {
+      dateInNavigationBounds: date => this.dateInNavigationBounds(date),
+      openDay: date => this.openDay(date),
+      openMonth: (monthStart, firstDateKey) => {
+        const target = this.navigationBounds.min && firstDateKey < this.navigationBounds.min
+          ? toDate(this.navigationBounds.min, this.timeZone)
+          : monthStart;
+        this.anchor = clampNavigationDate(target, this.navigationBounds, this.timeZone);
+        this.setView("month");
+      },
+      monthEvent: (occurrence, allowDrag = true, bindInteractions = true) => this.monthEvent(occurrence, allowDrag, bindInteractions),
+      openMonthOverflow: (date, rows) => this.openMonthOverflow(date, rows),
+      applyBackgroundPresentation: (element, range) => this.applyBackgroundPresentation(element, range),
+      dragOccurrenceFromTransfer: transfer => this.dragOccurrenceFromTransfer(transfer),
+      canMoveOccurrence: occurrence => this.canMoveOccurrence(occurrence),
+      moveToDay: (occurrence, day, allDay) => this.moveToDay(occurrence, day, allDay),
+      canCreateItems: () => this.canCreateItems(),
+      createFromSelection: selection => this.createFromSelection(selection),
+      addonEmptyMessage: () => this.addonEmptyMessage(),
+      agendaSummaries: (date, occurrences) => (this.options.extensions ?? [])
+        .map((extension, index) => this.hostHook(
+          `Calendar extension ${index + 1} agenda presentation`,
+          () => extension.presentAgendaDay?.(date, occurrences)?.summary,
+          undefined,
+        ))
         .filter((value): value is string => typeof value === "string" && value.length > 0 && value.length <= 4_096)
-        .slice(0, 16);
-      if (summaries.length) heading.append(el("span", "dc-agenda-totals", summaries.join(" · ")));
-      section.append(heading);
-      const rows = [...group.occurrences].sort((a, b) => {
-        const aOrder = this.occurrencePresentation(a).agendaOrder;
-        const bOrder = this.occurrencePresentation(b).agendaOrder;
-        return aOrder - bOrder || toDate(a.start).getTime() - toDate(b.start).getTime() || a.title.localeCompare(b.title);
-      });
-      for (const occurrence of rows) {
-        const row = el("div", "dc-agenda-row");
-        row.dataset.kind = occurrence.kind;
-        row.dataset.emphasis = occurrence.display?.emphasis ?? "normal";
-        this.applyOccurrencePresentation(row, occurrence);
-        const startsBeforeDay = dateKey(occurrence.start, this.timeZone) < group.date;
-        const endsAfterDay = dateKey(new Date(toDate(occurrence.end).getTime() - 1), this.timeZone) > group.date;
-        const time = occurrence.allDay || occurrence.precision === "date"
-          ? "All day"
-          : startsBeforeDay && endsAfterDay
-            ? "Continues →"
-            : startsBeforeDay
-              ? `Continues · until ${formatTime(toDate(occurrence.end), this.locale, this.timeZone)}`
-              : endsAfterDay
-                ? `${formatTime(toDate(occurrence.start), this.locale, this.timeZone)} →`
-                : formatTime(toDate(occurrence.start), this.locale, this.timeZone);
-        row.append(el("div", "dc-agenda-time", time));
-        const detailWrap = el("div", "dc-agenda-detail");
-        const detail = this.monthEvent(occurrence);
-        detail.classList.add("dc-agenda-event");
-        detailWrap.append(detail);
-        const presentation = this.occurrencePresentation(occurrence);
-        const meta = presentation.agendaMeta.join(" · ");
-        if (meta) detailWrap.append(el("div", "dc-agenda-meta", meta));
-        row.append(detailWrap);
-        section.append(row);
-      }
-      container.append(section);
-    }
-    return container;
+        .slice(0, 16),
+      occurrencePresentation: occurrence => this.occurrencePresentation(occurrence),
+      applyOccurrencePresentation: (element, occurrence) => this.applyOccurrencePresentation(element, occurrence),
+    };
   }
 
   private resolveDraftTime(value: string, temporal: CalendarCreateDraft["temporal"]): Date {
