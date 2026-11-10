@@ -30,7 +30,7 @@ export interface CalendarAvailabilityExceptionReplacement extends CalendarTempor
 
 export interface CalendarAvailabilityRecurrence extends CalendarTemporalSeriesRecurrence<CalendarAvailabilityExceptionReplacement> {
   readonly rule: RecurrenceRule;
-  readonly exceptions?: readonly CalendarTemporalSeriesException<CalendarAvailabilityExceptionReplacement>[] | undefined;
+  readonly exceptions?: readonly CalendarTemporalSeriesException<CalendarAvailabilityExceptionReplacement>[];
 }
 
 export interface CalendarAvailabilityDefinition {
