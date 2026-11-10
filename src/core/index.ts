@@ -7,5 +7,6 @@ export * from "./event-series.js";
 export * from "./layout.js";
 export * from "./interaction.js";
 export * from "./calendar-engine.js";
+export * from "./revision.js";
 export * from "./commands.js";
 export * from "./store.js";

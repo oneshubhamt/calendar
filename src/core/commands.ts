@@ -7,20 +7,40 @@ import type {
   CalendarOccurrence,
   CalendarRecurrence,
   CalendarRepository,
+  CalendarRevisionGuardedRepository,
   CalendarSource,
   RecurrenceException,
 } from "./types.js";
 import { projectTemporalPatchToSeries, rebaseTemporalSeriesExceptions, sameRecurrence, temporalSeriesIdentityAtOrdinal, temporalSeriesOrdinal } from "./recurrence.js";
 import { applyCalendarItemPatch, assertCalendarStateIntegrity } from "./store.js";
+import { CalendarStaleRevisionError } from "./revision.js";
 
-/** Host/repository command rejection caused by an obsolete authoritative revision. */
-export class CalendarCommandStaleError extends Error {
-  public readonly code = "stale" as const;
-
+/** Host command rejection caused by obsolete authoritative state. */
+export class CalendarCommandStaleError extends CalendarStaleRevisionError {
   public constructor(message = "Calendar command rejected because the authoritative state changed") {
-    super(message);
+    super(-1, undefined, message);
     this.name = "CalendarCommandStaleError";
   }
+}
+
+function revisionGuarded(
+  repository: CalendarRepository,
+): repository is CalendarRevisionGuardedRepository {
+  return typeof (repository as Partial<CalendarRevisionGuardedRepository>).replaceAtRevision === "function";
+}
+
+async function replaceAtExpectedRevision(
+  repository: CalendarRepository,
+  items: readonly CalendarItem[],
+  expectedRevision: number,
+): Promise<void> {
+  if (revisionGuarded(repository)) {
+    await repository.replaceAtRevision(items, expectedRevision);
+    return;
+  }
+  const actual = repository.read().revision;
+  if (actual !== expectedRevision) throw new CalendarStaleRevisionError(expectedRevision, actual);
+  await repository.replace(items);
 }
 
 function assertEditablePolicy(id: string, editPolicy: CalendarItem["editPolicy"]): void {
@@ -311,7 +331,7 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
     try {
       const current = this.repository.read();
       if (!sameItems(current.items, entry.after) || !sameSources(current.sources, entry.sources)) throw new Error("Calendar changed outside undo history; refusing to overwrite newer state");
-      await this.repository.replace(cloneItems(entry.before));
+      await replaceAtExpectedRevision(this.repository, cloneItems(entry.before), current.revision);
       this.redoStack.push(entry);
       return true;
     } catch (error) {
@@ -326,7 +346,7 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
     try {
       const current = this.repository.read();
       if (!sameItems(current.items, entry.before) || !sameSources(current.sources, entry.sources)) throw new Error("Calendar changed outside redo history; refusing to overwrite newer state");
-      await this.repository.replace(cloneItems(entry.after));
+      await replaceAtExpectedRevision(this.repository, cloneItems(entry.after), current.revision);
       this.undoStack.push(entry);
       return true;
     } catch (error) {
@@ -344,7 +364,7 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
 
     // One authoritative repository mutation per logical Calendar command. This makes
     // multi-record operations such as recurrence splitting durable atomically.
-    await this.repository.replace(stagedItems);
+    await replaceAtExpectedRevision(this.repository, stagedItems, beforeSnapshot.revision);
 
     const afterSnapshot = this.repository.read();
     if (!sameSources(beforeSnapshot.sources, afterSnapshot.sources)) return;

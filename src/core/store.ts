@@ -3,6 +3,7 @@ import { occurrenceFromItem } from "./event-series.js";
 import { validateRecurrenceRule } from "./recurrence.js";
 import { parsePlainDate } from "./temporal.js";
 import { hasExplicitOffset } from "./time.js";
+import { CalendarStaleRevisionError } from "./revision.js";
 
 const EDIT_POLICIES = new Set(["full", "schedule-only", "readonly", "generated"]);
 const TEMPORAL_KINDS = new Set(["instant", "zoned", "floating", "date"]);
@@ -379,6 +380,13 @@ export class MemoryCalendarRepository implements CalendarRepository {
   }
 
   public replace(items: readonly CalendarItem[]): void {
+    this.commit(this.snapshotValue.sources, items);
+  }
+
+  public replaceAtRevision(items: readonly CalendarItem[], expectedRevision: number): void {
+    if (this.snapshotValue.revision !== expectedRevision) {
+      throw new CalendarStaleRevisionError(expectedRevision, this.snapshotValue.revision);
+    }
     this.commit(this.snapshotValue.sources, items);
   }
 

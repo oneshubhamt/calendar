@@ -528,3 +528,55 @@ test('RepositoryCommandHandler commits each logical command through one authorit
   assert.equal(snapshot.items.length,2);
   assert.deepEqual(snapshot.items.map(item=>item.recurrence?.rule.count),[2,2]);
 });
+
+
+test('revision-guarded repositories reject stale replacement without partial mutation',async()=>{
+  const source={id:'revision-source',title:'Revision',visible:true};
+  const first={
+    id:'revision-a',calendarId:'revision-source',title:'A',
+    start:'2026-11-10T09:00:00.000Z',end:'2026-11-10T10:00:00.000Z',
+    kind:'event',ownership:'calendar',editPolicy:'full',
+  };
+  const repo=new C.MemoryCalendarRepository([source],[first]);
+  const initial=repo.read();
+  await repo.replaceAtRevision([{...first,title:'B'}],initial.revision);
+  assert.equal(repo.read().revision,1);
+  assert.equal(repo.read().items[0].title,'B');
+  assert.throws(
+    ()=>repo.replaceAtRevision([{...first,title:'stale'}],initial.revision),
+    error=>error instanceof C.CalendarStaleRevisionError && error.code==='stale'
+      && error.expectedRevision===0 && error.actualRevision===1,
+  );
+  assert.equal(repo.read().items[0].title,'B');
+  assert.equal(repo.read().revision,1);
+});
+
+test('RepositoryCommandHandler prefers the strong revision-guarded commit capability',async()=>{
+  const source={id:'guard-source',title:'Guard',visible:true};
+  const item={
+    id:'guard-item',calendarId:'guard-source',title:'Before',
+    start:'2026-11-10T09:00:00.000Z',end:'2026-11-10T10:00:00.000Z',
+    kind:'event',ownership:'calendar',editPolicy:'full',
+  };
+  const base=new C.MemoryCalendarRepository([source],[item]);
+  let snapshot=base.read();
+  let guardedCalls=0, plainReplaceCalls=0;
+  const repository={
+    read:()=>snapshot,
+    create(){throw new Error('not used');},
+    update(){throw new Error('not used');},
+    remove(){throw new Error('not used');},
+    replace(){plainReplaceCalls+=1;throw new Error('plain replace must not be used');},
+    replaceAtRevision(items,expectedRevision){
+      guardedCalls+=1;
+      assert.equal(expectedRevision,snapshot.revision);
+      const next=new C.MemoryCalendarRepository(snapshot.sources,items);
+      snapshot=Object.freeze({...next.read(),revision:snapshot.revision+1});
+    },
+  };
+  const handler=new C.RepositoryCommandHandler(repository);
+  await handler.execute({type:'update',id:'guard-item',patch:{title:'After'}},{now:'2026-11-01T00:00:00.000Z'});
+  assert.equal(guardedCalls,1);
+  assert.equal(plainReplaceCalls,0);
+  assert.equal(snapshot.items[0].title,'After');
+});

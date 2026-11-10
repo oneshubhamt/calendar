@@ -1,4 +1,5 @@
 import type { CalendarItem, CalendarItemPatch, CalendarRepository, CalendarSnapshot, CalendarSource, CalendarSourcePatch } from "../core/types.js";
+import { CalendarStaleRevisionError } from "../core/revision.js";
 import { applyCalendarItemPatch, applyCalendarSourcePatch, assertCalendarStateIntegrity, materializeCalendarSnapshot } from "../core/store.js";
 
 interface StoredEnvelope {
@@ -40,6 +41,8 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   private initialSources: readonly CalendarSource[];
   private loaded = false;
   private db: IDBDatabase | null = null;
+  private channel: BroadcastChannel | null = null;
+  private refreshPromise: Promise<void> | null = null;
   private readonly listeners = new Set<(snapshot: CalendarSnapshot) => void>();
 
   public constructor(options: IndexedDbCalendarRepositoryOptions) {
@@ -67,6 +70,7 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
       this.snapshotValue = materializeCalendarSnapshot(undefined, this.initialSources, [], 0);
     }
     this.loaded = true;
+    this.openInvalidationChannel();
   }
 
   public read(): CalendarSnapshot {
@@ -77,17 +81,21 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
 
   /** Release the browser database handle. The repository may be opened again later. */
   public close(): void {
+    this.channel?.close();
+    this.channel = null;
     this.db?.close();
     this.db = null;
     this.loaded = false;
     this.snapshotValue = undefined;
+    this.refreshPromise = null;
   }
 
   public async create(item: CalendarItem): Promise<void> {
     this.assertLoaded();
     if (this.read().items.some(existing => existing.id === item.id)) throw new Error(`Duplicate calendar item: ${item.id}`);
     if (!this.read().sources.some(source => source.id === item.calendarId)) throw new Error(`Unknown calendar source: ${item.calendarId}`);
-    await this.commit([...this.read().items, item], this.read().sources);
+    const current = this.read();
+    await this.commit([...current.items, item], current.sources, current.revision);
   }
 
   public async update(id: string, patch: CalendarItemPatch): Promise<void> {
@@ -96,24 +104,37 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
     if (index < 0) throw new Error(`Calendar item not found: ${id}`);
     const next = applyCalendarItemPatch(this.read().items[index]!, patch);
     if (!this.read().sources.some(source => source.id === next.calendarId)) throw new Error(`Unknown calendar source: ${next.calendarId}`);
-    await this.commit(this.read().items.map((item, i) => i === index ? next : item), this.read().sources);
+    const current = this.read();
+    await this.commit(current.items.map((item, i) => i === index ? next : item), current.sources, current.revision);
   }
 
   public async remove(id: string): Promise<void> {
     this.assertLoaded();
     const next = this.read().items.filter(item => item.id !== id);
     if (next.length === this.read().items.length) throw new Error(`Calendar item not found: ${id}`);
-    await this.commit(next, this.read().sources);
+    const current = this.read();
+    await this.commit(next, current.sources, current.revision);
   }
 
   public async replace(items: readonly CalendarItem[]): Promise<void> {
-    this.assertLoaded(); assertCalendarStateIntegrity(this.read().sources, items); await this.commit([...items], this.read().sources);
+    this.assertLoaded();
+    const current = this.read();
+    assertCalendarStateIntegrity(current.sources, items);
+    await this.commit(items, current.sources, current.revision);
+  }
+
+  public async replaceAtRevision(items: readonly CalendarItem[], expectedRevision: number): Promise<void> {
+    this.assertLoaded();
+    const current = this.read();
+    assertCalendarStateIntegrity(current.sources, items);
+    await this.commit(items, current.sources, expectedRevision);
   }
 
   public async createSource(source: CalendarSource): Promise<void> {
     this.assertLoaded();
     if (this.read().sources.some(existing => existing.id === source.id)) throw new Error(`Duplicate calendar source: ${source.id}`);
-    await this.commit(this.read().items, [...this.read().sources, source]);
+    const current = this.read();
+    await this.commit(current.items, [...current.sources, source], current.revision);
   }
 
   public async updateSource(id: string, patch: CalendarSourcePatch): Promise<void> {
@@ -121,7 +142,8 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
     const index = this.read().sources.findIndex(source => source.id === id);
     if (index < 0) throw new Error(`Calendar source not found: ${id}`);
     const next = this.read().sources.map((source, i) => i === index ? applyCalendarSourcePatch(source, patch) : source);
-    await this.commit(this.read().items, next);
+    const current = this.read();
+    await this.commit(current.items, next, current.revision);
   }
 
   public async removeSource(id: string): Promise<void> {
@@ -130,27 +152,96 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
     if (!source) throw new Error(`Calendar source not found: ${id}`);
     if (source.removable !== true) throw new Error("Calendar source is not removable");
     if (this.read().items.some(item => item.calendarId === id)) throw new Error("Move or delete events from this calendar before removing it");
-    await this.commit(this.read().items, this.read().sources.filter(row => row.id !== id));
+    const current = this.read();
+    await this.commit(current.items, current.sources.filter(row => row.id !== id), current.revision);
   }
 
   public subscribe(listener: (snapshot: CalendarSnapshot) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   private assertLoaded(): void { if (!this.loaded || !this.db) throw new Error("IndexedDbCalendarRepository.open() must complete first"); }
 
-  private async commit(items: readonly CalendarItem[], sources: readonly CalendarSource[]): Promise<void> {
+  private async commit(
+    items: readonly CalendarItem[],
+    sources: readonly CalendarSource[],
+    expectedRevision: number,
+  ): Promise<void> {
     this.assertLoaded();
     assertCalendarStateIntegrity(sources, items);
+    if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
+      throw new RangeError("Expected Calendar revision must be a non-negative integer");
+    }
+
     const current = this.read();
-    const revision = current.revision + 1;
+    const revision = expectedRevision + 1;
     const envelope: StoredEnvelope = { key: "snapshot", revision, items: [...items], sources: [...sources] };
-    await new Promise<void>((resolve, reject) => {
-      const tx = openTransaction(this.db!, this.storeName, "readwrite");
-      tx.objectStore(this.storeName).put(envelope);
-      tx.oncomplete = () => resolve();
-      tx.onabort = () => reject(tx.error ?? new Error("Calendar transaction aborted"));
-      tx.onerror = () => reject(tx.error ?? new Error("Calendar transaction failed"));
-    });
+    let stale: CalendarStaleRevisionError | undefined;
+    let validationFailure: unknown;
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = openTransaction(this.db!, this.storeName, "readwrite");
+        const store = tx.objectStore(this.storeName);
+        const request = store.get("snapshot");
+        request.onsuccess = () => {
+          try {
+            const persisted = storedEnvelope(request.result);
+            const actualRevision = persisted?.revision ?? 0;
+            if (actualRevision !== expectedRevision) {
+              stale = new CalendarStaleRevisionError(expectedRevision, actualRevision);
+              tx.abort();
+              return;
+            }
+            store.put(envelope);
+          } catch (error) {
+            validationFailure = error;
+            tx.abort();
+          }
+        };
+        request.onerror = () => reject(request.error ?? new Error("Could not verify Calendar revision"));
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(stale ?? validationFailure ?? tx.error ?? new Error("Calendar transaction aborted"));
+        tx.onerror = () => { /* tx.onabort reports the durable failure once */ };
+      });
+    } catch (error) {
+      if ((error as { readonly code?: unknown })?.code === "stale") {
+        await this.reloadFromStorage();
+      }
+      throw error;
+    }
+
     this.snapshotValue = materializeCalendarSnapshot(current, sources, items, revision);
     for (const listener of this.listeners) listener(this.snapshotValue);
+    this.channel?.postMessage({ revision });
+  }
+
+  private openInvalidationChannel(): void {
+    if (this.channel || typeof BroadcastChannel === "undefined") return;
+    const channel = new BroadcastChannel(`@director/calendar:${this.dbName}:${this.storeName}`);
+    channel.onmessage = event => {
+      const value = event.data as { readonly revision?: unknown } | null;
+      const revision = value && Number.isInteger(value.revision) ? Number(value.revision) : -1;
+      if (!this.loaded || revision <= this.read().revision) return;
+      void this.reloadFromStorage(revision);
+    };
+    this.channel = channel;
+  }
+
+  private async reloadFromStorage(minimumRevision = -1): Promise<void> {
+    if (!this.loaded) return;
+    if (this.refreshPromise) return await this.refreshPromise;
+    this.refreshPromise = (async () => {
+      const envelope = await this.readEnvelope();
+      if (!this.loaded || !envelope) return;
+      const current = this.read();
+      if (envelope.revision <= current.revision || envelope.revision < minimumRevision) return;
+      const sources = envelope.sources ?? this.initialSources;
+      this.snapshotValue = materializeCalendarSnapshot(current, sources, envelope.items, envelope.revision);
+      for (const listener of this.listeners) listener(this.snapshotValue);
+    })();
+    try {
+      await this.refreshPromise;
+    } finally {
+      this.refreshPromise = null;
+    }
   }
 
   private async readEnvelope(): Promise<StoredEnvelope | undefined> {
