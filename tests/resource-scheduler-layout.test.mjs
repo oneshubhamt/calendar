@@ -107,3 +107,21 @@ test("R3 fails closed on malformed ranges/occurrences and never imports scheduli
   const coreLayout=await fs.readFile(new URL("../src/core/layout.ts",import.meta.url),"utf8");
   assert.doesNotMatch(coreLayout,/layoutResourceTimeline|CalendarResource/);
 });
+
+
+test("R3 keeps folded fall-back geometry bounded when the requested range begins inside an overlap",()=>{
+  const interval=occurrence("folded","2026-11-01T06:00:00.000Z","2026-11-01T07:00:00.000Z");
+  const point=occurrence("folded-point","2026-11-01T06:30:00.000Z");
+  const range={start:"2026-11-01T05:45:00.000Z",end:"2026-11-01T07:00:00.000Z"};
+  const layout=layoutResourceTimeline(resources,[interval,point],[
+    {occurrenceId:"folded",resourceIds:["room-a"]},
+    {occurrenceId:"folded-point",resourceIds:["room-b"]},
+  ],range,{timeZone:"America/New_York"});
+  const block=layout.find(row=>row.occurrenceId==="folded");
+  const marker=layout.find(row=>row.occurrenceId==="folded-point");
+  assert.equal(block.xMinutes,0);
+  assert.equal(block.widthMinutes,15);
+  assert.ok(block.xMinutes+block.widthMinutes<=15);
+  assert.equal(marker.xMinutes,0);
+  assert.equal(marker.widthMinutes,0);
+});
