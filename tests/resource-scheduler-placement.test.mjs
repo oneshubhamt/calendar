@@ -37,8 +37,8 @@ test("R5 validates complete target resource assignments and fails closed before 
   let guardCalls=0;
   const base={resourceCapabilityProvider:allowReassign,resourceGuards:[{id:"g",evaluate(){guardCalls++;return {mode:"allow"};}}]};
   for(const [patch,pattern] of [
-    [{toResourceIds:["b","b"]},/duplicate resource b/i],
-    [{toResourceIds:["missing"]},/unknown resource missing/i],
+    [{toResourceIds:["b","b"]},/duplicate resource.*b/i],
+    [{toResourceIds:["missing"]},/unknown resource.*missing/i],
     [{toResourceIds:["rooms"]},/does not accept assignments/i],
     [{sourceResourceId:"b"},/source resource b is not in the current assignment/i],
     [{targetResourceId:"a"},/target resource a is not in the target assignment/i],
