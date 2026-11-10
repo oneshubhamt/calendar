@@ -63,25 +63,31 @@ export function layoutBackgroundDay(
   const dayStart = startOfDay(day, timeZone);
   const dayEnd = timeZone ? addDays(dayStart, 1, timeZone) : new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate() + 1);
 
-  const layouts = ranges
-    .filter(range => toDate(range.start).getTime() < dayEnd.getTime() && toDate(range.end).getTime() > dayStart.getTime())
-    .map(range => {
-      const start = Math.max(dayStart.getTime(), toDate(range.start).getTime());
-      const end = Math.min(dayEnd.getTime(), toDate(range.end).getTime());
-      const rawTop = timeZone ? civilMinuteOfInstant(start, dayStart, timeZone) : (start - dayStart.getTime()) / 60_000;
-      const rawEnd = timeZone ? civilMinuteOfInstant(end, dayStart, timeZone) : (end - dayStart.getTime()) / 60_000;
-      const civilHeight = rawEnd - rawTop;
-      const elapsedHeight = (end - start) / 60_000;
-      const rawHeight = Math.max(1, civilHeight > 0 ? civilHeight : elapsedHeight);
-      const top = Math.max(visible.start, rawTop);
-      const bottom = Math.min(visible.end, rawTop + rawHeight);
-      return { range, topMinutes: top, heightMinutes: bottom - top };
-    })
-    .filter(layout => layout.heightMinutes > 0)
-    .sort((left, right) =>
-      left.topMinutes - right.topMinutes
-      || right.heightMinutes - left.heightMinutes
-      || left.range.id.localeCompare(right.range.id));
+  const layouts: Array<Omit<BackgroundLayoutItem, "layer">> = [];
+  const dayStartMs = dayStart.getTime();
+  const dayEndMs = dayEnd.getTime();
+
+  for (const range of ranges) {
+    const rangeStart = toDate(range.start).getTime();
+    const rangeEnd = toDate(range.end).getTime();
+    if (rangeStart >= dayEndMs || rangeEnd <= dayStartMs) continue;
+
+    const start = Math.max(dayStartMs, rangeStart);
+    const end = Math.min(dayEndMs, rangeEnd);
+    const rawTop = timeZone ? civilMinuteOfInstant(start, dayStart, timeZone) : (start - dayStartMs) / 60_000;
+    const rawEnd = timeZone ? civilMinuteOfInstant(end, dayStart, timeZone) : (end - dayStartMs) / 60_000;
+    const civilHeight = rawEnd - rawTop;
+    const elapsedHeight = (end - start) / 60_000;
+    const rawHeight = Math.max(1, civilHeight > 0 ? civilHeight : elapsedHeight);
+    const top = Math.max(visible.start, rawTop);
+    const bottom = Math.min(visible.end, rawTop + rawHeight);
+    if (bottom > top) layouts.push({ range, topMinutes: top, heightMinutes: bottom - top });
+  }
+
+  layouts.sort((left, right) =>
+    left.topMinutes - right.topMinutes
+    || right.heightMinutes - left.heightMinutes
+    || left.range.id.localeCompare(right.range.id));
 
   return layouts.map((layout, layer) => ({ ...layout, layer }));
 }
