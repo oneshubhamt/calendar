@@ -89,13 +89,14 @@ test("stale command and revision errors share a semantic base without fake revis
   assert.doesNotMatch(commands,/super\(-1/);
 });
 
-test("queued reload retains an unmet requested revision before deciding it is caught up",async()=>{
+test("queued reload drains newer invalidations without self-requeueing an impossible advertised revision",async()=>{
   const source=await read("../src/storage/indexeddb-repository.ts");
   const reload=source.match(/private async reloadFromStorage\([\s\S]*?\n  }\n\n  private async readPersistedState/)?.[0] ?? "";
-  const requeue=reload.indexOf("requestedRevision > currentRevision");
-  const caughtUp=reload.indexOf("this.requestedRefreshRevision <= currentRevision");
-  assert.ok(requeue>=0 && caughtUp>requeue);
-  assert.match(reload,/Math\.max\(this\.requestedRefreshRevision, requestedRevision\)/);
+  assert.match(reload,/const requestedRevision = this\.requestedRefreshRevision/);
+  assert.match(reload,/this\.requestedRefreshRevision = -1/);
+  assert.match(reload,/this\.requestedRefreshRevision <= currentRevision/);
+  assert.doesNotMatch(reload,/requestedRevision > currentRevision/);
+  assert.doesNotMatch(reload,/Math\.max\(this\.requestedRefreshRevision, requestedRevision\)/);
 });
 
 

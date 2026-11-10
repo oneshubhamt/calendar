@@ -685,3 +685,35 @@ test('delta undo still fails closed when an affected item or Calendar source cha
   changedSourceRepo.updateSource(source.id,{title:'Changed source'});
   await assert.rejects(()=>changedSourceHandler.undo(),/sources changed outside undo history/i);
 });
+
+
+test('command history is derived from the staged command result, not a later repository snapshot',async()=>{
+  const source={id:'history-race-source',title:'History race',visible:true};
+  const a={id:'history-race-a',calendarId:source.id,title:'A',start:'2026-11-10T09:00:00.000Z',end:'2026-11-10T10:00:00.000Z',kind:'event',ownership:'calendar',editPolicy:'full'};
+  const b={id:'history-race-b',calendarId:source.id,title:'B',start:'2026-11-10T11:00:00.000Z',end:'2026-11-10T12:00:00.000Z',kind:'event',ownership:'calendar',editPolicy:'full'};
+  const base=new C.MemoryCalendarRepository([source],[a,b]);
+
+  const repository={
+    read:()=>base.read(),
+    create:item=>base.create(item),
+    update:(id,patch)=>base.update(id,patch),
+    remove:id=>base.remove(id),
+    replace:items=>base.replace(items),
+    replaceAtRevision(items,expectedRevision){
+      base.replaceAtRevision(items,expectedRevision);
+      // Simulate an unrelated authoritative change landing after the command commit
+      // but before the command handler resumes from await.
+      if(base.read().items.find(item=>item.id==='history-race-b')?.title==='B'){
+        base.update('history-race-b',{title:'B external'});
+      }
+    },
+  };
+
+  const handler=new C.RepositoryCommandHandler(repository);
+  await handler.execute({type:'update',id:'history-race-a',patch:{title:'A changed'}},{now:'2026-11-10T00:00:00.000Z'});
+  assert.equal(base.read().items.find(item=>item.id==='history-race-b').title,'B external');
+
+  assert.equal(await handler.undo(),true);
+  assert.equal(base.read().items.find(item=>item.id==='history-race-a').title,'A');
+  assert.equal(base.read().items.find(item=>item.id==='history-race-b').title,'B external');
+});

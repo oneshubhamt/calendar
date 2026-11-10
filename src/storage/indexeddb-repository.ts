@@ -402,9 +402,6 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
         }
 
         const currentRevision = this.read().revision;
-        if (requestedRevision > currentRevision) {
-          this.requestedRefreshRevision = Math.max(this.requestedRefreshRevision, requestedRevision);
-        }
         if (this.requestedRefreshRevision <= currentRevision) {
           this.requestedRefreshRevision = -1;
           return;

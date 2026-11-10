@@ -487,9 +487,7 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
     // multi-record operations such as recurrence splitting durable atomically.
     await this.repository.replaceAtRevision(stagedItems, beforeSnapshot.revision);
 
-    const afterSnapshot = this.repository.read();
-    if (sourceSignature(beforeSnapshot.sources) !== sourceSignature(afterSnapshot.sources)) return;
-    const history = buildHistoryEntry(beforeSnapshot.items, afterSnapshot.items, afterSnapshot.sources);
+    const history = buildHistoryEntry(beforeSnapshot.items, stagedItems, beforeSnapshot.sources);
     if (!history) return;
     this.undoStack.push(history);
     if (this.undoStack.length > Math.max(1, this.historyLimit)) this.undoStack.shift();
