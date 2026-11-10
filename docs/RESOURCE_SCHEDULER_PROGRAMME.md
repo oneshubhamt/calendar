@@ -107,6 +107,16 @@ After R4, audit the read-only architecture independently before writes.
 
 Compose `evaluateCalendarPlacement()` with resource target validity, resource-specific guards/collision policy and independent resource reassignment authority. Execute exactly one `CalendarResourceMutationPort.commit()`, with full before/after assignments and stale-version handling.
 
+### R5 implementation notes
+
+`evaluateCalendarResourcePlacement()` is the single headless policy/authority composition boundary. It validates complete current/target resource sets, canonicalizes them by hierarchy order, reuses core `evaluateCalendarPlacement()` for temporal bounds/guards/collisions, resolves temporal mutation authority through core occurrence capabilities, independently requires explicit `canReassign: true` only when the resource set changes, evaluates feature-local resource guards and optionally evaluates resource-scoped collisions against a lazily supplied occurrence+assignment projection.
+
+Dimension authority is exact: a time-only change requires only its temporal capabilities; a resource-only change requires only resource reassignment authority; a diagonal change requires both. Resource guards never enter core placement context and resource collision candidates are considered only when they share at least one target resource.
+
+`executeCalendarResourcePlacement()` re-evaluates immediately before execution. Prevented placements, unaccepted warnings and no-ops do not write. An accepted mutation calls `CalendarResourceMutationPort.commit()` exactly once with canonical complete before/after assignments, proposed time, recurrence scope and the projected assignment version. Version comparison is host-authoritative and must occur atomically with the write; a `CalendarCommandStaleError` or `code="stale"` rejection produces a stale result and is never automatically retried.
+
+R5 does not add interaction handlers to Resource Scheduler UI; pointer/touch/keyboard mutation interactions remain R6.
+
 ## R6 — Full interaction surface
 
 Add horizontal time drag, vertical resource reassignment, diagonal combined drag, resize, pointer/touch, keyboard equivalents and interaction preview. Dragging one rendering of a multi-resource occurrence replaces only that resource assignment.
@@ -115,6 +125,6 @@ Add horizontal time drag, vertical resource reassignment, diagonal combined drag
 
 Verify hierarchy integrity, collapse/order, multi-resource behavior, unassigned events, resource-scoped policy, recurrence scopes, DST/cross-midnight/point occurrences, temporal/resource authority, trusted host projections, stale versions, atomic failure behavior, accessibility and negative dependency/persistence leakage. Then run the complete repository quality gate.
 
-## Current architecture after R4
+## Current architecture after R5
 
-The headless contract lives only under `src/features/resource-scheduler/` and is exported only from `@director/calendar/features/resource-scheduler`. It imports core types only. Base root/core/view remain unchanged and resource-free. R2 provides pure validation/projection mechanics, R3 adds optional headless timeline geometry and R4 adds a separate opt-in read-only DOM timeline. Core, ordinary view and Calendar persistence remain resource-free; no Resource Scheduler code is loaded unless its explicit subpaths are imported.
+The headless contract lives only under `src/features/resource-scheduler/` and is exported only from `@director/calendar/features/resource-scheduler`. It imports core types only. Base root/core/view remain unchanged and resource-free. R2 provides pure validation/projection mechanics, R3 adds optional headless timeline geometry, R4 adds a separate opt-in read-only DOM timeline and R5 adds a headless placement/authority/atomic-mutation coordinator. The R4 UI remains read-only until R6. Core, ordinary view and Calendar persistence remain resource-free; no Resource Scheduler code is loaded unless its explicit subpaths are imported.

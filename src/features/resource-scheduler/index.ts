@@ -120,7 +120,11 @@ export interface CalendarResourcePlacementChange {
   readonly assignmentVersion?: CalendarResourceAssignmentVersion | undefined;
 }
 
-/** Host-owned atomic commit boundary; R1 defines the contract but performs no mutation. */
+/**
+ * Host-owned atomic commit boundary. Hosts that use assignmentVersion must compare
+ * it against authoritative state inside the same transaction as the write and reject
+ * obsolete versions with CalendarCommandStaleError (or an error carrying code="stale").
+ */
 export interface CalendarResourceMutationPort {
   commit(change: CalendarResourcePlacementChange): Promise<void> | void;
 }
@@ -130,3 +134,16 @@ export type { CalendarResourceRow, CalendarResourceAssociation } from "./mechani
 
 export { layoutResourceTimeline } from "./timeline-layout.js";
 export type { CalendarResourceTimelineLayoutItem, CalendarResourceTimelineLayoutOptions } from "./timeline-layout.js";
+
+
+export { evaluateCalendarResourcePlacement, executeCalendarResourcePlacement } from "./placement.js";
+export type {
+  CalendarResourceCollisionProjection,
+  CalendarResourcePlacementCollision,
+  CalendarResourcePlacementRequest,
+  CalendarResourcePlacementEvaluationOptions,
+  CalendarResourcePlacementEvaluation,
+  CalendarResourcePlacementExecutionOptions,
+  CalendarResourcePlacementExecutionStatus,
+  CalendarResourcePlacementExecutionResult,
+} from "./placement.js";
