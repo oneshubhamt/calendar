@@ -335,8 +335,13 @@ export function replaceCalendarResourceAssignment(
   if (!Array.isArray(resourceIds)) throw new Error("Resource assignments must be an array");
   if (typeof sourceResourceId !== "string" || !sourceResourceId.trim()) throw new Error("Source resource id is invalid");
   if (typeof targetResourceId !== "string" || !targetResourceId.trim()) throw new Error("Target resource id is invalid");
-  const sourceCount = resourceIds.filter(id => id === sourceResourceId).length;
-  if (sourceCount !== 1) throw new Error(`Rendered source resource ${sourceResourceId} must occur exactly once in the current assignment`);
+  const input = new Set<CalendarResourceId>();
+  for (const id of resourceIds) {
+    if (typeof id !== "string" || !id.trim()) throw new Error("Resource assignments contain an invalid resource id");
+    if (input.has(id)) throw new Error(`Resource assignments contain duplicate resource ${id}`);
+    input.add(id);
+  }
+  if (!input.has(sourceResourceId)) throw new Error(`Rendered source resource ${sourceResourceId} must occur exactly once in the current assignment`);
   const result: CalendarResourceId[] = [];
   const seen = new Set<CalendarResourceId>();
   for (const id of resourceIds) {

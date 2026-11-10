@@ -183,6 +183,9 @@ export class CalendarResourceSchedulerUi {
     if (this.interaction) {
       positiveNumber(this.interaction.snapMinutes, 15, "interaction.snapMinutes");
       positiveNumber(this.interaction.minimumDurationMinutes, 5, "interaction.minimumDurationMinutes");
+      if (typeof this.interaction.mutationPort?.commit !== "function") {
+        throw new Error("interaction.mutationPort.commit must be a function");
+      }
       if (this.interaction.dstOverlapDisambiguation !== undefined
         && !["earlier", "later"].includes(this.interaction.dstOverlapDisambiguation)) {
         throw new Error("interaction.dstOverlapDisambiguation must be earlier or later");
@@ -248,7 +251,7 @@ export class CalendarResourceSchedulerUi {
       return;
     }
     const rendered = this.renderProjection(this.projection, this.collapsed);
-    this.root.replaceChildren(rendered);
+    this.replaceSurface(rendered);
   }
 
   public destroy(): void {
@@ -260,7 +263,17 @@ export class CalendarResourceSchedulerUi {
   }
 
   private replaceSurface(surface: HTMLElement): void {
+    const currentScroll = this.root.querySelector<HTMLElement>(".dc-rs-scroll");
+    const scrollLeft = currentScroll?.scrollLeft ?? 0;
+    const scrollTop = currentScroll?.scrollTop ?? 0;
     this.root.replaceChildren(surface, this.status);
+    const nextScroll = surface.matches(".dc-rs-scroll")
+      ? surface
+      : surface.querySelector<HTMLElement>(".dc-rs-scroll");
+    if (nextScroll) {
+      nextScroll.scrollLeft = scrollLeft;
+      nextScroll.scrollTop = scrollTop;
+    }
   }
 
   private announce(message: string): void {
@@ -458,15 +471,24 @@ export class CalendarResourceSchedulerUi {
     const interactive = Boolean(this.interaction);
     const node = element("div", "dc-rs-event");
     node.tabIndex = 0;
-    node.setAttribute("role", activatable ? "button" : "group");
+    node.setAttribute("role", interactive ? "group" : (activatable ? "button" : "group"));
     if (activatable) node.classList.add("is-activatable");
-    if (interactive) node.classList.add("is-interactive");
+    if (interactive) {
+      node.classList.add("is-interactive");
+      node.setAttribute("aria-keyshortcuts", activatable
+        ? "Enter Space Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+        : "Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown");
+    }
     if (layout.temporalForm === "point") node.classList.add("is-point");
     node.dataset.renderId = layout.renderId;
     node.dataset.resourceId = layout.resourceId;
     node.dataset.occurrenceId = layout.occurrenceId;
     node.dataset.resourceRow = String(rowIndex);
     node.dataset.xMinutes = String(layout.xMinutes);
+    if (this.pendingOccurrences.has(occurrence.occurrenceId)) {
+      node.classList.add("is-pending");
+      node.setAttribute("aria-busy", "true");
+    }
 
     const left = clamp(layout.xMinutes * scale, 0, timelineWidth);
     const desiredWidth = layout.temporalForm === "point" ? 10 : Math.max(18, layout.widthMinutes * scale);
@@ -522,6 +544,8 @@ export class CalendarResourceSchedulerUi {
     handle.setAttribute("role", "separator");
     handle.setAttribute("aria-orientation", "vertical");
     handle.setAttribute("aria-label", `Resize ${edge} of ${occurrence.title}`);
+    handle.setAttribute("aria-keyshortcuts", "ArrowLeft ArrowRight");
+    handle.addEventListener("click", event => event.stopPropagation());
     handle.addEventListener("pointerdown", event => {
       event.stopPropagation();
       this.onOccurrencePointerDown(event, node, occurrence, resourceId, edge === "start" ? "resize-start" : "resize-end");
@@ -556,14 +580,10 @@ export class CalendarResourceSchedulerUi {
     return this.projection?.resources.find(resource => resource.id === resourceId);
   }
 
-  private resourceAt(clientY: number): CalendarResource | undefined {
-    for (const row of this.root.querySelectorAll<HTMLElement>(".dc-rs-resource-row")) {
-      const rect = row.getBoundingClientRect();
-      if (clientY < rect.top || clientY >= rect.bottom) continue;
-      const id = row.dataset.resourceId;
-      return id ? this.resourceById(id) : undefined;
-    }
-    return undefined;
+  private resourceAt(clientX: number, clientY: number): CalendarResource | undefined {
+    const row = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>(".dc-rs-resource-row");
+    const id = row?.dataset.resourceId;
+    return id ? this.resourceById(id) : undefined;
   }
 
   private onOccurrencePointerDown(
@@ -590,6 +610,7 @@ export class CalendarResourceSchedulerUi {
     ghost.style.height = `${Math.max(20, rect.height)}px`;
     ghost.hidden = true;
     this.root.append(ghost);
+    node.focus({ preventScroll: true });
     node.setPointerCapture(event.pointerId);
     node.classList.add("is-drag-source");
     this.drag = {
@@ -630,7 +651,7 @@ export class CalendarResourceSchedulerUi {
     drag.ghost.hidden = false;
     const rawMinutes = dx / drag.scale;
     const deltaMinutes = snapResourceInteractionMinutes(rawMinutes, this.interactionSnapMinutes());
-    const candidate = this.interactionCandidate(drag, deltaMinutes, event.clientY);
+    const candidate = this.interactionCandidate(drag, deltaMinutes, event.clientX, event.clientY);
     drag.candidate = candidate;
     drag.targetResourceId = candidate?.targetResourceId ?? drag.sourceResourceId;
     this.updateDragPreview(drag, candidate, event.clientX, event.clientY);
@@ -660,6 +681,7 @@ export class CalendarResourceSchedulerUi {
   private interactionCandidate(
     drag: CalendarResourceDragState,
     deltaMinutes: number,
+    clientX: number,
     clientY: number,
   ): CalendarResourceInteractionCandidate | undefined {
     let times;
@@ -689,7 +711,7 @@ export class CalendarResourceSchedulerUi {
     let toResourceIds = drag.assignment.resourceIds;
     let valid = true;
     if (drag.mode === "move") {
-      const target = this.resourceAt(clientY);
+      const target = this.resourceAt(clientX, clientY);
       if (target) {
         targetResourceId = target.id;
         valid = target.acceptsAssignments === true;
@@ -820,10 +842,12 @@ export class CalendarResourceSchedulerUi {
     const interaction = this.interaction;
     const projection = this.projection;
     if (!interaction || !projection || this.pendingOccurrences.has(occurrence.occurrenceId)) return;
+    const timeChanged = Date.parse(candidate.start) !== Date.parse(occurrence.start)
+      || Date.parse(candidate.end) !== Date.parse(occurrence.end);
     const action = mode === "move"
       ? (candidate.targetResourceId === sourceResourceId
         ? "move"
-        : (candidate.start === occurrence.start && candidate.end === occurrence.end ? "resource-reassign" : "resource-time-move"))
+        : (timeChanged ? "resource-time-move" : "resource-reassign"))
       : mode;
     let scope: SeriesEditScope | null = "this";
     try {
@@ -856,11 +880,7 @@ export class CalendarResourceSchedulerUi {
     this.setOccurrencePending(occurrence.occurrenceId, true);
     let result: CalendarResourcePlacementExecutionResult | undefined;
     try {
-      const executionOptions: CalendarResourcePlacementExecutionOptions = {
-        ...interaction,
-        source: interaction.sourceForOccurrence?.(occurrence),
-        acceptWarnings: false,
-      };
+      const executionOptions = this.executionOptionsFor(occurrence, false);
       result = await executeCalendarResourcePlacement(projection.resources, request, executionOptions);
       if (result.status === "warning" && interaction.confirmWarnings) {
         let accepted = false;
@@ -870,10 +890,11 @@ export class CalendarResourceSchedulerUi {
           this.reportError(error);
         }
         if (accepted) {
-          result = await executeCalendarResourcePlacement(projection.resources, request, {
-            ...executionOptions,
-            acceptWarnings: true,
-          });
+          result = await executeCalendarResourcePlacement(
+            projection.resources,
+            request,
+            this.executionOptionsFor(occurrence, true),
+          );
         }
       }
     } catch (error) {
@@ -895,6 +916,26 @@ export class CalendarResourceSchedulerUi {
     }
     this.setOccurrencePending(occurrence.occurrenceId, false);
     if (node.isConnected) node.focus();
+    else this.focusOccurrence(occurrence.occurrenceId, result?.status === "committed" ? candidate.targetResourceId : sourceResourceId);
+  }
+
+  private executionOptionsFor(
+    occurrence: CalendarOccurrence,
+    acceptWarnings: boolean,
+  ): CalendarResourcePlacementExecutionOptions {
+    const interaction = this.interaction;
+    if (!interaction) throw new Error("Resource Scheduler interaction is not configured");
+    return {
+      mutationPort: interaction.mutationPort,
+      ...(interaction.occurrenceCapabilityProvider === undefined ? {} : { occurrenceCapabilityProvider: interaction.occurrenceCapabilityProvider }),
+      ...(interaction.resourceCapabilityProvider === undefined ? {} : { resourceCapabilityProvider: interaction.resourceCapabilityProvider }),
+      ...(interaction.temporal === undefined ? {} : { temporal: interaction.temporal }),
+      ...(interaction.resourceGuards === undefined ? {} : { resourceGuards: interaction.resourceGuards }),
+      ...(interaction.resourceCollisionPolicy === undefined ? {} : { resourceCollisionPolicy: interaction.resourceCollisionPolicy }),
+      ...(interaction.loadResourceCollisionProjection === undefined ? {} : { loadResourceCollisionProjection: interaction.loadResourceCollisionProjection }),
+      ...(interaction.sourceForOccurrence === undefined ? {} : { source: interaction.sourceForOccurrence(occurrence) }),
+      acceptWarnings,
+    };
   }
 
   private resultAnnouncement(
@@ -911,6 +952,15 @@ export class CalendarResourceSchedulerUi {
   private async refreshAuthoritativeProjection(): Promise<void> {
     const refreshed = await this.interaction?.refreshProjection?.();
     if (refreshed) this.setProjection(refreshed);
+  }
+
+  private focusOccurrence(occurrenceId: string, preferredResourceId?: CalendarResourceId): void {
+    const nodes = [...this.root.querySelectorAll<HTMLElement>(".dc-rs-event")]
+      .filter(node => node.dataset.occurrenceId === occurrenceId);
+    const preferred = preferredResourceId
+      ? nodes.find(node => node.dataset.resourceId === preferredResourceId)
+      : undefined;
+    (preferred ?? nodes[0])?.focus();
   }
 
   private setOccurrencePending(occurrenceId: string, pending: boolean): void {
@@ -998,7 +1048,7 @@ export class CalendarResourceSchedulerUi {
     else next.add(resourceId);
     const rendered = this.renderProjection(this.projection, next);
     this.collapsed = next;
-    this.root.replaceChildren(rendered);
+    this.replaceSurface(rendered);
     this.notifyCollapseChange();
     const toggle = this.root.querySelector<HTMLElement>(`.dc-rs-toggle[data-resource-id="${CSS.escape(resourceId)}"]`);
     toggle?.focus();

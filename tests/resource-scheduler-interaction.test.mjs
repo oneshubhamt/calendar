@@ -28,7 +28,7 @@ test("R6 replacing one rendered multi-resource assignment preserves every unrela
   assert.deepEqual(replaceCalendarResourceAssignment(["room-a","doctor"],"room-a","doctor"),["doctor"]);
   assert.deepEqual(replaceCalendarResourceAssignment(["room-a","doctor"],"room-a","room-a"),["room-a","doctor"]);
   assert.throws(()=>replaceCalendarResourceAssignment(["doctor"],"room-a","room-b"),/exactly once/i);
-  assert.throws(()=>replaceCalendarResourceAssignment(["room-a","room-a"],"room-a","room-b"),/exactly once/i);
+  assert.throws(()=>replaceCalendarResourceAssignment(["room-a","room-a"],"room-a","room-b"),/duplicate resource/i);
 });
 
 test("R6 interaction math reuses civil DST semantics and keeps point moves zero-duration",()=>{
@@ -60,7 +60,7 @@ test("R6 UI wires pointer/touch drag, diagonal reassignment, resize and keyboard
   for(const token of [
     "executeCalendarResourcePlacement","replaceCalendarResourceAssignment",
     "setPointerCapture","pointermove","pointerup","pointercancel",
-    "resourceAt(clientY)","resource-time-move","resize-start","resize-end",
+    "resourceAt(clientX, clientY)","resource-time-move","resize-start","resize-end",
     "Alt+Left/Right","Alt+Up/Down","refreshAuthoritativeProjection",
     "aria-busy","aria-live","dc-rs-drag-ghost",
   ]) assert.equal(ui.includes(token),true,`missing R6 interaction token: ${token}`);
@@ -122,4 +122,34 @@ test("R6 projection/collapse rerenders cancel active pointer capture before repl
   assert.match(ui,/public setCollapsedResourceIds\([^)]*\): void \{\s*this\.cancelDrag\(\)/);
   assert.match(ui,/public refresh\(\): void \{\s*this\.cancelDrag\(\)/);
   assert.match(ui,/private toggleResource\([^)]*\): void \{\s*this\.cancelDrag\(\)/);
+});
+
+
+test("R6 rerenders preserve the live region and scroll context while host refresh can restore occurrence focus",async()=>{
+  const ui=await read("../src/features/resource-scheduler-ui/index.ts");
+  assert.match(ui,/private replaceSurface\([\s\S]*scrollLeft[\s\S]*this\.root\.replaceChildren\(surface, this\.status\)[\s\S]*nextScroll\.scrollLeft/);
+  const refresh=ui.match(/public refresh\(\): void \{[\s\S]*?\n  }/)?.[0] ?? "";
+  const toggle=ui.match(/private toggleResource\([\s\S]*?\n  }/)?.[0] ?? "";
+  assert.match(refresh,/this\.replaceSurface\(rendered\)/);
+  assert.match(toggle,/this\.replaceSurface\(rendered\)/);
+  assert.match(ui,/private focusOccurrence\(/);
+  assert.match(ui,/else this\.focusOccurrence\(occurrence\.occurrenceId/);
+});
+
+test("R6 passes only explicit R5 execution fields across the UI/headless boundary",async()=>{
+  const ui=await read("../src/features/resource-scheduler-ui/index.ts");
+  const helper=ui.match(/private executionOptionsFor\([\s\S]*?\n  }/)?.[0] ?? "";
+  assert.match(helper,/mutationPort: interaction\.mutationPort/);
+  assert.match(helper,/occurrenceCapabilityProvider/);
+  assert.match(helper,/resourceCapabilityProvider/);
+  assert.doesNotMatch(helper,/\.\.\.interaction/);
+  assert.doesNotMatch(helper,/snapMinutes|minimumDurationMinutes|resolveScope|confirmWarnings|refreshProjection|onResult/);
+});
+
+test("R6 resize controls cannot accidentally activate the occurrence and interactive wrappers avoid nested button semantics",async()=>{
+  const ui=await read("../src/features/resource-scheduler-ui/index.ts");
+  assert.match(ui,/handle\.addEventListener\("click", event => event\.stopPropagation\(\)\)/);
+  assert.match(ui,/node\.setAttribute\("role", interactive \? "group"/);
+  assert.match(ui,/aria-keyshortcuts/);
+  assert.match(ui,/handle\.setAttribute\("aria-keyshortcuts", "ArrowLeft ArrowRight"\)/);
 });
