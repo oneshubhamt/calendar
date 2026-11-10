@@ -423,3 +423,27 @@ test('shared placement evaluation centralizes bounds guards and collisions with 
   assert.equal(failed.mode,'prevent');
   assert.deepEqual(failed.messages,['Scheduling conflicts could not be evaluated.']);
 });
+
+
+test('generic snap and absolute-instant helpers are shared fail-closed core primitives',()=>{
+  assert.equal(C.snapMinuteCoordinate(22,15,'round'),15);
+  assert.equal(C.snapMinuteCoordinate(23,15,'round'),30);
+  assert.equal(C.snapMinuteCoordinate(23,15,'floor'),15);
+  assert.equal(C.snapMinuteCoordinate(23,15,'ceil'),30);
+  assert.equal(C.snapMinuteCoordinate(23.5,15,'none'),23.5);
+  assert.throws(()=>C.snapMinuteCoordinate(10,0,'round'),/slotMinutes/i);
+  assert.throws(()=>C.snapMinuteCoordinate(Number.NaN,15,'round'),/finite/i);
+
+  assert.deepEqual(C.normalizeSnapPolicy({
+    move:'floor',resize:'ceil',selection:'none',keyboardStepMinutes:7,
+  },15),{
+    selection:'none',move:'floor',resize:'ceil',keyboardStepMinutes:7,
+  });
+
+  assert.equal(
+    C.parseAbsoluteDateTime('2026-11-10T09:00:00+05:30').toISOString(),
+    '2026-11-10T03:30:00.000Z',
+  );
+  assert.throws(()=>C.parseAbsoluteDateTime('2026-11-10T09:00:00'),/absolute ISO date-time/i);
+  assert.throws(()=>C.parseAbsoluteDateTime('not-a-dateZ'),/valid absolute ISO date-time/i);
+});

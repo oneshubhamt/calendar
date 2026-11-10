@@ -40,8 +40,8 @@ export function resizeResourceOccurrenceByCivilMinutes(
   overlap: CalendarOverlapDisambiguation,
 ): CalendarResourceInteractionTimes | null {
   if (occurrence.temporalForm === "point") return null;
-  const start = instant(occurrence.start, "Occurrence start");
-  const end = instant(occurrence.end, "Occurrence end");
+  const start = parseAbsoluteDateTime(occurrence.start, "Occurrence start");
+  const end = parseAbsoluteDateTime(occurrence.end, "Occurrence end");
   const base = edge === "start" ? start : end;
   const target = shiftCivilMinutes(base, deltaMinutes, timeZone, overlap);
   if (!target) return null;

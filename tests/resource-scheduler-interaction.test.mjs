@@ -7,8 +7,8 @@ import {
 import {
   moveResourceOccurrenceByCivilMinutes,
   resizeResourceOccurrenceByCivilMinutes,
-  snapResourceInteractionMinutes,
 } from "../dist/features/resource-scheduler-ui/interaction.js";
+import { snapMinuteCoordinate } from "../dist/index.js";
 
 const read = path => fs.readFile(new URL(path, import.meta.url), "utf8");
 
@@ -32,8 +32,8 @@ test("R6 replacing one rendered multi-resource assignment preserves every unrela
 });
 
 test("R6 interaction math reuses civil DST semantics and keeps point moves zero-duration",()=>{
-  assert.equal(snapResourceInteractionMinutes(22,15),15);
-  assert.equal(snapResourceInteractionMinutes(23,15),30);
+  assert.equal(snapMinuteCoordinate(22,15,"round"),15);
+  assert.equal(snapMinuteCoordinate(23,15,"round"),30);
   const moved=moveResourceOccurrenceByCivilMinutes(occurrence(),30,"UTC","earlier");
   assert.deepEqual(moved,{start:"2026-11-10T09:30:00.000Z",end:"2026-11-10T10:30:00.000Z"});
   const point=occurrence({start:"2026-11-10T09:00:00.000Z",end:"2026-11-10T09:00:00.000Z",temporalForm:"point"});
@@ -90,7 +90,11 @@ test("R6 recurrence scope and interaction configuration fail closed",async()=>{
   assert.match(ui,/\["this", "this-and-following", "all"\]\.includes\(scope\)/);
   assert.match(ui,/dstOverlapDisambiguation/);
   assert.match(ui,/minimumDurationMinutes/);
-  assert.match(ui,/snapMinutes/);
+  assert.match(ui,/slotMinutes/);
+  assert.match(ui,/snapPolicy/);
+  assert.match(ui,/normalizeSnapPolicy/);
+  assert.match(ui,/snapMinuteCoordinate/);
+  assert.doesNotMatch(ui,/snapResourceInteractionMinutes|snapMinutes/);
 });
 
 test("R6 does not leak Resource Scheduler interaction into ordinary Calendar, core or persistence",async()=>{
@@ -143,7 +147,7 @@ test("R6 passes only explicit R5 execution fields across the UI/headless boundar
   assert.match(helper,/occurrenceCapabilityProvider/);
   assert.match(helper,/resourceCapabilityProvider/);
   assert.doesNotMatch(helper,/\.\.\.interaction/);
-  assert.doesNotMatch(helper,/snapMinutes|minimumDurationMinutes|resolveScope|confirmWarnings|refreshProjection|onResult/);
+  assert.doesNotMatch(helper,/slotMinutes|snapPolicy|minimumDurationMinutes|resolveScope|confirmWarnings|refreshProjection|onResult/);
 });
 
 test("R6 resize controls cannot accidentally activate the occurrence and interactive wrappers avoid nested button semantics",async()=>{
@@ -166,4 +170,18 @@ test("R6 interaction help IDs are instance-unique and drag ghosts preview snappe
   assert.match(preview,/track\.getBoundingClientRect\(\)/);
   assert.match(preview,/candidate\.targetResourceId/);
   assert.doesNotMatch(ui,/targetResourceId: CalendarResourceId;\s*readonly assignment/);
+});
+
+
+test("post-R7 scheduler interaction uses the generic Calendar snap policy and scopes row hit-testing to its own root",async()=>{
+  const ui=await read("../src/features/resource-scheduler-ui/index.ts");
+  const interaction=await read("../src/features/resource-scheduler-ui/interaction.ts");
+  assert.match(ui,/this\.snapPolicy = normalizeSnapPolicy\(this\.interaction\?\.snapPolicy, this\.slotMinutes\)/);
+  assert.match(ui,/drag\.mode === "move" \? this\.snapPolicy\.move : this\.snapPolicy\.resize/);
+  assert.match(ui,/this\.snapPolicy\.keyboardStepMinutes/);
+  assert.match(ui,/snapMinuteCoordinate\(rawMinutes, this\.slotMinutes, strategy\)/);
+  assert.doesNotMatch(ui,/snapResourceInteractionMinutes|snapMinutes/);
+  assert.match(ui,/if \(!row \|\| !this\.root\.contains\(row\)\) return undefined/);
+  assert.match(interaction,/parseAbsoluteDateTime\(occurrence\.start/);
+  assert.doesNotMatch(interaction,/function instant\(|new Date\(value\)/);
 });
