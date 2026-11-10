@@ -45,7 +45,7 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   public constructor(options: IndexedDbCalendarRepositoryOptions) {
     this.dbName = options.databaseName ?? "calendar";
     this.storeName = options.storeName ?? "calendar";
-    this.initialSources = [...options.sources];
+    this.initialSources = materializeCalendarSnapshot(undefined, options.sources, [], 0).sources;
   }
 
   public async open(): Promise<void> {
@@ -136,7 +136,7 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   public subscribe(listener: (snapshot: CalendarSnapshot) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   private assertLoaded(): void { if (!this.loaded || !this.db) throw new Error("IndexedDbCalendarRepository.open() must complete first"); }
 
-  private async commit(items: CalendarItem[], sources: CalendarSource[]): Promise<void> {
+  private async commit(items: readonly CalendarItem[], sources: readonly CalendarSource[]): Promise<void> {
     this.assertLoaded();
     assertCalendarStateIntegrity(sources, items);
     const current = this.read();
