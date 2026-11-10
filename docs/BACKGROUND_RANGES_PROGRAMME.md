@@ -124,12 +124,14 @@ B4 is complete. Only explicit `allDay: true` background ranges enter day-level r
 
 B5 is complete through the explicit `features/availability` subpath. `CalendarAvailabilityDefinition` supports available/unavailable, timed/all-day, source-associated or global definitions and reuses the existing `CalendarRecurrence` rule/exception contract. Expansion converts definitions to temporary generated Calendar items only long enough to reuse the canonical recurrence/DST/exception machinery, then emits passive background ranges with stable IDs and namespaced `metadata.calendarAvailability`. `createAvailabilityBackgroundProvider()` reads live authoritative definitions and forwards optional invalidation without owning storage. No placement/collision enforcement is introduced.
 
-### B6 — Optional placement guard
+### B6 — Optional placement guard ✅
 
 - introduce only if scheduling constraints are required;
 - route `allow` / `warn` / `prevent` through the existing central placement-validation pipeline;
 - cover create, edit, move, resize, keyboard and add-on placement consistently;
 - visual ranges remain non-enforcing by default.
+
+B6 is complete. `CalendarPlacementGuard` is a generic core contract with `allow` / `warn` / `prevent` decisions; runtime failures and malformed/duplicate guards fail closed. The view evaluates all guards through the existing central `allowPlacement()` gate, aggregates guard and collision warnings into one confirmation, and carries the target `calendarId` so source-specific policies do not rely on inference. Built-in create/duplicate/edit, pointer and native drag/drop moves, resize, keyboard transformations and add-on mutation helpers all pass through this gate. Custom host `handleCreate` / `handleEdit` callbacks receive a `CalendarPlacementValidationPort` for validating the final draft they own. `features/availability` adds an explicit `createAvailabilityPlacementGuard()` with `exclude-unavailable` and `require-available` policies and configurable `warn` / `prevent` strength. Background providers alone remain purely visual and non-enforcing.
 
 ### B7 — Targeted QA and architecture audit
 
