@@ -7,6 +7,7 @@ import type {
   CalendarSourcePatch,
 } from "../core/types.js";
 import { CalendarStaleRevisionError } from "../core/revision.js";
+import { notifyObservers } from "../core/notifications.js";
 import {
   applyCalendarItemPatch,
   applyCalendarSourcePatch,
@@ -365,7 +366,7 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
     }
 
     this.snapshotValue = materializeCalendarSnapshot(current, sources, items, revision);
-    for (const listener of this.listeners) listener(this.snapshotValue);
+    notifyObservers(this.listeners, this.snapshotValue);
     this.channel?.postMessage({ revision });
   }
 
@@ -396,7 +397,7 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
           const current = this.read();
           if (persisted.revision > current.revision) {
             this.snapshotValue = materializeCalendarSnapshot(current, persisted.sources, persisted.items, persisted.revision);
-            for (const listener of this.listeners) listener(this.snapshotValue);
+            notifyObservers(this.listeners, this.snapshotValue);
           }
         }
 

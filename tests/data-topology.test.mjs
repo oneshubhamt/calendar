@@ -149,3 +149,18 @@ test("primary IndexedDB repository exposes one fixed object-store topology",asyn
   assert.doesNotMatch(source,/readonly storeName\?:|private readonly storeName|options\.storeName/);
   assert.match(source,/db\.createObjectStore\(STORE_NAME/);
 });
+
+
+test("repository and engine observer delivery is isolated from committed state",async()=>{
+  const [notifications,store,engine,indexedDb]=await Promise.all([
+    read("../src/core/notifications.ts"),
+    read("../src/core/store.ts"),
+    read("../src/core/calendar-engine.ts"),
+    read("../src/storage/indexeddb-repository.ts"),
+  ]);
+  assert.match(notifications,/function notifyObservers/);
+  assert.match(notifications,/try \{\s*observer\(value\)/);
+  assert.match(store,/notifyObservers\(this\.listeners, this\.snapshotValue\)/);
+  assert.match(engine,/notifyObservers\(this\.invalidationListeners, invalidation\)/);
+  assert.match(indexedDb,/notifyObservers\(this\.listeners, this\.snapshotValue\)/);
+});

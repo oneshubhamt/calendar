@@ -717,3 +717,30 @@ test('command history is derived from the staged command result, not a later rep
   assert.equal(base.read().items.find(item=>item.id==='history-race-a').title,'A');
   assert.equal(base.read().items.find(item=>item.id==='history-race-b').title,'B external');
 });
+
+
+test('observer failures cannot reclassify committed repository state or block sibling observers',()=>{
+  const source={id:'observer-source',title:'Observer',visible:true};
+  const item={id:'observer-item',calendarId:source.id,title:'Before',start:'2026-11-10T09:00:00.000Z',end:'2026-11-10T10:00:00.000Z',kind:'event',ownership:'calendar',editPolicy:'full'};
+  const repo=new C.MemoryCalendarRepository([source],[item]);
+  let secondCalls=0;
+  repo.subscribe(()=>{throw new Error('observer failure');});
+  repo.subscribe(()=>{secondCalls+=1;});
+  assert.doesNotThrow(()=>repo.update(item.id,{title:'After'}));
+  assert.equal(repo.read().items[0].title,'After');
+  assert.equal(repo.read().revision,1);
+  assert.equal(secondCalls,1);
+});
+
+test('one failing CalendarEngine subscriber cannot block later subscribers or repository mutation success',()=>{
+  const source={id:'engine-observer-source',title:'Observer',visible:true};
+  const repo=new C.MemoryCalendarRepository([source],[]);
+  const engine=new C.CalendarEngine(repo);
+  let secondCalls=0;
+  engine.subscribe(()=>{throw new Error('engine observer failure');});
+  engine.subscribe(()=>{secondCalls+=1;});
+  assert.doesNotThrow(()=>repo.create({id:'engine-observer-item',calendarId:source.id,title:'Event',start:'2026-11-10T09:00:00.000Z',end:'2026-11-10T10:00:00.000Z',kind:'event',ownership:'calendar',editPolicy:'full'}));
+  assert.equal(repo.read().revision,1);
+  assert.equal(secondCalls,1);
+  assert.equal(engine.generation(),1);
+});

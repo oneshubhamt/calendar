@@ -4,6 +4,7 @@ import { validateRecurrenceRule } from "./recurrence.js";
 import { parsePlainDate } from "./temporal.js";
 import { hasExplicitOffset } from "./time.js";
 import { CalendarStaleRevisionError } from "./revision.js";
+import { notifyObservers } from "./notifications.js";
 
 const EDIT_POLICIES = new Set(["full", "schedule-only", "readonly", "generated"]);
 const TEMPORAL_KINDS = new Set(["instant", "zoned", "floating", "date"]);
@@ -423,6 +424,6 @@ export class MemoryCalendarRepository implements CalendarRepository {
       items,
       this.snapshotValue.revision + 1,
     );
-    for (const listener of this.listeners) listener(this.snapshotValue);
+    notifyObservers(this.listeners, this.snapshotValue);
   }
 }

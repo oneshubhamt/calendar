@@ -12,6 +12,7 @@ import { expandItems } from "./event-series.js";
 import { sortOccurrences } from "./layout.js";
 import { assertCalendarBackgroundRangeIntegrity, assertCalendarOccurrenceIntegrity, assertCalendarStateIntegrity } from "./store.js";
 import { intersectsRange, parseAbsoluteDateTime, toDate } from "./time.js";
+import { notifyObservers } from "./notifications.js";
 
 export interface CalendarQueryResult {
   readonly range: CalendarRange;
@@ -127,7 +128,7 @@ export class CalendarEngine {
       repositoryRevision,
       generation: this.generationValue,
     });
-    for (const listener of this.invalidationListeners) listener(invalidation);
+    notifyObservers(this.invalidationListeners, invalidation);
   }
 
   public canManageSources(): boolean {
