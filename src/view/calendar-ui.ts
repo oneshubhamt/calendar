@@ -2052,7 +2052,11 @@ export class CalendarUi {
       const queryEnd = addDays(startOfDay(end, this.timeZone), 2, this.timeZone);
       const queryRange = boundProjectionRange({ start: queryStart.toISOString(), end: queryEnd.toISOString() }, this.navigationBounds, this.timeZone);
       const allSources = new Set(this.sources.map(source => source.id));
-      const result = await this.engine.query(queryRange, { visibleSourceIds: allSources, timeZone: this.timeZone });
+      const result = await this.engine.query(queryRange, {
+        visibleSourceIds: allSources,
+        timeZone: this.timeZone,
+        includeBackgroundRanges: false,
+      });
       const collisions = placementCollisions(result.occurrences, start, end, allDay, this.collisionPolicy, occurrence?.occurrenceId);
       if (collisions.length) {
         const names = [...new Set(collisions.map(row => row.occurrence.title))];
