@@ -88,10 +88,6 @@
       "types": "./dist/interoperability/storage.d.ts",
       "import": "./dist/interoperability/storage.js"
     },
-    "./features": {
-      "types": "./dist/features/index.d.ts",
-      "import": "./dist/features/index.js"
-    },
     "./features/personal": {
       "types": "./dist/features/personal.d.ts",
       "import": "./dist/features/personal.js"
