@@ -72,7 +72,7 @@ export interface CalendarTemporalSeriesException<TPatch extends CalendarTemporal
 
 export interface CalendarTemporalSeriesRecurrence<TPatch extends CalendarTemporalSeriesPatch = CalendarTemporalSeriesPatch> {
   readonly rule: RecurrenceRule;
-  readonly exceptions?: readonly CalendarTemporalSeriesException<TPatch>[];
+  readonly exceptions?: readonly CalendarTemporalSeriesException<TPatch>[] | undefined;
 }
 
 export interface CalendarResolvedTemporalRange<TPatch extends CalendarTemporalSeriesPatch = CalendarTemporalSeriesPatch> {
