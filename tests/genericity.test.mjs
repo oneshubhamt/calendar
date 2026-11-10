@@ -171,7 +171,7 @@ test('optional availability semantics reuse Calendar recurrence and preserve pas
     end:'2026-11-09T17:00:00',
     temporal:{kind:'zoned',timeZone:'Asia/Kolkata'},
     recurrence:{
-      rule:{frequency:'weekly',byWeekday:[1,2,3,4,5],count:5},
+      rule:{frequency:'weekly',byDay:[1,2,3,4,5].map(weekday=>({weekday})),count:5},
       exceptions:[
         {originalStart:'2026-11-11T09:00:00',cancelled:true},
         {originalStart:'2026-11-12T09:00:00',replacement:{start:'2026-11-12T10:00:00',end:'2026-11-12T18:00:00',label:'Late hours'}},

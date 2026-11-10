@@ -111,8 +111,6 @@ export interface RecurrenceByDay {
 export interface RecurrenceRule {
   readonly frequency: RecurrenceFrequency;
   readonly interval?: number | undefined;
-  /** Legacy/simple BYDAY form. Prefer byDay for ordinal weekdays. */
-  readonly byWeekday?: readonly Weekday[] | undefined;
   readonly byDay?: readonly RecurrenceByDay[] | undefined;
   readonly byMonthDay?: readonly number[] | undefined;
   readonly byMonth?: readonly number[] | undefined;

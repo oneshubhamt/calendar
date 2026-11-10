@@ -107,7 +107,7 @@ test('recurrence editor round-trips simple weekly BYDAY through weekday controls
     frequency:'weekly',interval:1,weekStartsOn:1,checkedWeekdays:[1,3],startMonth:11,startMonthDay:9,
     advanced:fields,
   });
-  assert.deepEqual(rule.byWeekday,[1,3]);
+  assert.deepEqual(rule.byDay,[{weekday:1},{weekday:3}]);
 });
 
 test('range-bounded day grouping does not emit keys outside the requested view',()=>{

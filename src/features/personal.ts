@@ -26,7 +26,7 @@ export interface CalendarRoutineTemplate {
   readonly title: string;
   readonly calendarId: string;
   readonly blocks: readonly CalendarRoutineBlock[];
-  readonly repeat?: Pick<RecurrenceRule, "frequency" | "interval" | "byWeekday" | "weekStartsOn">;
+  readonly repeat?: Pick<RecurrenceRule, "frequency" | "interval" | "byDay" | "weekStartsOn">;
   readonly ownership?: CalendarOwnership;
   readonly editPolicy?: EditPolicy;
   readonly metadata?: CalendarMetadata;

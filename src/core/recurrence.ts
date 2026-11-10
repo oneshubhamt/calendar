@@ -107,7 +107,7 @@ export function validateRecurrenceRule(rule: RecurrenceRule): void {
   if (rule.byMonthDay?.some(day => !Number.isInteger(day) || day === 0 || day < -31 || day > 31)) throw new RangeError("Invalid BYMONTHDAY value");
   if (rule.byMonth?.some(month => !Number.isInteger(month) || month < 1 || month > 12)) throw new RangeError("Invalid BYMONTH value");
   if (rule.bySetPosition?.some(position => !Number.isInteger(position) || position === 0 || position < -366 || position > 366)) throw new RangeError("Invalid BYSETPOS value");
-  if (rule.bySetPosition?.length && !(rule.byMonthDay?.length || rule.byMonth?.length || rule.byWeekday?.length || rule.byDay?.length)) throw new RangeError("BYSETPOS requires another BY rule");
+  if (rule.bySetPosition?.length && !(rule.byMonthDay?.length || rule.byMonth?.length || rule.byDay?.length)) throw new RangeError("BYSETPOS requires another BY rule");
   if (rule.byDay?.some(entry => entry.ordinal !== undefined && (!Number.isInteger(entry.ordinal) || entry.ordinal === 0 || entry.ordinal < -53 || entry.ordinal > 53))) throw new RangeError("Invalid ordinal BYDAY value");
   if ((rule.frequency === "daily" || rule.frequency === "weekly") && rule.byDay?.some(entry => entry.ordinal !== undefined)) throw new RangeError("Ordinal BYDAY is supported only for monthly/yearly recurrence");
 }
@@ -350,7 +350,7 @@ function weeklySet(anchor: PlainDateTimeParts, rule: RecurrenceRule, weekOffset:
   return [...new Set(days)]
     .sort((a, b) => ((a - weekStartsOn + 7) % 7) - ((b - weekStartsOn + 7) % 7))
     .map(weekday => addPlainDays(base, (weekday - weekStartsOn + 7) % 7))
-    .filter(candidate => matchesGeneral(candidate, { ...rule, byDay: undefined, byWeekday: undefined }));
+    .filter(candidate => matchesGeneral(candidate, { ...rule, byDay: undefined }));
 }
 
 function monthlySet(anchor: PlainDateTimeParts, rule: RecurrenceRule, monthOffset: number): PlainDateTimeParts[] {
@@ -403,8 +403,7 @@ function matchesGeneral(candidate: PlainDateTimeParts, rule: RecurrenceRule): bo
 }
 
 function combinedByDays(rule: RecurrenceRule): RecurrenceByDay[] {
-  if (rule.byDay?.length) return [...rule.byDay];
-  return (rule.byWeekday ?? []).map(weekday => ({ weekday }));
+  return [...(rule.byDay ?? [])];
 }
 
 function simpleByDays(rule: RecurrenceRule): RecurrenceByDay[] {
