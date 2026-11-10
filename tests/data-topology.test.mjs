@@ -6,7 +6,6 @@ const read = path => fs.readFile(new URL(path, import.meta.url), "utf8");
 
 test("D4 IndexedDB uses one normalized scalable durable topology rather than threshold modes",async()=>{
   const source=await read("../src/storage/indexeddb-repository.ts");
-  assert.match(source,/const FORMAT_VERSION = 1/);
   assert.match(source,/interface StoredMetaRecord/);
   assert.match(source,/interface StoredItemRecord/);
   assert.match(source,/interface StoredSourceRecord/);
@@ -20,8 +19,7 @@ test("D4 IndexedDB uses one normalized scalable durable topology rather than thr
 
 test("D4 IndexedDB has one current normalized schema and no migration path",async()=>{
   const source=await read("../src/storage/indexeddb-repository.ts");
-  assert.match(source,/const DATABASE_VERSION = 1/);
-  assert.match(source,/const FORMAT_VERSION = 1/);
+  assert.doesNotMatch(source,/DATABASE_VERSION|FORMAT_VERSION|readonly format:|format: FORMAT_VERSION/);
   assert.doesNotMatch(source,/LEGACY_KEY|LegacyStoredEnvelope|legacyEnvelope|migrateLegacySnapshot/);
   assert.doesNotMatch(source,/upgradeVersion|openDatabaseRequest/);
 });
@@ -46,7 +44,7 @@ test("D4 storage open is failure-clean and creates only the configured current s
   assert.match(open,/this\.loaded = false/);
 
   const openDb=source.match(/private async openDatabase\(\): Promise<IDBDatabase> \{[\s\S]*?\n  }\n\n  private async commit/)?.[0] ?? "";
-  assert.match(openDb,/indexedDB\.open\(this\.dbName, DATABASE_VERSION\)/);
+  assert.match(openDb,/indexedDB\.open\(this\.dbName\)/);
   assert.match(openDb,/request\.onupgradeneeded/);
   assert.match(openDb,/db\.createObjectStore\(this\.storeName/);
   assert.match(openDb,/Calendar IndexedDB store is missing/);
@@ -129,4 +127,17 @@ test("mutable Calendar repositories require atomic revision-guarded replacement 
   assert.doesNotMatch(commands,/revisionGuarded|replaceAtExpectedRevision|Partial<CalendarRevisionGuardedRepository>/);
   assert.match(commands,/this\.repository\.replaceAtRevision\(stagedItems, beforeSnapshot\.revision\)/);
   assert.match(commands,/this\.repository\.replaceAtRevision\(next, current\.revision\)/);
+});
+
+
+test("current IndexedDB stores carry no application-level schema-version scaffolding",async()=>{
+  const [calendarStorage,interopStorage]=await Promise.all([
+    read("../src/storage/indexeddb-repository.ts"),
+    read("../src/interoperability/storage.ts"),
+  ]);
+  assert.doesNotMatch(calendarStorage,/DATABASE_VERSION|FORMAT_VERSION|readonly format:|format:\s*FORMAT_VERSION/);
+  assert.match(calendarStorage,/indexedDB\.open\(this\.dbName\)/);
+  assert.doesNotMatch(interopStorage,/DB_VERSION|calendar\.interop\.v\d+/);
+  assert.match(interopStorage,/const DB_NAME = "calendar\.interop"/);
+  assert.match(interopStorage,/indexedDB\.open\(dbName\)/);
 });

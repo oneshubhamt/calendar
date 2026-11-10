@@ -14,8 +14,6 @@ import {
   materializeCalendarSnapshot,
 } from "../core/store.js";
 
-const DATABASE_VERSION = 1;
-const FORMAT_VERSION = 1;
 const META_KEY = "meta" as const;
 const ITEM_PREFIX = "item:" as const;
 const SOURCE_PREFIX = "source:" as const;
@@ -23,7 +21,6 @@ const SOURCE_PREFIX = "source:" as const;
 interface StoredMetaRecord {
   readonly key: typeof META_KEY;
   readonly type: "meta";
-  readonly format: typeof FORMAT_VERSION;
   readonly revision: number;
   readonly itemOrder: readonly string[];
   readonly sourceOrder: readonly string[];
@@ -67,14 +64,13 @@ function idList(value: unknown, label: string): readonly string[] {
 function storedMeta(value: unknown): StoredMetaRecord | undefined {
   if (value === undefined) return undefined;
   const raw = record(value, "Stored Calendar metadata");
-  if (raw.key !== META_KEY || raw.type !== "meta" || raw.format !== FORMAT_VERSION
+  if (raw.key !== META_KEY || raw.type !== "meta"
     || !Number.isInteger(raw.revision) || Number(raw.revision) < 0) {
     throw new Error("Stored Calendar metadata is invalid");
   }
   return {
     key: META_KEY,
     type: "meta",
-    format: FORMAT_VERSION,
     revision: Number(raw.revision),
     itemOrder: idList(raw.itemOrder, "Stored Calendar item order"),
     sourceOrder: idList(raw.sourceOrder, "Stored Calendar source order"),
@@ -264,7 +260,7 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   private async openDatabase(): Promise<IDBDatabase> {
     return await new Promise<IDBDatabase>((resolve, reject) => {
       let settled = false;
-      const request = indexedDB.open(this.dbName, DATABASE_VERSION);
+      const request = indexedDB.open(this.dbName);
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains(this.storeName)) {
@@ -315,7 +311,6 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
     const meta: StoredMetaRecord = {
       key: META_KEY,
       type: "meta",
-      format: FORMAT_VERSION,
       revision,
       itemOrder: items.map(item => item.id),
       sourceOrder: sources.map(source => source.id),

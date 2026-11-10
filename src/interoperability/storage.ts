@@ -2,8 +2,7 @@ import type { CalendarSyncConnectionState, SyncStateStore } from "./sync.js";
 import type { ReminderReceiptStore } from "./reminders.js";
 import type { ISODateTime } from "../core/types.js";
 
-const DB_NAME = "calendar.interop.v1";
-const DB_VERSION = 1;
+const DB_NAME = "calendar.interop";
 const SYNC_STORE = "syncStates";
 const REMINDER_STORE = "reminderReceipts";
 
@@ -36,7 +35,7 @@ export class IndexedDbReminderReceiptStore implements ReminderReceiptStore {
 async function openDb(dbName: string): Promise<IDBDatabase> {
   if (typeof indexedDB === "undefined") throw new Error("IndexedDB is unavailable; provide a different interoperability state store.");
   return await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(dbName, DB_VERSION);
+    const request = indexedDB.open(dbName);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(SYNC_STORE)) db.createObjectStore(SYNC_STORE);
