@@ -150,7 +150,8 @@ test("primary IndexedDB repository exposes one fixed object-store topology",asyn
   const source=await read("../src/storage/indexeddb-repository.ts");
   assert.match(source,/const STORE_NAME = "calendar"/);
   assert.doesNotMatch(source,/readonly storeName\?:|private readonly storeName|options\.storeName/);
-  assert.match(source,/db\.createObjectStore\(STORE_NAME/);
+  assert.match(source,/createObjectStore\(STORE_NAME, \{ keyPath: "key" \}\)/);
+  assert.match(source,/exactNames\(db\.objectStoreNames, \[STORE_NAME\]\)/);
 });
 
 
