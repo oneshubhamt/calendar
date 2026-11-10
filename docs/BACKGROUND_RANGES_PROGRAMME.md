@@ -99,12 +99,14 @@ B1 is complete. It explicitly does **not** implement rendering, recurrence autho
 
 B2 is complete through `layoutBackgroundDay()`. Geometry is clipped against the local civil day and optional visible-minute bounds, spring-forward/fall-back behavior follows the existing civil timeline, overlapping ranges remain full-width with deterministic back-to-front `layer` order, and ordinary timed-event layout remains independent.
 
-### B3 — Passive rendering
+### B3 — Passive rendering ✅
 
 - add a dedicated background layer inside timed columns;
 - keep it below selection, events and the current-time indicator;
 - use `pointer-events: none`;
 - add safe generic presentation hooks/tokens without exposing Calendar geometry to arbitrary host CSS.
+
+B3 is complete. Day/week timed backgrounds render through a dedicated pointer-transparent z-index-0 layer beneath selection (`1`), events (`2+`) and the current-time marker (`3`). `allDay` background ranges remain deferred to B4. Background color/text/class presentation is cosmetic-only; class tokens use the existing safe host-class gate and extension CSS still cannot claim Calendar geometry. Optional labels are rendered as plain text and do not add interaction handlers.
 
 ### B4 — Full-day/month behavior
 
