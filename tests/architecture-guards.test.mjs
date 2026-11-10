@@ -6,6 +6,16 @@ import * as Calendar from "../dist/index.js";
 const read = path => fs.readFile(new URL(path, import.meta.url), "utf8");
 const importsOf = source => [...source.matchAll(/from\s+["']([^"']+)["']/gu)].map(match => match[1]);
 
+async function sourceFilesUnder(directory) {
+  const files = [];
+  for (const entry of await fs.readdir(new URL(directory, import.meta.url), { withFileTypes: true })) {
+    const path = `${directory}${entry.name}${entry.isDirectory() ? "/" : ""}`;
+    if (entry.isDirectory()) files.push(...await sourceFilesUnder(path));
+    else if (entry.isFile() && entry.name.endsWith(".ts")) files.push(path);
+  }
+  return files;
+}
+
 test("generic dependency direction and host-domain isolation are explicit architecture guards", async () => {
   const corePaths = [
     "../src/core/types.ts","../src/core/authority.ts","../src/core/calendar-engine.ts","../src/core/commands.ts",
@@ -79,7 +89,7 @@ test("view decomposition keeps coordinators out of renderer and gesture leaves",
   assert.doesNotMatch(gestures, /CalendarCommand|commandHandler|executeCalendarPlacement/);
 });
 
-test("durable browser storage has one canonical topology and no migration branch", async () => {
+test("durable browser storage has a fixed canonical topology", async () => {
   const [primary, interoperability] = await Promise.all([
     read("../src/storage/indexeddb-repository.ts"),
     read("../src/interoperability/storage.ts"),
@@ -89,7 +99,17 @@ test("durable browser storage has one canonical topology and no migration branch
   assert.match(primary, /STORE_NAME = "calendar"/);
   assert.match(interoperability, /DB_NAME = "director-calendar\.interop"/);
   assert.match(interoperability, /DATABASE_VERSION = 1 as const/);
-  assert.doesNotMatch(primary + interoperability, /LEGACY_KEY|LegacyStoredEnvelope|migrateLegacy|oldVersion|newVersion|upgradeVersion/);
+});
+
+test("production source contains no migration or compatibility implementation path", async () => {
+  const paths = (await sourceFilesUnder("../src/"))
+    .filter(path => !path.startsWith("../src/demo/") && !path.startsWith("../src/fixtures/"));
+  const forbidden = /\b(?:legacy|compatibility|migrat(?:e|es|ed|ing|ion|ions))\b/iu;
+  const offenders = [];
+  for (const path of paths) {
+    if (forbidden.test(await read(path))) offenders.push(path);
+  }
+  assert.deepEqual(offenders, [], `migration/compatibility implementation residue: ${offenders.join(", ")}`);
 });
 
 test("recurrence, availability and passive background dependency boundaries remain separate", async () => {

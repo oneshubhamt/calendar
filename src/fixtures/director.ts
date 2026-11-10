@@ -94,8 +94,6 @@ class FixtureStudyHost implements StudyDirectorCalendarHost {
   public readonly scheduleGateway = {
     read: (): StudyDirectorScheduleGatewaySnapshot => ({ tasks: this.rows.map(row => ({ ...row })) }),
     apply: async (rows: readonly StudyDirectorScheduleRow[]) => { this.rows = rows.map(row => ({ ...row })); },
-    hasLiveState: () => false,
-    captureMigration: async (_rows: readonly StudyDirectorScheduleRow[]) => null,
     reconcile: async (_source?: string) => undefined,
     flush: async () => undefined,
   };

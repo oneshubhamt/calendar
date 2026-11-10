@@ -8,14 +8,16 @@ export interface StudyDirectorScheduleGatewaySnapshot {
   readonly tasks: readonly StudyDirectorScheduleRow[];
 }
 
+export interface StudyDirectorScheduleApplyOptions {
+  readonly source: string;
+}
+
 export interface StudyDirectorScheduleGatewayPort {
   read(): StudyDirectorScheduleGatewaySnapshot;
   apply(
     rows: readonly StudyDirectorScheduleRow[],
-    options?: Readonly<Record<string, unknown>>,
+    options: StudyDirectorScheduleApplyOptions,
   ): unknown | Promise<unknown>;
-  hasLiveState(): boolean;
-  captureMigration(rows: readonly StudyDirectorScheduleRow[]): unknown | Promise<unknown>;
   reconcile(source?: string): unknown | Promise<unknown>;
   flush(): unknown | Promise<unknown>;
 }
@@ -185,8 +187,7 @@ export class StudyDirectorPlanCommandHandler implements CalendarCommandHandler {
 
   private async commit(rows: readonly StudyDirectorScheduleRow[], source: string): Promise<void> {
     const gateway = this.host.scheduleGateway;
-    const progressMigration = gateway.hasLiveState() ? await gateway.captureMigration(rows) : null;
-    await gateway.apply(rows, { source, progressMigration });
+    await gateway.apply(rows, { source });
     await gateway.reconcile(source);
     await gateway.flush();
   }
