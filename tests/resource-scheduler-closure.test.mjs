@@ -14,7 +14,7 @@ import {
 import {
   moveResourceOccurrenceByCivilMinutes,
 } from "../dist/features/resource-scheduler-ui/interaction.js";
-import { CalendarCommandStaleError } from "../dist/core/commands.js";
+import { CalendarStaleError } from "../dist/core/revision.js";
 
 const resources=[
   {id:"rooms",title:"Rooms",order:1},
@@ -219,7 +219,7 @@ test("R7 stale and failed atomic writes are single-attempt and never mutate sche
   let staleCalls=0;
   const stale=await executeCalendarResourcePlacement(resources,placementRequest(row),{
     source,resourceCapabilityProvider:resourceAuthority,
-    mutationPort:{commit(){staleCalls++;throw new CalendarCommandStaleError("changed elsewhere");}},
+    mutationPort:{commit(){staleCalls++;throw new CalendarStaleError("changed elsewhere");}},
   });
   assert.equal(stale.status,"stale");
   assert.equal(staleCalls,1);

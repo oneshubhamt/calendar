@@ -3,8 +3,6 @@ name: Browser release QA
 on:
   workflow_dispatch:
   push:
-    branches:
-      - background-ranges
     tags:
       - "v*"
 
