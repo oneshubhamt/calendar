@@ -45,6 +45,13 @@ export interface CalendarRange {
   readonly end: ISODateTime;
 }
 
+
+/** Inclusive local-date limits for generic scheduling/navigation surfaces. */
+export interface CalendarNavigationBounds {
+  readonly min?: ISODate;
+  readonly max?: ISODate;
+}
+
 export interface CalendarDisplay {
   readonly color?: string | undefined;
   readonly textColor?: string | undefined;
