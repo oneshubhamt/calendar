@@ -256,3 +256,40 @@ test('B4 renders only explicit all-day backgrounds in month cells and all-day la
   assert.match(dayBackgroundMethod,/dc-day-background-layer/);
   assert.doesNotMatch(dayBackgroundMethod,/addEventListener/);
 });
+
+
+test('B6 centralizes optional placement guards across built-in, add-on and host-editor placement paths',async()=>{
+  const sourceText=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
+  const types=await fs.readFile(new URL('../src/view/types.ts',import.meta.url),'utf8');
+  const coreTypes=await fs.readFile(new URL('../src/core/types.ts',import.meta.url),'utf8');
+
+  assert.match(coreTypes,/export interface CalendarPlacementGuard/);
+  assert.match(coreTypes,/readonly mode: CalendarPlacementGuardMode/);
+  assert.match(coreTypes,/readonly calendarId\?: CalendarId/);
+  assert.match(types,/readonly placementGuards\?: readonly CalendarPlacementGuard\[\]/);
+
+  const gate=sourceText.match(/private async allowPlacement\([\s\S]*?\n  }\n\n  private async keyboardTransformOccurrence/)?.[0] ?? '';
+  assert.match(gate,/evaluatePlacementGuards\(this\.options\.placementGuards/);
+  assert.match(gate,/placementInNavigationBounds/);
+  assert.match(gate,/placementCollisions/);
+  assert.match(gate,/guardEvaluation\.mode === "prevent"/);
+  assert.match(gate,/warnings = \[\.\.\.guardEvaluation\.messages\]/);
+  assert.match(gate,/confirmCalendarAction\(this\.host, "Scheduling check"/);
+  assert.equal((gate.match(/confirmCalendarAction\(/g)??[]).length,1,'warn decisions and collision warnings should share one confirmation');
+
+  assert.match(sourceText,/createHandler\(selection, this\.placementValidationPort\(\)\)/);
+  assert.match(sourceText,/editHandler\(occurrence, this\.placementValidationPort\(\)\)/);
+  assert.match(sourceText,/private placementValidationPort\(\): CalendarPlacementValidationPort/);
+  assert.match(sourceText,/\.\.\.self\.placementValidationPort\(\)/);
+  assert.match(types,/handleCreate\?: \(selection: CalendarSelection, placement: CalendarPlacementValidationPort\)/);
+  assert.match(types,/handleEdit\?: \(occurrence: CalendarOccurrence, placement: CalendarPlacementValidationPort\)/);
+
+  for(const marker of [
+    'this.allowPlacement(nextStart, nextEnd, allDay, occurrence, "move")',
+    'this.allowPlacement(start, nextEnd, allDay, occurrence, "resize")',
+    'this.allowPlacement(this.resolveDraftTime(result.start, result.temporal), this.resolveDraftTime(result.end, result.temporal), result.allDay, occurrence, "edit", result.calendarId)',
+    'self.allowPlacement(start, end, targetAllDay, occurrence, label.toLocaleLowerCase(), patch.calendarId ?? occurrence.calendarId)',
+  ]) assert.equal(sourceText.includes(marker),true,`missing central placement gate: ${marker}`);
+
+  assert.doesNotMatch(sourceText,/features\/availability/);
+});
