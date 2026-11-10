@@ -14,10 +14,9 @@ import {
   materializeCalendarSnapshot,
 } from "../core/store.js";
 
-const DATABASE_VERSION = 2;
-const FORMAT_VERSION = 2;
+const DATABASE_VERSION = 1;
+const FORMAT_VERSION = 1;
 const META_KEY = "meta" as const;
-const LEGACY_KEY = "snapshot" as const;
 const ITEM_PREFIX = "item:" as const;
 const SOURCE_PREFIX = "source:" as const;
 
@@ -42,13 +41,6 @@ interface StoredSourceRecord {
   readonly type: "source";
   readonly id: string;
   readonly value: CalendarSource;
-}
-
-interface LegacyStoredEnvelope {
-  readonly key: typeof LEGACY_KEY;
-  readonly revision: number;
-  readonly items: CalendarItem[];
-  readonly sources?: CalendarSource[];
 }
 
 interface PersistedCalendarState {
@@ -87,16 +79,6 @@ function storedMeta(value: unknown): StoredMetaRecord | undefined {
     itemOrder: idList(raw.itemOrder, "Stored Calendar item order"),
     sourceOrder: idList(raw.sourceOrder, "Stored Calendar source order"),
   };
-}
-
-function legacyEnvelope(value: unknown): LegacyStoredEnvelope | undefined {
-  if (value === undefined) return undefined;
-  const raw = record(value, "Stored legacy Calendar snapshot");
-  if (raw.key !== LEGACY_KEY || !Number.isInteger(raw.revision) || Number(raw.revision) < 0 || !Array.isArray(raw.items)) {
-    throw new Error("Stored legacy Calendar snapshot is invalid");
-  }
-  if (raw.sources !== undefined && !Array.isArray(raw.sources)) throw new Error("Stored legacy Calendar source collection is invalid");
-  return raw as unknown as LegacyStoredEnvelope;
 }
 
 function itemKey(id: string): string { return `${ITEM_PREFIX}${id}`; }
@@ -180,7 +162,6 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
       this.db = opened;
       opened.onversionchange = () => this.close();
 
-      await this.migrateLegacySnapshot();
       const persisted = await this.readPersistedState();
       this.snapshotValue = persisted
         ? materializeCalendarSnapshot(undefined, persisted.sources, persisted.items, persisted.revision)
@@ -281,26 +262,19 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   }
 
   private async openDatabase(): Promise<IDBDatabase> {
-    const existing = await this.openDatabaseRequest();
-    if (existing.objectStoreNames.contains(this.storeName) && existing.version >= DATABASE_VERSION) return existing;
-
-    const upgradeVersion = Math.max(DATABASE_VERSION, existing.version + 1);
-    existing.close();
-    return await this.openDatabaseRequest(upgradeVersion, true);
-  }
-
-  private async openDatabaseRequest(version?: number, requireStore = false): Promise<IDBDatabase> {
     return await new Promise<IDBDatabase>((resolve, reject) => {
       let settled = false;
-      const request = version === undefined ? indexedDB.open(this.dbName) : indexedDB.open(this.dbName, version);
+      const request = indexedDB.open(this.dbName, DATABASE_VERSION);
       request.onupgradeneeded = () => {
         const db = request.result;
-        if (!db.objectStoreNames.contains(this.storeName)) db.createObjectStore(this.storeName, { keyPath: "key" });
+        if (!db.objectStoreNames.contains(this.storeName)) {
+          db.createObjectStore(this.storeName, { keyPath: "key" });
+        }
       };
       request.onblocked = () => {
         if (settled) return;
         settled = true;
-        reject(new Error("Calendar storage upgrade is blocked by another open tab; reload or close the older tab and try again"));
+        reject(new Error("Calendar storage open is blocked by another tab"));
       };
       request.onerror = () => {
         if (settled) return;
@@ -313,10 +287,10 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
           db.close();
           return;
         }
-        if (requireStore && !db.objectStoreNames.contains(this.storeName)) {
+        if (!db.objectStoreNames.contains(this.storeName)) {
           settled = true;
           db.close();
-          reject(new Error(`Calendar IndexedDB store was not created: ${this.storeName}`));
+          reject(new Error(`Calendar IndexedDB store is missing: ${this.storeName}`));
           return;
         }
         settled = true;
@@ -381,7 +355,6 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
               for (const id of deletedItems) store.delete(itemKey(id));
               for (const id of deletedSources) store.delete(sourceKey(id));
             }
-            store.delete(LEGACY_KEY);
             store.put(meta);
           } catch (error) {
             transactionFailure = error;
@@ -453,60 +426,6 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
     }
   }
 
-  private async migrateLegacySnapshot(): Promise<void> {
-    if (!this.db) throw new Error("Calendar IndexedDB is not open");
-    await new Promise<void>((resolve, reject) => {
-      let failure: unknown;
-      const tx = openTransaction(this.db!, this.storeName, "readwrite");
-      const store = tx.objectStore(this.storeName);
-      const request = store.getAll();
-      request.onsuccess = () => {
-        try {
-          const records = request.result as unknown[];
-          if (records.some(value => {
-            const raw = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
-            return raw?.key === META_KEY;
-          })) return;
-
-          const legacyValue = records.find(value => {
-            const raw = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
-            return raw?.key === LEGACY_KEY;
-          });
-          const legacy = legacyEnvelope(legacyValue);
-          if (!legacy) return;
-
-          const sources = legacy.sources ?? this.initialSources;
-          assertCalendarStateIntegrity(sources, legacy.items);
-          const meta: StoredMetaRecord = {
-            key: META_KEY,
-            type: "meta",
-            format: FORMAT_VERSION,
-            revision: legacy.revision,
-            itemOrder: legacy.items.map(item => item.id),
-            sourceOrder: sources.map(source => source.id),
-          };
-          for (const item of legacy.items) {
-            const record: StoredItemRecord = { key: itemKey(item.id), type: "item", id: item.id, value: item };
-            store.put(record);
-          }
-          for (const source of sources) {
-            const record: StoredSourceRecord = { key: sourceKey(source.id), type: "source", id: source.id, value: source };
-            store.put(record);
-          }
-          store.put(meta);
-          store.delete(LEGACY_KEY);
-        } catch (error) {
-          failure = error;
-          tx.abort();
-        }
-      };
-      request.onerror = () => reject(request.error ?? new Error("Could not inspect legacy Calendar storage"));
-      tx.oncomplete = () => resolve();
-      tx.onabort = () => reject(failure ?? tx.error ?? new Error("Calendar storage migration aborted"));
-      tx.onerror = () => { /* tx.onabort reports the durable failure once */ };
-    });
-  }
-
   private async readPersistedState(): Promise<PersistedCalendarState | undefined> {
     if (!this.db) throw new Error("Calendar IndexedDB is not open");
     const records = await new Promise<unknown[]>((resolve, reject) => {
@@ -522,7 +441,6 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
 
     for (const value of records) {
       const raw = record(value, "Stored Calendar record");
-      if (raw.key === LEGACY_KEY) continue;
       if (raw.key === META_KEY) {
         if (meta) throw new Error("Duplicate stored Calendar metadata");
         meta = storedMeta(value);

@@ -6,7 +6,7 @@ const read = path => fs.readFile(new URL(path, import.meta.url), "utf8");
 
 test("D4 IndexedDB uses one normalized scalable durable topology rather than threshold modes",async()=>{
   const source=await read("../src/storage/indexeddb-repository.ts");
-  assert.match(source,/const FORMAT_VERSION = 2/);
+  assert.match(source,/const FORMAT_VERSION = 1/);
   assert.match(source,/interface StoredMetaRecord/);
   assert.match(source,/interface StoredItemRecord/);
   assert.match(source,/interface StoredSourceRecord/);
@@ -18,15 +18,12 @@ test("D4 IndexedDB uses one normalized scalable durable topology rather than thr
   assert.doesNotMatch(source,/threshold|largeData|smallData|storageMode/i);
 });
 
-test("D4 legacy monolithic snapshots migrate transactionally and are not the steady-state write format",async()=>{
+test("D4 IndexedDB has one current normalized schema and no migration path",async()=>{
   const source=await read("../src/storage/indexeddb-repository.ts");
-  assert.match(source,/private async migrateLegacySnapshot\(\)/);
-  assert.match(source,/const LEGACY_KEY = "snapshot"/);
-  assert.match(source,/store\.delete\(LEGACY_KEY\)/);
-  const commit=source.match(/private async commit\([\s\S]*?\n  }\n\n  private openInvalidationChannel/)?.[0] ?? "";
-  assert.doesNotMatch(commit,/items:\s*\[\.\.\.items\].*sources:\s*\[\.\.\.sources\]/s);
-  assert.match(commit,/StoredItemRecord/);
-  assert.match(commit,/StoredSourceRecord/);
+  assert.match(source,/const DATABASE_VERSION = 1/);
+  assert.match(source,/const FORMAT_VERSION = 1/);
+  assert.doesNotMatch(source,/LEGACY_KEY|LegacyStoredEnvelope|legacyEnvelope|migrateLegacySnapshot/);
+  assert.doesNotMatch(source,/upgradeVersion|openDatabaseRequest/);
 });
 
 test("D4 normalized writes retain CAS in the same IndexedDB transaction",async()=>{
@@ -40,7 +37,7 @@ test("D4 normalized writes retain CAS in the same IndexedDB transaction",async()
 });
 
 
-test("D4 storage open is failure-clean and custom store names upgrade dynamically",async()=>{
+test("D4 storage open is failure-clean and creates only the configured current store",async()=>{
   const source=await read("../src/storage/indexeddb-repository.ts");
   const open=source.match(/public async open\(\): Promise<void> \{[\s\S]*?\n  }\n\n  public read/)?.[0] ?? "";
   assert.match(open,/catch \(error\)/);
@@ -48,11 +45,12 @@ test("D4 storage open is failure-clean and custom store names upgrade dynamicall
   assert.match(open,/this\.snapshotValue = undefined/);
   assert.match(open,/this\.loaded = false/);
 
-  const openDb=source.match(/private async openDatabase\(\): Promise<IDBDatabase> \{[\s\S]*?\n  }\n\n  private async openDatabaseRequest/)?.[0] ?? "";
-  assert.match(openDb,/existing\.objectStoreNames\.contains\(this\.storeName\)/);
-  assert.match(openDb,/Math\.max\(DATABASE_VERSION, existing\.version \+ 1\)/);
-  assert.match(openDb,/existing\.close\(\)/);
-  assert.match(source,/requireStore && !db\.objectStoreNames\.contains\(this\.storeName\)/);
+  const openDb=source.match(/private async openDatabase\(\): Promise<IDBDatabase> \{[\s\S]*?\n  }\n\n  private async commit/)?.[0] ?? "";
+  assert.match(openDb,/indexedDB\.open\(this\.dbName, DATABASE_VERSION\)/);
+  assert.match(openDb,/request\.onupgradeneeded/);
+  assert.match(openDb,/db\.createObjectStore\(this\.storeName/);
+  assert.match(openDb,/Calendar IndexedDB store is missing/);
+  assert.doesNotMatch(source,/openDatabaseRequest|upgradeVersion/);
 });
 
 
@@ -74,7 +72,7 @@ test("D5 command history stores affected immutable item deltas rather than full 
 
 test("D2 cross-tab reload coordinator drains newer invalidations instead of dropping them",async()=>{
   const source=await read("../src/storage/indexeddb-repository.ts");
-  const reload=source.match(/private async reloadFromStorage\([\s\S]*?\n  }\n\n  private async migrateLegacySnapshot/)?.[0] ?? "";
+  const reload=source.match(/private async reloadFromStorage\([\s\S]*?\n  }\n\n  private async readPersistedState/)?.[0] ?? "";
   assert.match(source,/private requestedRefreshRevision = -1/);
   assert.match(reload,/Math\.max\(this\.requestedRefreshRevision, minimumRevision\)/);
   assert.match(reload,/while \(this\.loaded\)/);
@@ -95,7 +93,7 @@ test("stale command and revision errors share a semantic base without fake revis
 
 test("queued reload retains an unmet requested revision before deciding it is caught up",async()=>{
   const source=await read("../src/storage/indexeddb-repository.ts");
-  const reload=source.match(/private async reloadFromStorage\([\s\S]*?\n  }\n\n  private async migrateLegacySnapshot/)?.[0] ?? "";
+  const reload=source.match(/private async reloadFromStorage\([\s\S]*?\n  }\n\n  private async readPersistedState/)?.[0] ?? "";
   const requeue=reload.indexOf("requestedRevision > currentRevision");
   const caughtUp=reload.indexOf("this.requestedRefreshRevision <= currentRevision");
   assert.ok(requeue>=0 && caughtUp>requeue);
