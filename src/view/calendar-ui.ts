@@ -22,10 +22,11 @@ import type {
   CalendarCreateDraft, CalendarItemFactoryInput, CalendarKindOption, CalendarPlacementValidationPort, CalendarSelection, CalendarUiAddonContext, CalendarUiChromeOptions, CalendarUiOptions,
 } from "./types.js";
 import { CalendarEngine } from "../core/calendar-engine.js";
-import { addDays, addMonths, addYears, dateKey, rangeForView, resolvedTimeZone, startOfDay, startOfYear, toDate } from "../core/time.js";
+import { addDays, addMonths, addYears, dateKey, rangeForView, resolvedTimeZone, startOfDay, startOfYear, systemClock, toDate, type CalendarClock } from "../core/time.js";
 import { instantToPlain } from "../core/temporal.js";
 import { civilMinuteOfInstant, civilMinuteResolution, instantAtCivilMinute, shiftCivilMinutes } from "../core/civil-timeline.js";
 import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from "./time-zone-scale.js";
+import { CalendarTemporalChrome } from "./temporal-chrome.js";
 import { groupAgendaByDay, groupAllDayBackgroundRangesByDay, groupByDay, layoutBackgroundDay, layoutTimedDay } from "../core/layout.js";
 import { sameRecurrence } from "../core/recurrence.js";
 import { evaluateCalendarPlacement, normalizeSnapPolicy, placementInNavigationBounds, placementTimePatch, resizeInterval, resizePreview, snapMinuteCoordinate, type CalendarResizeEdge } from "../core/interaction.js";
@@ -158,6 +159,7 @@ function calendarDaySpan(start: Date, end: Date, timeZone: string): number {
 
 
 export class CalendarUi {
+  private readonly clock: CalendarClock;
   private readonly locale: string;
   private readonly timeZone: string;
   private readonly secondaryTimeZone: string | undefined;
@@ -198,12 +200,14 @@ export class CalendarUi {
   private readonly commandLifecycle = new CalendarCommandLifecycle();
   private readonly pendingPreviews = new Map<string, PendingOccurrencePreview>();
   private readonly reportedHostHookErrors = new Set<string>();
+  private readonly temporalChrome: CalendarTemporalChrome;
 
   public constructor(
     private readonly host: HTMLElement,
     private readonly engine: CalendarEngine,
     private readonly options: CalendarUiOptions = {},
   ) {
+    this.clock = options.clock ?? systemClock;
     this.locale = options.locale ?? (typeof navigator !== "undefined" ? navigator.language : undefined) ?? "en-US";
     this.timeZone = resolvedTimeZone(options.timeZone);
     this.secondaryTimeZone = resolveSecondaryTimeZone(options.secondaryTimeZone);
@@ -227,13 +231,23 @@ export class CalendarUi {
     this.navigationBounds = resolveNavigationBounds(options.navigationBounds);
     this.agendaSpan = options.initialAgendaSpan ?? "30-days";
     this.view = options.initialView ?? "week";
-    const initialAnchor = options.initialDate ? toDate(options.initialDate, this.timeZone) : new Date();
+    const initialAnchor = options.initialDate ? toDate(options.initialDate, this.timeZone) : this.clock.now();
     this.anchor = clampNavigationDate(initialAnchor, this.navigationBounds, this.timeZone);
     this.visibleRange = rangeForView(this.anchor, this.view, this.weekStartsOn, this.timeZone, this.agendaSpan);
     this.sources = this.engine.snapshot().sources;
     for (const source of this.sources) this.sourceVisibility.set(source.id, source.visible);
     this.defaultCalendarId = options.defaultCalendarId ?? this.sources.find(source => !source.readOnly && source.allowCreate !== false)?.id ?? this.sources[0]?.id ?? "calendar";
+    this.temporalChrome = new CalendarTemporalChrome({
+      host: this.host,
+      clock: this.clock,
+      timeZone: this.timeZone,
+      dayStartHour: this.dayStartHour,
+      dayEndHour: this.dayEndHour,
+      showNowIndicator: this.options.showNowIndicator !== false,
+      onTick: now => this.updateTodayNavigation(now),
+    });
     this.mountShell();
+    this.temporalChrome.start();
     this.unsubscribeRepository = this.engine.subscribe(() => { if (!this.destroyed) this.requestRefresh(); });
     this.requestRefresh();
   }
@@ -263,7 +277,7 @@ export class CalendarUi {
     if (this.destroyed || generation !== this.renderGeneration) return;
     this.occurrences = result.occurrences;
     this.backgroundRanges = result.backgroundRanges;
-    const extensionContext = { occurrences: this.occurrences, range: this.visibleRange, timeZone: this.timeZone, now: new Date() };
+    const extensionContext = { occurrences: this.occurrences, range: this.visibleRange, timeZone: this.timeZone, now: this.clock.now() };
     for (const [index, extension] of (this.options.extensions ?? []).entries()) this.hostHook(`Calendar extension ${index + 1} prepare`, () => extension.prepare?.(extensionContext), undefined);
     for (const addon of this.options.addons ?? []) this.hostHook(`Calendar add-on ${addon.id} refresh`, () => addon.onRefresh?.(this.addonContext()), undefined);
     this.occurrenceIndex.clear();
@@ -291,7 +305,7 @@ export class CalendarUi {
   }
 
   public today(): void {
-    const today = new Date();
+    const today = this.clock.now();
     if (!this.dateInNavigationBounds(today)) return;
     this.goTo(today);
   }
@@ -338,6 +352,7 @@ export class CalendarUi {
     this.cancelPointerArm();
     this.cancelActiveDrag();
     this.stopAutoScroll();
+    this.temporalChrome.stop();
     this.dismissContextMenu();
     for (const addon of this.options.addons ?? []) this.hostHook(`Calendar add-on ${addon.id} destroy`, () => addon.destroy?.(), undefined);
     this.unsubscribeRepository();
@@ -552,7 +567,7 @@ export class CalendarUi {
     const today = root.querySelector<HTMLButtonElement>("[data-navigation='today']");
     if (previous) previous.disabled = !this.canNavigate(-1);
     if (next) next.disabled = !this.canNavigate(1);
-    if (today) today.disabled = !this.dateInNavigationBounds(new Date());
+    if (today) today.disabled = !this.dateInNavigationBounds(this.clock.now());
     const agendaSpan = root.querySelector<HTMLSelectElement>("[data-role='agenda-span']");
     if (agendaSpan) { agendaSpan.hidden = this.view !== "agenda"; agendaSpan.value = this.agendaSpan; }
     const history = this.options.commandHandler?.historyState?.();
@@ -565,6 +580,12 @@ export class CalendarUi {
     else if (this.view === "year") body.append(this.renderYear());
     else if (this.view === "agenda") body.append(this.renderAgenda());
     else body.append(this.renderTimeGrid(this.view === "week" ? 7 : 1));
+    this.temporalChrome.refresh();
+  }
+
+  private updateTodayNavigation(now: Date): void {
+    const today = this.host.querySelector<HTMLButtonElement>("[data-navigation='today']");
+    if (today) today.disabled = !this.dateInNavigationBounds(now);
   }
 
   private periodTitle(): string {
@@ -580,7 +601,7 @@ export class CalendarUi {
     const grid = el("div", "dc-year-grid");
     const buckets = groupByDay(this.displayOccurrences(), this.timeZone, this.visibleRange);
     const yearStart = startOfYear(this.anchor, this.timeZone);
-    const today = new Date();
+    const today = this.clock.now();
     for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
       const monthStart = addMonths(yearStart, monthIndex, this.timeZone);
       const month = el("section", "dc-year-month");
@@ -611,6 +632,7 @@ export class CalendarUi {
         const outside = parts.month !== monthParts.month;
         const button = el("button", "dc-year-day") as HTMLButtonElement;
         button.type = "button";
+        button.dataset.calendarDate = day.toISOString();
         button.classList.toggle("is-outside", outside);
         button.classList.toggle("is-today", sameLocalDay(day, today, this.timeZone));
         const inBounds = this.dateInNavigationBounds(day);
@@ -644,7 +666,7 @@ export class CalendarUi {
     const backgroundBuckets = groupAllDayBackgroundRangesByDay(this.backgroundRanges, this.timeZone, this.visibleRange);
     const start = toDate(this.visibleRange.start);
     const end = toDate(this.visibleRange.end);
-    const today = new Date();
+    const today = this.clock.now();
     const anchorParts = instantToPlain(this.anchor.getTime(), this.timeZone);
     for (let cursor = new Date(start); cursor < end; cursor = addDays(cursor, 1, this.timeZone)) {
       const date = new Date(cursor);
@@ -661,6 +683,7 @@ export class CalendarUi {
       cell.classList.toggle("is-out-of-bounds", !inBounds);
       if (!inBounds) cell.setAttribute("aria-disabled", "true");
       cell.dataset.date = date.toISOString();
+      cell.dataset.calendarDate = date.toISOString();
       const number = el("button", "dc-day-number", String(parts.day));
       number.type = "button";
       number.disabled = !inBounds;
@@ -798,6 +821,7 @@ export class CalendarUi {
       const inBounds = this.dateInNavigationBounds(day);
       const head = el("button", "dc-day-header");
       head.type = "button";
+      head.dataset.calendarDate = day.toISOString();
       head.disabled = !inBounds;
       head.classList.toggle("is-out-of-bounds", !inBounds);
       head.append(el("strong", undefined, new Intl.DateTimeFormat(this.locale, { weekday: "short", timeZone: this.timeZone }).format(day)), el("span", undefined, new Intl.DateTimeFormat(this.locale, { day: "numeric", month: "short", timeZone: this.timeZone }).format(day)));
@@ -805,6 +829,7 @@ export class CalendarUi {
       headers.append(head);
       const all = el("div", "dc-all-day-col");
       all.dataset.date = day.toISOString();
+      all.dataset.calendarDate = day.toISOString();
       all.classList.toggle("is-out-of-bounds", !inBounds);
       if (!inBounds) all.setAttribute("aria-disabled", "true");
       all.setAttribute("role", "group");
@@ -908,6 +933,7 @@ export class CalendarUi {
     const column = el("div", "dc-time-column");
     const inBounds = this.dateInNavigationBounds(day);
     column.dataset.date = day.toISOString();
+    column.dataset.calendarDate = day.toISOString();
     column.classList.toggle("is-out-of-bounds", !inBounds);
     if (!inBounds) column.setAttribute("aria-disabled", "true");
     column.setAttribute("role", "group");
@@ -1012,16 +1038,6 @@ export class CalendarUi {
       });
     }
 
-    if (inBounds && this.options.showNowIndicator !== false && sameLocalDay(day, new Date(), this.timeZone)) {
-      const now = new Date();
-      const minute = civilMinuteOfInstant(now, day, this.timeZone) - this.dayStartHour * 60;
-      if (minute >= 0 && minute <= (this.dayEndHour - this.dayStartHour) * 60) {
-        const marker = el("div", "dc-now");
-        marker.setAttribute("aria-hidden", "true");
-        marker.style.top = `${minute}px`;
-        column.append(marker);
-      }
-    }
     return column;
   }
 
@@ -1582,7 +1598,7 @@ export class CalendarUi {
   }
 
   private createCalendarItem(draft: CalendarCreateDraft, purpose: CalendarItemFactoryInput["purpose"], original?: CalendarOccurrence): CalendarItem {
-    const now = new Date().toISOString();
+    const now = this.clock.now().toISOString();
     const id = `calendar:${crypto.randomUUID()}`;
     if (this.options.itemFactory) return this.options.itemFactory({ id, now, purpose, draft, ...(original ? { original } : {}) });
     return {
@@ -1595,7 +1611,7 @@ export class CalendarUi {
 
   private async createAtAnchor(): Promise<void> {
     const day = startOfDay(this.anchor, this.timeZone);
-    const now = new Date();
+    const now = this.clock.now();
     let start = this.timeAtGridMinute(day, 9 * 60, "none", "Creation");
     if (sameLocalDay(day, now, this.timeZone)) {
       const proposed = new Date(now.getTime() + 30 * 60_000);
@@ -1889,7 +1905,7 @@ export class CalendarUi {
       if (requirements.some(key => capabilities[key] !== true)) throw new Error(`${occurrence.title}: this action is no longer allowed.`);
       const handler = this.commandHandlerFor(occurrence, capabilities);
       if (!handler) throw new Error(`${occurrence.title}: no command path is available for this action.`);
-      await handler.execute(command, calendarOccurrenceCommandContext(command, new Date().toISOString(), this.timeZone));
+      await handler.execute(command, calendarOccurrenceCommandContext(command, this.clock.now().toISOString(), this.timeZone));
       this.hostHook("Calendar onCommand callback", () => this.options.callbacks?.onCommand?.(command), undefined);
     }, {
       onPendingChange: (group, pendingOperation, pending) => this.setOccurrencePending(group, pendingOperation, pending),
@@ -1909,7 +1925,7 @@ export class CalendarUi {
       throw new Error("Occurrence commands must use the capability-aware command path");
     }
     if (!this.options.commandHandler) throw new Error("Calendar mutation requires a command handler");
-    await this.options.commandHandler.execute(command, { now: new Date().toISOString(), timeZone: this.timeZone });
+    await this.options.commandHandler.execute(command, { now: this.clock.now().toISOString(), timeZone: this.timeZone });
     this.hostHook("Calendar onCommand callback", () => this.options.callbacks?.onCommand?.(command), undefined);
     await this.refresh();
   }

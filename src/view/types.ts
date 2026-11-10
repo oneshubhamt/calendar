@@ -1,3 +1,4 @@
+import type { CalendarClock } from "../core/time.js";
 import type {
   CalendarAgendaSpan,
   CalendarCommand,
@@ -223,6 +224,8 @@ export interface CalendarUiChromeOptions {
 }
 
 export interface CalendarUiOptions {
+  /** Semantic clock for now/today behavior and deterministic hosts/tests. Interaction throttling remains wall-clock based. */
+  readonly clock?: CalendarClock;
   readonly locale?: string;
   readonly timeZone?: string | undefined;
   /** Optional reference IANA zone shown as a second time scale in day/week views only. Primary geometry remains unchanged. */
