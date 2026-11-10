@@ -10,7 +10,7 @@ import type {
   CalendarSource,
   RecurrenceException,
 } from "./types.js";
-import { occurrenceIdentityAtOrdinal, projectOccurrencePatchToSeries, rebaseRecurrenceExceptions, recurrenceOrdinal, sameRecurrence } from "./event-series.js";
+import { projectTemporalPatchToSeries, rebaseTemporalSeriesExceptions, sameRecurrence, temporalSeriesIdentityAtOrdinal, temporalSeriesOrdinal } from "./recurrence.js";
 
 /** Host/repository command rejection caused by an obsolete authoritative revision. */
 export class CalendarCommandStaleError extends Error {
@@ -98,7 +98,7 @@ function seriesPatch(
   context: CalendarCommandContext,
 ): CalendarItemPatch {
   if (!item.recurrence) return patch;
-  const temporalPatch = projectOccurrencePatchToSeries(item, occurrence, patch, { timeZone: context.timeZone });
+  const temporalPatch = projectTemporalPatchToSeries(item, occurrence, patch, { timeZone: context.timeZone });
   const nextRecurrence = temporalPatch.recurrence === null ? undefined : temporalPatch.recurrence ?? item.recurrence;
   if (!nextRecurrence) return temporalPatch;
   const nextItem = {
@@ -107,7 +107,13 @@ function seriesPatch(
     end: temporalPatch.end ?? item.end,
     recurrence: nextRecurrence,
   };
-  const rebased = rebaseRecurrenceExceptions(item, nextItem, { timeZone: context.timeZone });
+  const rebased = rebaseTemporalSeriesExceptions(
+    item,
+    item.recurrence,
+    nextItem,
+    nextItem.recurrence,
+    { timeZone: context.timeZone },
+  );
   return { ...temporalPatch, recurrence: rebased ?? null };
 }
 
@@ -118,12 +124,12 @@ function splitSeries(
   context: CalendarCommandContext,
 ): readonly CalendarItem[] {
   if (!item.recurrence) throw new Error("Cannot split a non-recurring item");
-  const ordinal = recurrenceOrdinal(item, occurrence.originalStart, { timeZone: context.timeZone });
+  const ordinal = temporalSeriesOrdinal(item, item.recurrence?.rule, occurrence.originalStart, { timeZone: context.timeZone });
   const beforeExceptions: RecurrenceException[] = [];
   const afterExceptions: Array<{ readonly ordinal: number; readonly exception: RecurrenceException }> = [];
   for (const exception of item.recurrence.exceptions ?? []) {
     try {
-      const position = recurrenceOrdinal(item, exception.originalStart, { timeZone: context.timeZone });
+      const position = temporalSeriesOrdinal(item, item.recurrence?.rule, exception.originalStart, { timeZone: context.timeZone });
       if (position < ordinal) beforeExceptions.push(exception);
       else afterExceptions.push({ ordinal: position, exception });
     } catch {
@@ -139,7 +145,7 @@ function splitSeries(
     },
     updatedAt: context.now,
   };
-  const tailPatch = projectOccurrencePatchToSeries(item, occurrence, { ...patch, start: patch.start ?? occurrence.start }, { timeZone: context.timeZone });
+  const tailPatch = projectTemporalPatchToSeries(item, occurrence, { ...patch, start: patch.start ?? occurrence.start }, { timeZone: context.timeZone });
   const nextStart = tailPatch.start ?? item.start;
   const nextEnd = tailPatch.end ?? item.end;
   const remainingCount = item.recurrence.rule.count === undefined ? undefined : Math.max(1, item.recurrence.rule.count - ordinal + 1);
@@ -171,7 +177,7 @@ function splitSeries(
     const mapped: RecurrenceException[] = [];
     for (const row of afterExceptions) {
       try {
-        const originalStart = occurrenceIdentityAtOrdinal(second, row.ordinal - ordinal + 1, { timeZone: context.timeZone });
+        const originalStart = temporalSeriesIdentityAtOrdinal(second, second.recurrence?.rule, row.ordinal - ordinal + 1, { timeZone: context.timeZone });
         mapped.push({ ...row.exception, originalStart });
       } catch {
         // The replacement rule can legitimately be shorter than the old tail.
@@ -195,7 +201,7 @@ async function applyOccurrencePatch(
   assertPatchAllowed(item, patch);
   assertPatchSourceAllowed(repository, item, patch);
   if (!item.recurrence) {
-    await repository.update(item.id, projectOccurrencePatchToSeries(item, occurrence, patch, { timeZone: context.timeZone }));
+    await repository.update(item.id, projectTemporalPatchToSeries(item, occurrence, patch, { timeZone: context.timeZone }));
     return;
   }
   if (scope === "all") {
@@ -207,7 +213,7 @@ async function applyOccurrencePatch(
     await repository.update(item.id, { recurrence: withException(item, occurrence, withoutRecurrence(patch)) });
     return;
   }
-  if (recurrenceOrdinal(item, occurrence.originalStart, { timeZone: context.timeZone }) === 1) {
+  if (temporalSeriesOrdinal(item, item.recurrence?.rule, occurrence.originalStart, { timeZone: context.timeZone }) === 1) {
     await repository.update(item.id, seriesPatch(item, occurrence, patch, context));
     return;
   }
@@ -328,7 +334,7 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
     assertSourceMutable(this.repository, item.calendarId);
     if (!item.recurrence) {
       if (command.type === "cancel-occurrence") await this.repository.remove(item.id);
-      else await this.repository.update(item.id, projectOccurrencePatchToSeries(item, command.occurrence, movedPatch(command.start, command.end), { timeZone: context.timeZone }));
+      else await this.repository.update(item.id, projectTemporalPatchToSeries(item, command.occurrence, movedPatch(command.start, command.end), { timeZone: context.timeZone }));
       return;
     }
     if (command.scope === "all") {
@@ -346,7 +352,7 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
     }
 
     if (command.type === "cancel-occurrence") {
-      if (recurrenceOrdinal(item, command.occurrence.originalStart, { timeZone: context.timeZone }) === 1) {
+      if (temporalSeriesOrdinal(item, item.recurrence?.rule, command.occurrence.originalStart, { timeZone: context.timeZone }) === 1) {
         await this.repository.remove(item.id);
         return;
       }
@@ -355,7 +361,7 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
       return;
     }
 
-    if (recurrenceOrdinal(item, command.occurrence.originalStart, { timeZone: context.timeZone }) === 1) {
+    if (temporalSeriesOrdinal(item, item.recurrence?.rule, command.occurrence.originalStart, { timeZone: context.timeZone }) === 1) {
       await this.repository.update(item.id, seriesPatch(item, command.occurrence, movedPatch(command.start, command.end), context));
       return;
     }
