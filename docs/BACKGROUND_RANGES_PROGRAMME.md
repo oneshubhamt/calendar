@@ -73,7 +73,7 @@ Those meanings must not be inferred from presentation. A later availability feat
 
 ## Programme
 
-### B1 — Core contract and invariants
+### B1 — Core contract and invariants ✅
 
 - add a resolved `CalendarBackgroundRange` contract;
 - add `CalendarBackgroundProjectionProvider`;
@@ -87,15 +87,17 @@ Those meanings must not be inferred from presentation. A later availability feat
 - expose resolved background ranges alongside occurrences in query results;
 - add focused contract/integrity tests.
 
-B1 explicitly does **not** implement rendering, recurrence authoring/expansion, availability semantics or placement enforcement.
+B1 is complete. It explicitly does **not** implement rendering, recurrence authoring/expansion, availability semantics or placement enforcement.
 
-### B2 — Day/week geometry
+### B2 — Day/week geometry ✅
 
 - add dedicated background-day geometry;
 - reuse the existing civil timeline / DST basis;
 - clip cross-midnight and visible-hour boundaries correctly;
 - establish deterministic overlap/layer ordering;
 - keep event `layoutTimedDay()` unchanged.
+
+B2 is complete through `layoutBackgroundDay()`. Geometry is clipped against the local civil day and optional visible-minute bounds, spring-forward/fall-back behavior follows the existing civil timeline, overlapping ranges remain full-width with deterministic back-to-front `layer` order, and ordinary timed-event layout remains independent.
 
 ### B3 — Passive rendering
 
