@@ -113,13 +113,15 @@ export function validateRecurrenceRule(rule: RecurrenceRule): void {
 }
 
 
+export interface CalendarRecurrenceShape {
+  readonly rule: RecurrenceRule;
+  readonly exceptions?: readonly unknown[] | undefined;
+}
+
 /** Structural equality for recurrence definitions independent of the consumer's exception payload. */
-export function sameRecurrence<
-  TLeft extends CalendarTemporalSeriesPatch,
-  TRight extends CalendarTemporalSeriesPatch,
->(
-  a: CalendarTemporalSeriesRecurrence<TLeft> | undefined,
-  b: CalendarTemporalSeriesRecurrence<TRight> | null | undefined,
+export function sameRecurrence(
+  a: CalendarRecurrenceShape | undefined,
+  b: CalendarRecurrenceShape | null | undefined,
 ): boolean {
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
