@@ -69,6 +69,32 @@ export async function removeItem(page, id) {
   await page.evaluate(async value => globalThis.__calendarRepo.remove(value), id);
 }
 
+export async function createSource(page, source) {
+  await page.evaluate(async value => globalThis.__calendarRepo.createSource(value), source);
+}
+
+export async function updateSource(page, id, patch) {
+  await page.evaluate(async ({ id, patch }) => globalThis.__calendarRepo.updateSource(id, patch), { id, patch });
+}
+
+export async function removeSource(page, id) {
+  await page.evaluate(async value => globalThis.__calendarRepo.removeSource(value), id);
+}
+
+export async function repositoryOperationError(page, operation) {
+  return await page.evaluate(async operation => {
+    try {
+      if (operation.type === "create-item") await globalThis.__calendarRepo.create(operation.item);
+      else if (operation.type === "update-item") await globalThis.__calendarRepo.update(operation.id, operation.patch);
+      else if (operation.type === "remove-source") await globalThis.__calendarRepo.removeSource(operation.id);
+      else throw new Error("Unknown test repository operation");
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }, operation);
+}
+
 export async function replaceAtRevision(page, items, expectedRevision) {
   return await page.evaluate(async ({ items, expectedRevision }) => {
     try {

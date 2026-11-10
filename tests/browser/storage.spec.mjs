@@ -3,6 +3,7 @@ import {
   SOURCE,
   closeRepository,
   createItem,
+  createSource,
   deleteDatabase,
   disableBroadcastChannel,
   event,
@@ -13,11 +14,14 @@ import {
   openRepository,
   rawRecords,
   removeItem,
+  removeSource,
   replaceAtRevision,
+  repositoryOperationError,
   repositoryState,
   subscribeRevisions,
   uniqueDatabaseName,
   updateItem,
+  updateSource,
 } from "./helpers.mjs";
 
 async function repositoryOpenError(page, databaseName) {
@@ -134,6 +138,44 @@ test("native IndexedDB persists normalized create, update and delete state acros
   state = await repositoryState(page);
   expect(state).toMatchObject({ revision: 3, items: [] });
   expect(state.sources).toEqual([SOURCE]);
+
+  await closeRepository(page);
+  await deleteDatabase(page, databaseName);
+});
+
+test("native IndexedDB item and source CRUD preserve the canonical transition semantics", async ({ page }, testInfo) => {
+  const databaseName = uniqueDatabaseName(testInfo, "canonical-transitions");
+  await openRepository(page, databaseName);
+
+  const work = { id: "work", title: "Work", visible: true, removable: true };
+  await createSource(page, work);
+  await updateSource(page, "work", { title: "Work calendar", visible: false });
+  expect((await repositoryState(page)).sources.find(source => source.id === "work")).toMatchObject({
+    title: "Work calendar",
+    visible: false,
+  });
+
+  await createItem(page, event("work-item", { calendarId: "work" }));
+  expect(await repositoryOperationError(page, {
+    type: "create-item",
+    item: event("work-item", { calendarId: "work" }),
+  })).toMatch(/Duplicate calendar item/);
+  expect(await repositoryOperationError(page, {
+    type: "update-item",
+    id: "work-item",
+    patch: { calendarId: "missing" },
+  })).toMatch(/Unknown calendar source/);
+  expect(await repositoryOperationError(page, {
+    type: "remove-source",
+    id: "work",
+  })).toMatch(/Move or delete events/);
+
+  await removeItem(page, "work-item");
+  await removeSource(page, "work");
+  const state = await repositoryState(page);
+  expect(state.items).toEqual([]);
+  expect(state.sources).toEqual([SOURCE]);
+  expect(state.revision).toBe(5);
 
   await closeRepository(page);
   await deleteDatabase(page, databaseName);
