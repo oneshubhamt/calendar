@@ -74,6 +74,26 @@ test("week view renders interactive events and passive background layers in a re
   expect(geometry.secondaryTop).toBeCloseTo(geometry.gridTop, 3);
 });
 
+test("pointer drag still commits a timed move through the extracted gesture controller", async ({ page }) => {
+  await mountVisualCalendar(page, { view: "week", scrollHour: 7 });
+  const event = page.locator(".dc-time-event").filter({ hasText: "Morning focus" }).first();
+  await expect(event).toBeVisible();
+  const box = await event.boundingBox();
+  expect(box).not.toBeNull();
+  const startX = box.x + Math.min(30, box.width / 2);
+  const startY = box.y + Math.min(20, box.height / 2);
+
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX, startY + 8, { steps: 2 });
+  await page.mouse.move(startX, startY + 60, { steps: 6 });
+  await page.mouse.up();
+
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__visualCalendar.repository.read().items.find(item => item.id === "focus")?.start,
+  )).toBe("2026-11-09T04:30:00.000Z");
+});
+
 test("DST fall-back day exposes duplicated local hour geometry without browser-specific failure", async ({ page }) => {
   await mountVisualCalendar(page, {
     view: "day",
