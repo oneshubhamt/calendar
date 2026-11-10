@@ -7,11 +7,12 @@ import type {
   CalendarOccurrence,
   CalendarRecurrence,
   CalendarRepository,
+  CalendarSnapshot,
   CalendarSource,
   RecurrenceException,
 } from "./types.js";
 import { projectTemporalPatchToSeries, rebaseTemporalSeriesExceptions, sameRecurrence, temporalSeriesIdentityAtOrdinal, temporalSeriesOrdinal } from "./recurrence.js";
-import { applyCalendarItemPatch, assertCalendarStateIntegrity } from "./store.js";
+import { applyCalendarItemPatch, assertCalendarStateIntegrity, materializeCalendarSnapshot } from "./store.js";
 import { CalendarStaleError } from "./revision.js";
 
 /** Host command rejection caused by obsolete authoritative state. */
@@ -223,56 +224,56 @@ async function applyOccurrencePatch(
 }
 
 /**
- * Command-local mutable staging repository. It preserves references to unchanged
- * immutable snapshot entities and never publishes notifications or durable writes.
- * RepositoryCommandHandler commits its final item set once through replace().
+ * Command-local copy-on-write staging repository. It starts from the immutable authoritative
+ * snapshot, structurally shares unchanged entities, and owns every changed/new value before
+ * command execution yields. Nothing is published or persisted until the final guarded commit.
  */
 class CommandStagingRepository implements CalendarRepository {
-  private items: CalendarItem[];
+  private snapshotValue: CalendarSnapshot;
 
-  public constructor(
-    private readonly sources: readonly CalendarSource[],
-    initialItems: readonly CalendarItem[],
-    private readonly revision: number,
-  ) {
-    this.items = [...initialItems];
+  public constructor(snapshot: CalendarSnapshot) {
+    this.snapshotValue = snapshot;
   }
 
-  public read() {
-    return { sources: this.sources, items: this.items, revision: this.revision };
+  public read(): CalendarSnapshot {
+    return this.snapshotValue;
   }
 
   public create(item: CalendarItem): void {
-    const next = [...this.items, item];
-    assertCalendarStateIntegrity(this.sources, next);
-    this.items = next;
+    this.stage([...this.snapshotValue.items, item]);
   }
 
   public update(id: string, patch: CalendarItemPatch): void {
-    const index = this.items.findIndex(item => item.id === id);
+    const index = this.snapshotValue.items.findIndex(item => item.id === id);
     if (index < 0) throw new Error(`Calendar item not found: ${id}`);
-    const next = this.items.map((item, i) => i === index ? applyCalendarItemPatch(item, patch) : item);
-    assertCalendarStateIntegrity(this.sources, next);
-    this.items = next;
+    this.stage(this.snapshotValue.items.map((item, i) => i === index ? applyCalendarItemPatch(item, patch) : item));
   }
 
   public remove(id: string): void {
-    const next = this.items.filter(item => item.id !== id);
-    if (next.length === this.items.length) throw new Error(`Calendar item not found: ${id}`);
-    assertCalendarStateIntegrity(this.sources, next);
-    this.items = next;
+    const next = this.snapshotValue.items.filter(item => item.id !== id);
+    if (next.length === this.snapshotValue.items.length) throw new Error(`Calendar item not found: ${id}`);
+    this.stage(next);
   }
 
   public replace(items: readonly CalendarItem[]): void {
-    assertCalendarStateIntegrity(this.sources, items);
-    this.items = [...items];
+    this.stage(items);
   }
 
   public replaceAtRevision(items: readonly CalendarItem[], expectedRevision: number): void {
-    if (expectedRevision !== this.revision) {
-      throw new Error(`Staging revision mismatch: expected ${expectedRevision}, found ${this.revision}`);
+    if (expectedRevision !== this.snapshotValue.revision) {
+      throw new Error(`Staging revision mismatch: expected ${expectedRevision}, found ${this.snapshotValue.revision}`);
     }
-    this.replace(items);
+    this.stage(items);
+  }
+
+  private stage(items: readonly CalendarItem[]): void {
+    assertCalendarStateIntegrity(this.snapshotValue.sources, items);
+    this.snapshotValue = materializeCalendarSnapshot(
+      this.snapshotValue,
+      this.snapshotValue.sources,
+      items,
+      this.snapshotValue.revision,
+    );
   }
 }
 
@@ -478,7 +479,7 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
 
   public async execute(command: CalendarCommand, context: CalendarCommandContext): Promise<void> {
     const beforeSnapshot = this.repository.read();
-    const staged = new CommandStagingRepository(beforeSnapshot.sources, beforeSnapshot.items, beforeSnapshot.revision);
+    const staged = new CommandStagingRepository(beforeSnapshot);
     await this.applyCommandToStaging(staged, command, context);
     const stagedItems = staged.read().items;
     if (!changedItemIds(beforeSnapshot.items, stagedItems).length) return;

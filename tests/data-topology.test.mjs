@@ -173,3 +173,13 @@ test("interoperability storage fails closed on an incomplete current schema inst
   assert.match(source,/Interoperability IndexedDB does not match the current schema/);
   assert.doesNotMatch(source,/createObjectStore[\s\S]*onsuccess[\s\S]*createObjectStore/);
 });
+
+
+test("command staging uses immutable copy-on-write ownership rather than caller references",async()=>{
+  const source=await read("../src/core/commands.ts");
+  const staging=source.match(/class CommandStagingRepository[\s\S]*?\n}\n\ninterface HistoryItemChange/)?.[0] ?? "";
+  assert.match(staging,/private snapshotValue: CalendarSnapshot/);
+  assert.match(staging,/materializeCalendarSnapshot\(/);
+  assert.match(staging,/this\.snapshotValue\.revision/);
+  assert.doesNotMatch(staging,/this\.items = \[\.\.\.initialItems\]/);
+});

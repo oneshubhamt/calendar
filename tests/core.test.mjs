@@ -744,3 +744,17 @@ test('one failing CalendarEngine subscriber cannot block later subscribers or re
   assert.equal(secondCalls,1);
   assert.equal(engine.generation(),1);
 });
+
+
+test('command staging owns create input before execute yields',async()=>{
+  const source={id:'stage-own-source',title:'Stage ownership',visible:true};
+  const repo=new C.MemoryCalendarRepository([source],[]);
+  const handler=new C.RepositoryCommandHandler(repo);
+  const item={id:'stage-own-item',calendarId:source.id,title:'Original',start:'2026-11-10T09:00:00.000Z',end:'2026-11-10T10:00:00.000Z',kind:'event',ownership:'calendar',editPolicy:'full',metadata:{nested:{value:'original'}}};
+  const pending=handler.execute({type:'create',item},{now:'2026-11-10T00:00:00.000Z'});
+  item.title='Caller mutation';
+  item.metadata.nested.value='caller mutation';
+  await pending;
+  assert.equal(repo.read().items[0].title,'Original');
+  assert.equal(repo.read().items[0].metadata.nested.value,'original');
+});
