@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import * as C from '../dist/index.js';
 import * as Personal from '../dist/features/personal.js';
+import * as Availability from '../dist/features/availability.js';
 
 const sources=[
   {id:'ayana:journey',title:'Goa',visible:true,sourceType:'journey',readOnly:true,removable:false,metadata:{host:'travel'}},
@@ -157,4 +158,123 @@ test('combined projected data fails closed on identity and source-integrity viol
   const unknown={...local,id:'unknown',calendarId:'missing'};
   const unknownEngine=new C.CalendarEngine(repo,[{id:'unknown-source',project(){return [unknown];}}]);
   await assert.rejects(()=>unknownEngine.query({start:'2026-12-10T00:00:00Z',end:'2026-12-11T00:00:00Z'}),/Unknown calendar source/);
+});
+
+
+test('optional availability semantics reuse Calendar recurrence and preserve passive background output',()=>{
+  const definitions=[{
+    id:'working-hours',
+    state:'available',
+    calendarId:'personal',
+    label:'Working hours',
+    start:'2026-11-09T09:00:00',
+    end:'2026-11-09T17:00:00',
+    temporal:{kind:'zoned',timeZone:'Asia/Kolkata'},
+    recurrence:{
+      rule:{frequency:'weekly',byWeekday:[1,2,3,4,5],count:5},
+      exceptions:[
+        {originalStart:'2026-11-11T09:00:00',cancelled:true},
+        {originalStart:'2026-11-12T09:00:00',replacement:{start:'2026-11-12T10:00:00',end:'2026-11-12T18:00:00',title:'Late hours'}},
+      ],
+    },
+    display:{className:'availability-window'},
+    metadata:{origin:'policy'},
+  }];
+  const ranges=Availability.expandAvailabilityDefinitions(
+    definitions,
+    {start:'2026-11-09T00:00:00.000Z',end:'2026-11-16T00:00:00.000Z'},
+    {timeZone:'Asia/Kolkata'},
+  );
+  assert.deepEqual(ranges.map(range=>[range.start,range.end,range.label]),[
+    ['2026-11-09T03:30:00.000Z','2026-11-09T11:30:00.000Z','Working hours'],
+    ['2026-11-10T03:30:00.000Z','2026-11-10T11:30:00.000Z','Working hours'],
+    ['2026-11-12T04:30:00.000Z','2026-11-12T12:30:00.000Z','Late hours'],
+    ['2026-11-13T03:30:00.000Z','2026-11-13T11:30:00.000Z','Working hours'],
+  ]);
+  assert.equal(ranges[0].calendarId,'personal');
+  assert.deepEqual(ranges[0].metadata.calendarAvailability,{definitionId:'working-hours',state:'available'});
+  assert.equal(ranges[0].metadata.origin,'policy');
+  assert.equal(ranges[0].display.className,'availability-window');
+  assert.match(ranges[0].id,/^working-hours@/);
+});
+
+test('availability supports explicit all-day unavailability without inventing labels',()=>{
+  const [range]=Availability.expandAvailabilityDefinitions([{
+    id:'closed-day',
+    state:'unavailable',
+    start:'2026-11-14',
+    end:'2026-11-15',
+    allDay:true,
+    metadata:{reason:'maintenance'},
+  }],{start:'2026-11-13T18:30:00.000Z',end:'2026-11-15T18:30:00.000Z'},{timeZone:'Asia/Kolkata'});
+  assert.equal(range.allDay,true);
+  assert.equal(range.start,'2026-11-13T18:30:00.000Z');
+  assert.equal(range.end,'2026-11-14T18:30:00.000Z');
+  assert.equal(range.label,undefined);
+  assert.deepEqual(range.metadata.calendarAvailability,{definitionId:'closed-day',state:'unavailable'});
+  assert.equal(range.metadata.reason,'maintenance');
+});
+
+test('availability recurrence inherits Calendar DST semantics rather than implementing a second recurrence engine',()=>{
+  const ranges=Availability.expandAvailabilityDefinitions([{
+    id:'sunday-window',
+    state:'available',
+    start:'2026-03-01T01:30:00',
+    end:'2026-03-01T03:30:00',
+    temporal:{kind:'zoned',timeZone:'America/New_York'},
+    recurrence:{rule:{frequency:'weekly',count:2}},
+  }],{start:'2026-03-01T00:00:00.000Z',end:'2026-03-09T12:00:00.000Z'},{timeZone:'America/New_York'});
+  assert.equal(ranges.length,2);
+  assert.deepEqual([ranges[1].start,ranges[1].end],['2026-03-08T06:30:00.000Z','2026-03-08T07:30:00.000Z']);
+  assert.equal((Date.parse(ranges[1].end)-Date.parse(ranges[1].start))/60000,60);
+});
+
+test('availability provider reads live authoritative definitions and forwards invalidation without owning state',()=>{
+  let definitions=[{id:'open',state:'available',start:'2026-11-10T09:00:00Z',end:'2026-11-10T10:00:00Z'}];
+  let invalidate=()=>{};
+  let unsubscribed=false;
+  const provider=Availability.createAvailabilityBackgroundProvider({
+    id:'availability',
+    timeZone:'UTC',
+    definitions:()=>definitions,
+    subscribe(listener){invalidate=listener;return ()=>{unsubscribed=true;};},
+  });
+  assert.deepEqual(provider.projectBackgroundRanges({start:'2026-11-10T00:00:00Z',end:'2026-11-11T00:00:00Z'}).map(range=>range.id),['open']);
+  definitions=[{id:'closed',state:'unavailable',start:'2026-11-10T11:00:00Z',end:'2026-11-10T12:00:00Z'}];
+  assert.deepEqual(provider.projectBackgroundRanges({start:'2026-11-10T00:00:00Z',end:'2026-11-11T00:00:00Z'}).map(range=>range.id),['closed']);
+  let notified=0;
+  const unsubscribe=provider.subscribe(()=>{notified+=1;});
+  invalidate();
+  assert.equal(notified,1);
+  unsubscribe();
+  assert.equal(unsubscribed,true);
+});
+
+test('availability definitions fail closed and remain an optional feature boundary',async()=>{
+  assert.throws(()=>Availability.expandAvailabilityDefinitions(
+    [{id:'date-without-all-day',state:'available',start:'2026-11-10',end:'2026-11-11'}],
+    {start:'2026-11-10T00:00:00Z',end:'2026-11-12T00:00:00Z'},
+    {timeZone:'UTC'},
+  ),/require allDay/i);
+  assert.throws(()=>Availability.expandAvailabilityDefinitions(
+    [{id:'bad-state',state:'maybe',start:'2026-11-10T09:00:00Z',end:'2026-11-10T10:00:00Z'}],
+    {start:'2026-11-10T00:00:00Z',end:'2026-11-11T00:00:00Z'},
+    {timeZone:'UTC'},
+  ),/state is invalid/i);
+  assert.throws(()=>Availability.expandAvailabilityDefinitions(
+    [
+      {id:'duplicate',state:'available',start:'2026-11-10T09:00:00Z',end:'2026-11-10T10:00:00Z'},
+      {id:'duplicate',state:'unavailable',start:'2026-11-10T11:00:00Z',end:'2026-11-10T12:00:00Z'},
+    ],
+    {start:'2026-11-10T00:00:00Z',end:'2026-11-11T00:00:00Z'},
+    {timeZone:'UTC'},
+  ),/Duplicate calendar item/i);
+
+  const root=await import('../dist/index.js');
+  assert.equal('expandAvailabilityDefinitions' in root,false);
+  assert.equal('createAvailabilityBackgroundProvider' in root,false);
+  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
+  assert.equal(view.includes('features/availability'),false);
+  const pkg=JSON.parse(await fs.readFile(new URL('../package.json',import.meta.url),'utf8'));
+  assert.equal(pkg.exports['./features/availability'].import,'./dist/features/availability.js');
 });
