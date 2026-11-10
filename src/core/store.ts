@@ -1,5 +1,6 @@
 import type { CalendarBackgroundRange, CalendarEventFields, CalendarItem, CalendarItemId, CalendarItemPatch, CalendarOccurrence, CalendarRepository, CalendarSnapshot, CalendarSource, CalendarSourcePatch } from "./types.js";
-import { occurrenceFromItem, validateRecurrenceRule } from "./recurrence.js";
+import { occurrenceFromItem } from "./event-series.js";
+import { validateRecurrenceRule } from "./recurrence.js";
 import { parsePlainDate } from "./temporal.js";
 import { hasExplicitOffset } from "./time.js";
 
