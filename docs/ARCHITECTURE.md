@@ -18,7 +18,7 @@ features/personal-ui ── optional DOM add-on built on that service
 features/planning ── optional presentation/semantics extension
 features/availability ── optional temporal context + placement-policy adapter
 features/resource-scheduler ── optional headless resource scheduling dimension
-features/resource-scheduler-ui ── optional read-only DOM resource timeline built on resource-scheduler
+features/resource-scheduler-ui ── optional DOM resource timeline built on resource-scheduler; read-only unless interaction is configured
 
 integration/* + adapters/* ── optional host-specific modules
 ```
@@ -106,7 +106,7 @@ The base remains resource-free: `CalendarItem`, `CalendarOccurrence` and `Calend
 
 Resource placement is intentionally separate from temporal placement. Later mutation passes compose the existing `evaluateCalendarPlacement()` pipeline with resource target validation, resource-specific guards/collision policy and resource reassignment authority, then submit one `CalendarResourcePlacementChange` through `CalendarResourceMutationPort.commit()`. A combined time/resource drag must never become two independent writes. R5's headless `executeCalendarResourcePlacement()` re-evaluates generic temporal placement plus independent resource policy/authority and then performs exactly one host `CalendarResourceMutationPort.commit()` carrying the complete before/after resource assignment, proposed time, scope and assignment version. Host version checks are atomic with the write; stale rejection is not retried.
 
-The optional DOM timeline is a separate `features/resource-scheduler-ui` subpath. By default it remains a data-driven read-only surface over already-projected resources, occurrences, assignments and a range. It owns collapse/scroll/focus presentation state only, reuses the headless R3 geometry and structured occurrence-presentation resolver, renders empty resource rows and nested headers, and does not fetch providers, expand recurrence, persist data or mutate host state. It is not a `CalendarUiAddon` and does not add a `CalendarView` member.
+The optional DOM timeline is a separate `features/resource-scheduler-ui` subpath. By default it is a data-driven read-only surface over already-projected resources, occurrences, assignments and a range. In that mode it owns collapse/scroll/focus presentation state only, reuses the headless R3 geometry and structured occurrence-presentation resolver, renders empty resource rows and nested headers, and does not fetch providers, expand recurrence, persist data or mutate host state. When explicit interaction options are supplied, writes still pass only through the R5 atomic executor. It is not a `CalendarUiAddon` and does not add a `CalendarView` member.
 
 ### Placement policy
 

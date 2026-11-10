@@ -18,6 +18,7 @@ import {
   type CalendarOccurrenceCapabilityKey,
 } from "../../core/authority.js";
 import { CalendarCommandStaleError } from "../../core/commands.js";
+import { assertTimeZone } from "../../core/temporal.js";
 import { flattenCalendarResources, validateCalendarResourceAssignments } from "./mechanics.js";
 import type {
   CalendarResource,
@@ -394,6 +395,17 @@ export async function evaluateCalendarResourcePlacement(
   }
   if (typeof request.timeZone !== "string" || !request.timeZone.trim()) {
     return preventedEvaluation(request, "Resource placement time zone is invalid.");
+  }
+  try {
+    assertTimeZone(request.timeZone);
+  } catch {
+    return preventedEvaluation(request, "Resource placement time zone is invalid.");
+  }
+  if (typeof request.action !== "string" || !request.action.trim()) {
+    return preventedEvaluation(request, "Resource placement action is invalid.");
+  }
+  if (options.source !== undefined && options.source.id !== request.occurrence.calendarId) {
+    return preventedEvaluation(request, "Temporal authority source does not match the occurrence calendar.");
   }
 
   const temporalContext = {

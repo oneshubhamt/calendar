@@ -17,7 +17,7 @@ Resource Scheduler is a purely optional sibling capability for scheduling Calend
     optional headless resource contracts/mechanics
 
 @director/calendar/features/resource-scheduler-ui
-    planned optional DOM resource timeline
+    optional DOM resource timeline
 ```
 
 Dependency direction is one-way:
@@ -137,6 +137,10 @@ R6 does not add Resource Scheduler semantics to ordinary Calendar UI, persistenc
 
 Verify hierarchy integrity, collapse/order, multi-resource behavior, unassigned events, resource-scoped policy, recurrence scopes, DST/cross-midnight/point occurrences, temporal/resource authority, trusted host projections, stale versions, atomic failure behavior, accessibility and negative dependency/persistence leakage. Then run the complete repository quality gate.
 
+### R7 audit scope
+
+R7 independently re-exercises the programme as a composed capability rather than trusting the individual R1–R6 completion tests. The closure suite covers deterministic hierarchy/collapse, multi-resource and unassigned semantics, host-projected recurring occurrences, all recurrence scopes, scoped collisions, dimensional authority, DST/cross-midnight/point behavior, invalid time-zone/source fail-closed behavior, stale and non-stale atomic failures, package isolation, accessibility contracts and persistence/dependency leakage.
+
 ## Current architecture after R6
 
-The headless contract lives only under `src/features/resource-scheduler/` and is exported only from `@director/calendar/features/resource-scheduler`. It imports core types only. Base root/core/view remain unchanged and resource-free. R2 provides pure validation/projection mechanics, R3 adds optional headless timeline geometry, R4 adds a separate opt-in read-only DOM timeline and R5 adds a headless placement/authority/atomic-mutation coordinator. R6 optionally connects the standalone Resource Scheduler UI to the R5 atomic placement executor while preserving a zero-write read-only mode when interaction options are omitted. Core, ordinary view and Calendar persistence remain resource-free; no Resource Scheduler code is loaded unless its explicit subpaths are imported.
+The headless implementation lives only under `src/features/resource-scheduler/` and is exported only from `@director/calendar/features/resource-scheduler`. It depends only on generic core contracts/mechanics; it does not import ordinary view, storage, interoperability or host integrations. Base root/core/view remain unchanged and resource-free. R2 provides pure validation/projection mechanics, R3 adds optional headless timeline geometry, R4 adds a separate opt-in read-only DOM timeline and R5 adds a headless placement/authority/atomic-mutation coordinator. R6 optionally connects the standalone Resource Scheduler UI to the R5 atomic placement executor while preserving a zero-write read-only mode when interaction options are omitted. Core, ordinary view and Calendar persistence remain resource-free; no Resource Scheduler code is loaded unless its explicit subpaths are imported.

@@ -16,7 +16,7 @@ features/personal-ui  OPTIONAL DOM controls for those personal conveniences
 features/planning     OPTIONAL deadlines/milestones/planned-vs-actual presentation
 features/availability OPTIONAL recurring available/unavailable background semantics
 features/resource-scheduler OPTIONAL headless resource hierarchy, assignment, authority and mutation contracts
-features/resource-scheduler-ui OPTIONAL read-only DOM resource timeline
+features/resource-scheduler-ui OPTIONAL DOM resource timeline; read-only by default, interactive only when explicitly configured
 storage/              IndexedDB repository
 interoperability/     ICS, Google Calendar, sync, overlays, reminders
 integration/          OPTIONAL host adapters
