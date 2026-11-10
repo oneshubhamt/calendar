@@ -176,13 +176,15 @@ test('resize command keeps recurring occurrence scope and undo semantics intact'
 
 test('base UI wires month overflow, year/list views and dual-edge resizing without host semantics',async()=>{
   const sourceText=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
+  const rendererText=await fs.readFile(new URL('../src/view/view-renderer.ts',import.meta.url),'utf8');
+  const gestureText=await fs.readFile(new URL('../src/view/gesture-controller.ts',import.meta.url),'utf8');
   const editorText=await fs.readFile(new URL('../src/view/event-editor.ts',import.meta.url),'utf8');
-  assert.match(sourceText,/more\.addEventListener\("click"[\s\S]*openMonthOverflow/);
+  assert.match(rendererText,/more\.addEventListener\("click"[\s\S]*openMonthOverflow/);
   assert.match(sourceText,/private openMonthOverflow/);
   assert.match(sourceText,/\["month", "week", "day", "year", "agenda"\]/);
   assert.match(sourceText,/Day list/); assert.match(sourceText,/Week list/); assert.match(sourceText,/Month list/); assert.match(sourceText,/30-day list/);
   assert.match(sourceText,/dc-resize-start/); assert.match(sourceText,/dc-resize-end/);
-  assert.match(sourceText,/resizePreview/); assert.match(sourceText,/resizeInterval/);
+  assert.match(gestureText,/resizePreview/); assert.match(sourceText,/resizeInterval/);
   assert.match(sourceText,/placementTimePatch/);
   assert.match(sourceText,/recurrenceChanged \? \{ recurrence: result\.recurrence \?\? null \} : \{\}/);
   assert.match(sourceText,/\(key === "c" \|\| key === "n"\) && this\.canCreateItems\(\)/);
@@ -197,6 +199,7 @@ test('base UI wires month overflow, year/list views and dual-edge resizing witho
 
 test('day and week render passive background ranges below every interactive time-grid layer',async()=>{
   const sourceText=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
+  const rendererText=await fs.readFile(new URL('../src/view/view-renderer.ts',import.meta.url),'utf8');
   const styles=await fs.readFile(new URL('../src/view/styles.ts',import.meta.url),'utf8');
   const types=await fs.readFile(new URL('../src/core/types.ts',import.meta.url),'utf8');
 
@@ -231,20 +234,23 @@ test('day and week render passive background ranges below every interactive time
 
 test('B4 renders only explicit all-day backgrounds in month cells and all-day lanes',async()=>{
   const sourceText=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
+  const rendererText=await fs.readFile(new URL('../src/view/view-renderer.ts',import.meta.url),'utf8');
   const styles=await fs.readFile(new URL('../src/view/styles.ts',import.meta.url),'utf8');
   const layout=await fs.readFile(new URL('../src/core/layout.ts',import.meta.url),'utf8');
 
   assert.match(layout,/groupAllDayBackgroundRangesByDay/);
   assert.match(layout,/if \(background\.allDay !== true\) continue/);
-  assert.match(sourceText,/const backgroundBuckets = groupAllDayBackgroundRangesByDay\(this\.backgroundRanges, this\.timeZone, this\.visibleRange\)/);
-  assert.match(sourceText,/if \(inBounds && dayBackgrounds\.length\) cell\.append\(this\.dayLevelBackgroundLayer\(dayBackgrounds\)\)/);
+  assert.match(rendererText,/const backgroundBuckets = groupAllDayBackgroundRangesByDay\(model\.backgroundRanges, model\.timeZone, model\.visibleRange\)/);
+  assert.match(rendererText,/if \(inBounds && dayBackgrounds\.length\)/);
   assert.match(sourceText,/if \(inBounds && dayBackgrounds\.length\) all\.append\(this\.dayLevelBackgroundLayer\(dayBackgrounds\)\)/);
   assert.match(sourceText,/private dayLevelBackgroundLayer\(ranges: readonly CalendarBackgroundRange\[\]\)/);
   assert.match(sourceText,/layer\.setAttribute\("aria-hidden", "true"\)/);
   assert.match(sourceText,/this\.backgroundAriaSuffix\(dayBackgrounds\)/);
   assert.match(sourceText,/\. Background: \$\{labels\.join\(", "\)\}/);
-  assert.doesNotMatch(sourceText,/renderYear[\s\S]{0,1000}groupAllDayBackgroundRangesByDay/);
-  assert.doesNotMatch(sourceText,/renderAgenda[\s\S]{0,1000}groupAllDayBackgroundRangesByDay/);
+  const yearRenderer=rendererText.match(/export function renderYearView[\s\S]*?export function renderMonthView/)?.[0] ?? '';
+  const agendaRenderer=rendererText.match(/export function renderAgendaView[\s\S]*?function weekdayOrder/)?.[0] ?? '';
+  assert.doesNotMatch(yearRenderer,/groupAllDayBackgroundRangesByDay/);
+  assert.doesNotMatch(agendaRenderer,/groupAllDayBackgroundRangesByDay/);
 
   assert.match(styles,/\.dc-day-background-layer\{[^}]*pointer-events:none;z-index:0/);
   assert.match(styles,/\.dc-day-background-range\{[^}]*pointer-events:none/);
@@ -252,9 +258,9 @@ test('B4 renders only explicit all-day backgrounds in month cells and all-day la
   assert.match(styles,/\.dc-month-events\{[^}]*position:relative;z-index:1/);
   assert.match(styles,/\.dc-all-day-col\{[^}]*position:relative;overflow:hidden/);
   assert.match(styles,/\.dc-all-day-col>\.dc-event\{position:relative;z-index:1\}/);
-  const dayBackgroundMethod=sourceText.match(/private dayLevelBackgroundLayer[\s\S]*?\n  }\n\n  private backgroundLayer/)?.[0] ?? '';
-  assert.match(dayBackgroundMethod,/dc-day-background-layer/);
-  assert.doesNotMatch(dayBackgroundMethod,/addEventListener/);
+  const dayBackgroundHelper=rendererText.match(/export function dayLevelBackgroundLayer[\s\S]*?\n}\n\nexport function periodTitle/)?.[0] ?? '';
+  assert.match(dayBackgroundHelper,/dc-day-background-layer/);
+  assert.doesNotMatch(dayBackgroundHelper,/addEventListener/);
 });
 
 

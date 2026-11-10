@@ -28,6 +28,7 @@ export interface CalendarStaticRenderModel {
 
 export interface CalendarStaticRenderActions {
   dateInNavigationBounds(date: Date): boolean;
+  monthInNavigationBounds(firstDateKey: string, lastDateKey: string): boolean;
   openDay(date: Date): void;
   openMonth(monthStart: Date, firstDateKey: string): void;
   monthEvent(occurrence: CalendarOccurrence, allowDrag?: boolean, bindInteractions?: boolean): HTMLElement;
@@ -125,8 +126,7 @@ export function renderYearView(model: CalendarStaticRenderModel, actions: Calend
     const monthEnd = addMonths(monthStart, 1, model.timeZone);
     const monthFirstKey = dateKey(monthStart, model.timeZone);
     const monthLastKey = dateKey(addDays(monthEnd, -1, model.timeZone), model.timeZone);
-    const monthInBounds = actions.dateInNavigationBounds(monthStart)
-      || actions.dateInNavigationBounds(addDays(monthEnd, -1, model.timeZone));
+    const monthInBounds = actions.monthInNavigationBounds(monthFirstKey, monthLastKey);
     heading.disabled = !monthInBounds;
     heading.addEventListener("click", () => {
       if (monthInBounds) actions.openMonth(monthStart, monthFirstKey);
@@ -165,7 +165,6 @@ export function renderYearView(model: CalendarStaticRenderModel, actions: Calend
     }
     month.append(days);
     grid.append(month);
-    void monthLastKey;
   }
   return grid;
 }

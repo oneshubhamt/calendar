@@ -21,7 +21,7 @@ import type {
   CalendarCreateDraft, CalendarItemFactoryInput, CalendarKindOption, CalendarPlacementValidationPort, CalendarSelection, CalendarUiAddonContext, CalendarUiChromeOptions, CalendarUiOptions,
 } from "./types.js";
 import { CalendarEngine } from "../core/calendar-engine.js";
-import { addDays, addMonths, addYears, dateKey, rangeForView, resolvedTimeZone, startOfDay, startOfYear, systemClock, toDate, type CalendarClock } from "../core/time.js";
+import { addDays, addMonths, addYears, dateKey, rangeForView, resolvedTimeZone, startOfDay, systemClock, toDate, type CalendarClock } from "../core/time.js";
 import { instantToPlain } from "../core/temporal.js";
 import { civilMinuteOfInstant, civilMinuteResolution, instantAtCivilMinute, shiftCivilMinutes } from "../core/civil-timeline.js";
 import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from "./time-zone-scale.js";
@@ -48,7 +48,7 @@ import {
   type CalendarDragMode,
   type CalendarDragState,
 } from "./gesture-controller.js";
-import { groupAgendaByDay, groupAllDayBackgroundRangesByDay, groupByDay, layoutBackgroundDay, layoutTimedDay } from "../core/layout.js";
+import { groupAllDayBackgroundRangesByDay, groupByDay, layoutBackgroundDay, layoutTimedDay } from "../core/layout.js";
 import { sameRecurrence } from "../core/recurrence.js";
 import { evaluateCalendarPlacement, normalizeSnapPolicy, placementInNavigationBounds, placementTimePatch, resizeInterval, snapMinuteCoordinate, type CalendarResizeEdge } from "../core/interaction.js";
 import {
@@ -1108,6 +1108,9 @@ export class CalendarUi {
   private staticRenderActions(): CalendarStaticRenderActions {
     return {
       dateInNavigationBounds: date => this.dateInNavigationBounds(date),
+      monthInNavigationBounds: (firstDateKey, lastDateKey) =>
+        (!this.navigationBounds.min || lastDateKey >= this.navigationBounds.min)
+        && (!this.navigationBounds.max || firstDateKey <= this.navigationBounds.max),
       openDay: date => this.openDay(date),
       openMonth: (monthStart, firstDateKey) => {
         const target = this.navigationBounds.min && firstDateKey < this.navigationBounds.min

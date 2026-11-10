@@ -160,6 +160,7 @@ test('temporal patch authority distinguishes move from independent edge changes 
 });
 test('Calendar UI revalidates authority at execution and wires pending/error/refresh behavior without domain semantics',async()=>{
   const text=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
+  const gestures=await fs.readFile(new URL('../src/view/gesture-controller.ts',import.meta.url),'utf8');
   const editor=await fs.readFile(new URL('../src/view/event-editor.ts',import.meta.url),'utf8');
   assert.match(text,/dispatchOccurrence\([\s\S]*this\.occurrenceCapabilities\(occurrence\)/);
   assert.match(text,/commandPath === "trusted-host" \? this\.options\.trustedHostCommandHandler : this\.options\.commandHandler/);
@@ -170,7 +171,7 @@ test('Calendar UI revalidates authority at execution and wires pending/error/ref
   assert.match(text,/private isOccurrencePending\(occurrence: CalendarOccurrence\)/);
   assert.match(text,/aria-busy/);
   assert.match(text,/refresh: \(\) => this\.refresh\(\)/);
-  assert.match(text,/is-command-preview/);
+  assert.match(gestures,/is-command-preview/);
   assert.match(text,/occurrencePatchRequirements\(occurrence, patch\)/);
   assert.match(text,/pendingOperation\(occurrence\.occurrenceId\)/);
   assert.match(editor,/capabilities\.allowSemanticEdit \?\? baseSemanticEdit/);
