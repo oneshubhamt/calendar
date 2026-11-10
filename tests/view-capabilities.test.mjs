@@ -269,13 +269,16 @@ test('B6 centralizes optional placement guards across built-in, add-on and host-
   assert.match(types,/readonly placementGuards\?: readonly CalendarPlacementGuard\[\]/);
 
   const gate=sourceText.match(/private async allowPlacement\([\s\S]*?\n  }\n\n  private async keyboardTransformOccurrence/)?.[0] ?? '';
-  assert.match(gate,/evaluatePlacementGuards\(this\.options\.placementGuards/);
-  assert.match(gate,/placementInNavigationBounds/);
-  assert.match(gate,/placementCollisions/);
-  assert.match(gate,/guardEvaluation\.mode === "prevent"/);
-  assert.match(gate,/warnings = \[\.\.\.guardEvaluation\.messages\]/);
-  assert.match(gate,/confirmCalendarAction\(this\.host, "Scheduling check"/);
-  assert.equal((gate.match(/confirmCalendarAction\(/g)??[]).length,1,'warn decisions and collision warnings should share one confirmation');
+  assert.match(gate,/evaluateCalendarPlacement\(context/);
+  assert.match(gate,/navigationBounds: this\.navigationBounds/);
+  assert.match(gate,/guards: this\.options\.placementGuards/);
+  assert.match(gate,/collisionPolicy: this\.collisionPolicy/);
+  assert.match(gate,/loadCollisionOccurrences: async/);
+  assert.match(gate,/evaluation\.mode === "prevent"/);
+  assert.match(gate,/evaluation\.mode === "allow"/);
+  assert.match(gate,/confirmCalendarAction\(/);
+  assert.equal((gate.match(/confirmCalendarAction\(/g)??[]).length,1,'all warnings should share one presentation confirmation');
+  assert.doesNotMatch(gate,/evaluatePlacementGuards|placementCollisions/);
 
   assert.match(sourceText,/createHandler\(selection, this\.placementValidationPort\(\)\)/);
   assert.match(sourceText,/editHandler\(occurrence, this\.placementValidationPort\(\)\)/);
@@ -295,11 +298,16 @@ test('B6 centralizes optional placement guards across built-in, add-on and host-
 });
 
 
-test('collision validation explicitly omits passive background projection',async()=>{
+test('collision validation uses the shared placement evaluator and omits passive background projection',async()=>{
   const sourceText=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
+  const interaction=await fs.readFile(new URL('../src/core/interaction.ts',import.meta.url),'utf8');
   const gate=sourceText.match(/private async allowPlacement\([\s\S]*?\n  }\n\n  private async keyboardTransformOccurrence/)?.[0] ?? '';
+  assert.match(gate,/evaluateCalendarPlacement\(context/);
   assert.match(gate,/includeBackgroundRanges: false/);
-  assert.match(gate,/placementCollisions\(result\.occurrences/);
+  assert.doesNotMatch(gate,/placementCollisions/);
+  assert.match(interaction,/export async function evaluateCalendarPlacement/);
+  assert.match(interaction,/placementCollisions\(/);
+  assert.match(interaction,/loadCollisionOccurrences/);
 });
 
 
