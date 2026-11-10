@@ -321,7 +321,6 @@ export class GoogleCalendarSyncAdapter {
       state = { ...state, syncToken: undefined, links: state.links.map(link => ({ ...link, status: "pending-remote" as const })) };
       pull = await this.pull(state);
     }
-    const links = new Map(state.links.map(link => [link.localItemId, link] as const));
     const remoteById = pull.events;
     let pulled = 0, pushed = 0, deletedLocal = 0, deletedRemote = 0;
     const conflicts: SyncConflict[] = [], warnings: string[] = [];

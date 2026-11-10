@@ -32,7 +32,6 @@ import {
   el,
   formatDateTime,
   formatTime,
-  hostDataAttributeName,
   humanizeKind,
   isDateLikeOccurrence,
   periodTitle as renderPeriodTitle,
@@ -61,7 +60,7 @@ import { chooseSeriesScope, openEventEditor } from "./event-editor.js";
 import { CALENDAR_CSS } from "./styles.js";
 import { confirmCalendarAction, requestCalendarDate } from "./dialogs.js";
 import { CalendarCommandLifecycle, type CalendarCommandLifecycleStatus } from "./command-lifecycle.js";
-import { isSafeHostClassName, resolveOccurrencePresentation, resolveSourceActions, type ResolvedCalendarOccurrencePresentation, type ResolvedCalendarSourceAction } from "./presentation.js";
+import { hostDataAttributeName, isSafeHostClassName, resolveOccurrencePresentation, resolveSourceActions, type ResolvedCalendarOccurrencePresentation, type ResolvedCalendarSourceAction } from "./presentation.js";
 import { calendarHostCss } from "./extension-styles.js";
 import { occurrenceWithPreview, previewPatchForCommand, type PendingOccurrencePreview } from "./occurrence-preview.js";
 import {
