@@ -267,6 +267,13 @@ class CommandStagingRepository implements CalendarRepository {
     assertCalendarStateIntegrity(this.sources, items);
     this.items = [...items];
   }
+
+  public replaceAtRevision(items: readonly CalendarItem[], expectedRevision: number): void {
+    if (expectedRevision !== this.revision) {
+      throw new Error(`Staging revision mismatch: expected ${expectedRevision}, found ${this.revision}`);
+    }
+    this.replace(items);
+  }
 }
 
 interface HistoryItemChange {

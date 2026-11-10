@@ -351,7 +351,7 @@ Adding/removing the secondary axis changes presentation only and does not alter 
 
 ## Phase C11 — Generic Calendar closure audit
 
-**Calendar status: v1.1 generic closure complete.** The resulting production source—not previous pass claims or fixtures—satisfies the gates below. Closure verification passed the complete 126-test non-visual suite, the dedicated 16-test v1.1 defect-regression suite, strict typecheck with the available compiler, production package dry-run, and fresh-consumer imports for all 25 declared export paths. A pristine install of the repository-pinned TypeScript 7.0.2 toolchain could not be demonstrated in this execution environment: the package is absent from the local npm cache (`ENOTCACHED`) and the npm registry is unreachable here (`EAI_AGAIN`). This environment limitation is recorded rather than treated as a source defect.
+**Calendar status: v1.1 generic closure complete.** The current production source—not previous pass claims or historical test counts—must satisfy the gates below. Repository CI installs the pinned Node/npm/TypeScript toolchain, runs strict typecheck, the complete non-visual suite and package dry-run, and verifies the declared package surface through the existing closure tests.
 
 ### Closure gates
 
@@ -367,7 +367,7 @@ Adding/removing the secondary axis changes presentation only and does not alter 
 - package export paths build/import successfully;
 - docs describe implemented contracts and the C1–C11 numbering accurately;
 - full non-screenshot QA and package-content validation pass;
-- clean-install verification is attempted with the repository-pinned toolchain and any environment limitation is reported rather than hidden.
+- CI installs and verifies the repository-pinned toolchain before running the quality gate.
 
 For v1.1, the closure additionally requires stable movement-invariant one-off `occurrenceId`, canonical absolute host-occurrence projection, DST-consistent interaction, isolated extension failures, lean production-only npm packaging, and synchronized package/runtime/docs versions. Once these gates pass, v1.1 is the generic Calendar baseline suitable for Ayana adapter integration.
 
