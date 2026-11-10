@@ -252,5 +252,7 @@ test('B4 renders only explicit all-day backgrounds in month cells and all-day la
   assert.match(styles,/\.dc-month-events\{[^}]*position:relative;z-index:1/);
   assert.match(styles,/\.dc-all-day-col\{[^}]*position:relative;overflow:hidden/);
   assert.match(styles,/\.dc-all-day-col>\.dc-event\{position:relative;z-index:1\}/);
-  assert.doesNotMatch(sourceText,/dayLevelBackgroundLayer[\s\S]*addEventListener/);
+  const dayBackgroundMethod=sourceText.match(/private dayLevelBackgroundLayer[\s\S]*?\n  }\n\n  private backgroundLayer/)?.[0] ?? '';
+  assert.match(dayBackgroundMethod,/dc-day-background-layer/);
+  assert.doesNotMatch(dayBackgroundMethod,/addEventListener/);
 });
