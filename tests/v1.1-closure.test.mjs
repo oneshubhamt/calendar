@@ -185,7 +185,6 @@ test('v1.1 built-in add-ons use Calendar authority rather than reinterpreting ed
 
 test('v1.1 release contract and package surface are synchronized and lean',async()=>{
   const pkg=JSON.parse(await fs.readFile(new URL('../package.json',import.meta.url),'utf8'));
-  const contract=await fs.readFile(new URL('../src/integration/package-contract.ts',import.meta.url),'utf8');
   assert.equal(pkg.version,'1.1.0');
   assert.equal(Object.hasOwn(pkg.exports,'./fixtures/director'),false);
   assert.equal(Object.hasOwn(pkg.exports,'./features'),false);
@@ -193,7 +192,6 @@ test('v1.1 release contract and package surface are synchronized and lean',async
   assert.equal(Object.hasOwn(pkg.exports,'./features/personal-ui'),true);
   assert.equal(Object.hasOwn(pkg.exports,'./features/planning'),true);
   assert.equal(Object.hasOwn(pkg.exports,'./features/availability'),true);
+  assert.equal(Object.hasOwn(pkg.exports,'./package-contract'),false);
   assert.deepEqual(pkg.files,['dist','docs','README.md']);
-  assert.match(contract,/version: "1\.1\.0"/);
-  assert.match(contract,/coreContract: 11/);
 });

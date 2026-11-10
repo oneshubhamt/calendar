@@ -247,7 +247,7 @@ Scheduling interactions preserve one canonical temporal representation: all-day 
 
 Explicit package subpaths allow hosts to import only the layers they need. The root is the ordinary generic product surface (`core + view`), while `@director/calendar/core` remains available for headless use. Specialized capabilities have individual subpaths and there is no aggregate features barrel. `demo/generic.html` proves bare core + view with non-Director travel/notes data and no optional personal/planning/storage/interoperability dependency; `demo/index.html` separately demonstrates explicit personal + planning + Director opt-ins. Clean builds remove `dist/` first so deleted modules cannot survive in release archives.
 
-Current package: `@director/calendar` **1.1.0**. Generic core contract: **11**. Interoperability contract: **2**. The published package contains production `dist/`, canonical docs and README only; repository demos, fixtures, tests and TypeScript sources are not part of the npm surface.
+Current package: `@director/calendar` **1.1.0**. The actual TypeScript declarations and explicit package exports are the sole package contracts; there is no parallel hand-maintained contract-version/compatibility manifest. The published package contains production `dist/`, canonical docs and README only; repository demos, fixtures, tests and TypeScript sources are not part of the npm surface.
 
 ## Engineering contract
 

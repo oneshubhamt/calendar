@@ -48,10 +48,6 @@
       "types": "./dist/integration/common.d.ts",
       "import": "./dist/integration/common.js"
     },
-    "./package-contract": {
-      "types": "./dist/integration/package-contract.d.ts",
-      "import": "./dist/integration/package-contract.js"
-    },
     "./adapters/study-director": {
       "types": "./dist/adapters/study-director.d.ts",
       "import": "./dist/adapters/study-director.js"
