@@ -8,6 +8,7 @@ import type {
   CalendarItemId,
   CalendarItemKind,
   CalendarItemPatch,
+  CalendarNavigationBounds,
   CalendarOccurrence,
   CalendarOccurrenceCapabilityProvider,
   CalendarOverlapDisambiguation,
@@ -219,12 +220,6 @@ export interface CalendarUiChromeOptions {
   readonly viewSwitcher?: boolean;
   readonly sourceControls?: boolean;
   readonly createControls?: boolean;
-}
-
-/** Inclusive local calendar-date limits for Calendar navigation and placement. */
-export interface CalendarNavigationBounds {
-  readonly min?: ISODate;
-  readonly max?: ISODate;
 }
 
 export interface CalendarUiOptions {
