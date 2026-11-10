@@ -103,6 +103,7 @@ export interface CalendarCreateDraft {
 }
 
 export interface CalendarPlacementValidationPort {
+  canPlaceDraft(draft: CalendarCreateDraft, original?: CalendarOccurrence, action?: string): Promise<boolean>;
 }
 
 export interface CalendarItemFactoryInput {
