@@ -109,6 +109,157 @@ test("interoperability IndexedDB is exact version 1 and rejects alternate physic
   }
 });
 
+test("interop persistence rejects malformed sync state and reminder records", async ({ page }, testInfo) => {
+  const databaseName = uniqueDatabaseName(testInfo, "interop-validation");
+  await page.goto("/tests/browser/harness.html");
+
+  const errors = await page.evaluate(async databaseName => {
+    const { IndexedDbSyncStateStore, IndexedDbReminderReceiptStore } = await import("/dist/interoperability/storage.js");
+    const sync = new IndexedDbSyncStateStore(databaseName);
+    await sync.write({
+      provider: "google",
+      connectionId: "conn",
+      mode: "publish",
+      externalCalendarId: "remote",
+      localCalendarId: "personal",
+      links: [],
+    });
+
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(["syncStates", "reminderReceipts"], "readwrite");
+      tx.objectStore("syncStates").put({
+        provider: "google", connectionId: "conn", mode: "invalid",
+        externalCalendarId: "remote", localCalendarId: "personal", links: [],
+      }, "conn");
+      tx.objectStore("reminderReceipts").put({
+        key: "bad-reminder",
+        state: "claimed",
+        claim: { token: "t", claimedAt: "not-a-date", expiresAt: "also-bad" },
+      }, "bad-reminder");
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+
+    const result = {};
+    try { await sync.read("conn"); } catch (error) { result.sync = String(error); }
+    try {
+      await new IndexedDbReminderReceiptStore(databaseName).claim("bad-reminder", {
+        token: "new",
+        claimedAt: "2026-11-10T10:00:00.000Z",
+        expiresAt: "2026-11-10T10:15:00.000Z",
+      });
+    } catch (error) { result.reminder = String(error); }
+    return result;
+  }, databaseName);
+
+  expect(errors.sync).toMatch(/mode is invalid/i);
+  expect(errors.reminder).toMatch(/claimedAt is invalid/i);
+  await deleteDatabase(page, databaseName);
+});
+
+test("two tabs atomically claim one reminder receipt and completed delivery stays deduplicated", async ({ page, context }, testInfo) => {
+  const databaseName = uniqueDatabaseName(testInfo, "reminder-claim");
+  const second = await context.newPage();
+  await Promise.all([page.goto("/tests/browser/harness.html"), second.goto("/tests/browser/harness.html")]);
+
+  const claim = async (target, token) => await target.evaluate(async ({ databaseName, token }) => {
+    const { IndexedDbReminderReceiptStore } = await import("/dist/interoperability/storage.js");
+    return await new IndexedDbReminderReceiptStore(databaseName).claim("same-reminder", {
+      token,
+      claimedAt: "2026-11-10T10:00:00.000Z",
+      expiresAt: "2026-11-10T10:15:00.000Z",
+    });
+  }, { databaseName, token });
+
+  const [first, secondClaim] = await Promise.all([claim(page, "first"), claim(second, "second")]);
+  expect([first, secondClaim].filter(Boolean)).toHaveLength(1);
+  const winner = first ? { target: page, token: "first" } : { target: second, token: "second" };
+
+  await winner.target.evaluate(async ({ databaseName, token }) => {
+    const { IndexedDbReminderReceiptStore } = await import("/dist/interoperability/storage.js");
+    await new IndexedDbReminderReceiptStore(databaseName).complete("same-reminder", token, "2026-11-10T10:00:01.000Z");
+  }, { databaseName, token: winner.token });
+
+  expect(await claim(first ? second : page, "third")).toBe(false);
+  await second.close();
+  await deleteDatabase(page, databaseName);
+});
+
+test("two tabs serialize one Google connection before remote publish and shared state write", async ({ page, context }, testInfo) => {
+  const databaseName = uniqueDatabaseName(testInfo, "google-lock");
+  const second = await context.newPage();
+  await Promise.all([page.goto("/tests/browser/harness.html"), second.goto("/tests/browser/harness.html")]);
+  await page.evaluate(() => {
+    localStorage.setItem("calendar-google-inserts", "0");
+    localStorage.setItem("calendar-google-active", "0");
+    localStorage.setItem("calendar-google-max-active", "0");
+  });
+
+  const run = async target => await target.evaluate(async databaseName => {
+    const Calendar = await import("/dist/index.js");
+    const Google = await import("/dist/interoperability/google-calendar.js");
+    const { IndexedDbSyncStateStore } = await import("/dist/interoperability/storage.js");
+    const source = { id: "personal", title: "Personal", visible: true, removable: true };
+    const item = {
+      id: "e1", calendarId: "personal", title: "Event",
+      start: "2026-11-10T09:00:00.000Z", end: "2026-11-10T10:00:00.000Z",
+      kind: "event", ownership: "calendar", editPolicy: "full",
+    };
+    const repo = new Calendar.MemoryCalendarRepository([source], [item]);
+    const transport = {
+      async listEvents() {
+        const active = Number(localStorage.getItem("calendar-google-active") ?? "0") + 1;
+        localStorage.setItem("calendar-google-active", String(active));
+        localStorage.setItem("calendar-google-max-active", String(Math.max(
+          active, Number(localStorage.getItem("calendar-google-max-active") ?? "0"),
+        )));
+        await new Promise(resolve => setTimeout(resolve, 80));
+        localStorage.setItem("calendar-google-active", String(active - 1));
+        return { items: [], nextSyncToken: "sync-token" };
+      },
+      async getEvent() { throw new Error("unused"); },
+      async listInstances() { return { items: [] }; },
+      async insertEvent(_calendarId, event) {
+        const count = Number(localStorage.getItem("calendar-google-inserts") ?? "0") + 1;
+        localStorage.setItem("calendar-google-inserts", String(count));
+        return { id: "g1", etag: '"etag-1"', ...event };
+      },
+      async updateEvent() { throw new Error("unused"); },
+      async patchEvent() { throw new Error("unexpected patch"); },
+      async deleteEvent() { throw new Error("unused"); },
+    };
+    const adapter = new Google.GoogleCalendarSyncAdapter(
+      transport, repo, new IndexedDbSyncStateStore(databaseName),
+      { id: "shared-connection", googleCalendarId: "remote", localCalendarId: "personal", mode: "publish" },
+    );
+    return await adapter.sync();
+  }, databaseName);
+
+  await Promise.all([run(page), run(second)]);
+  const observed = await page.evaluate(() => ({
+    inserts: Number(localStorage.getItem("calendar-google-inserts") ?? "0"),
+    maxActive: Number(localStorage.getItem("calendar-google-max-active") ?? "0"),
+  }));
+  expect(observed).toEqual({ inserts: 1, maxActive: 1 });
+
+  const state = await page.evaluate(async databaseName => {
+    const { IndexedDbSyncStateStore } = await import("/dist/interoperability/storage.js");
+    return await new IndexedDbSyncStateStore(databaseName).read("shared-connection");
+  }, databaseName);
+  expect(state.links).toHaveLength(1);
+  expect(state.links[0].identity.eventId).toBe("g1");
+
+  await second.close();
+  await deleteDatabase(page, databaseName);
+});
+
 test("native IndexedDB persists normalized create, update and delete state across reopen", async ({ page }, testInfo) => {
   const databaseName = uniqueDatabaseName(testInfo, "persistence");
   await openRepository(page, databaseName);
