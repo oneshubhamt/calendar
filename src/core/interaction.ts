@@ -2,6 +2,9 @@ import type {
   CalendarCollisionPolicy,
   CalendarItemPatch,
   CalendarOccurrence,
+  CalendarPlacementContext,
+  CalendarPlacementGuard,
+  CalendarPlacementGuardMode,
   CalendarSnapPolicy,
   CalendarSnapStrategy,
 } from "./types.js";
@@ -42,6 +45,51 @@ export function intervalsOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd: D
 
 export interface PlacementCollision {
   readonly occurrence: CalendarOccurrence;
+}
+
+
+export interface CalendarPlacementGuardEvaluation {
+  readonly mode: CalendarPlacementGuardMode;
+  readonly messages: readonly string[];
+}
+
+/**
+ * Evaluate generic placement policies in declaration order.
+ * Prevent dominates warn, warn dominates allow. Guard failures and malformed runtime
+ * results fail closed because Calendar cannot safely assume policy approval.
+ */
+export async function evaluatePlacementGuards(
+  guards: readonly CalendarPlacementGuard[] | undefined,
+  context: CalendarPlacementContext,
+): Promise<CalendarPlacementGuardEvaluation> {
+  if (!guards?.length) return { mode: "allow", messages: [] };
+
+  const ids = new Set<string>();
+  const warnings: string[] = [];
+  for (const guard of guards) {
+    const id = typeof guard?.id === "string" ? guard.id.trim() : "";
+    if (!id || ids.has(id) || typeof guard?.evaluate !== "function") {
+      return { mode: "prevent", messages: ["Scheduling policy could not be evaluated."] };
+    }
+    ids.add(id);
+
+    let decision;
+    try {
+      decision = await guard.evaluate(context);
+    } catch {
+      return { mode: "prevent", messages: ["Scheduling policy could not be evaluated."] };
+    }
+    if (!decision || !["allow", "warn", "prevent"].includes(String(decision.mode))) {
+      return { mode: "prevent", messages: ["Scheduling policy could not be evaluated."] };
+    }
+    if (decision.message !== undefined && (typeof decision.message !== "string" || !decision.message.trim() || decision.message.length > 2_048)) {
+      return { mode: "prevent", messages: ["Scheduling policy could not be evaluated."] };
+    }
+    const message = decision.message?.trim();
+    if (decision.mode === "prevent") return { mode: "prevent", messages: [message ?? "This placement is not allowed."] };
+    if (decision.mode === "warn") warnings.push(message ?? "This placement may violate a scheduling policy.");
+  }
+  return warnings.length ? { mode: "warn", messages: warnings } : { mode: "allow", messages: [] };
 }
 
 export function placementCollisions(
