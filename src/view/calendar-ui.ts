@@ -263,6 +263,7 @@ export class CalendarUi {
     const result = await this.engine.query(projectionRange, {
       visibleSourceIds,
       timeZone: this.timeZone,
+      includeBackgroundRanges: this.view === "month" || this.view === "week" || this.view === "day",
       ...(filters.length ? { predicate: (occurrence: CalendarOccurrence) => filters.every(addon => this.hostHook(`Calendar add-on ${addon.id} filter`, () => addon.filterOccurrence?.(occurrence, sourceById.get(occurrence.calendarId)) !== false, true)) } : {}),
     });
     if (this.destroyed || generation !== this.renderGeneration) return;
