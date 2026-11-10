@@ -630,3 +630,87 @@ test('CalendarEngine separates durable repository revision from combined invalid
   unsubscribeSecond();
   assert.equal(providerUnsubscriptions,1,'upstream subscription is released after the final consumer');
 });
+
+
+test('delta undo preserves unrelated later item changes and redo reapplies only the owned delta',async()=>{
+  const source={id:'delta-source',title:'Delta',visible:true};
+  const a={
+    id:'delta-a',calendarId:'delta-source',title:'A',
+    start:'2026-11-10T09:00:00.000Z',end:'2026-11-10T10:00:00.000Z',
+    kind:'event',ownership:'calendar',editPolicy:'full',
+  };
+  const b={...a,id:'delta-b',title:'B',start:'2026-11-10T11:00:00.000Z',end:'2026-11-10T12:00:00.000Z'};
+  const repo=new C.MemoryCalendarRepository([source],[a,b]);
+  const handler=new C.RepositoryCommandHandler(repo);
+
+  await handler.execute({type:'update',id:'delta-a',patch:{title:'A edited'}},{now:'2026-11-01T00:00:00.000Z'});
+  repo.update('delta-b',{title:'B external'});
+
+  assert.equal(await handler.undo(),true);
+  assert.deepEqual(repo.read().items.map(item=>[item.id,item.title]),[
+    ['delta-a','A'],['delta-b','B external'],
+  ]);
+
+  assert.equal(await handler.redo(),true);
+  assert.deepEqual(repo.read().items.map(item=>[item.id,item.title]),[
+    ['delta-a','A edited'],['delta-b','B external'],
+  ]);
+});
+
+test('delta undo and redo preserve split ordering while retaining unrelated appended items',async()=>{
+  const source={id:'delta-series-source',title:'Series',visible:true};
+  const series={
+    id:'delta-series',calendarId:'delta-series-source',title:'Series',
+    start:'2026-11-10T09:00:00.000Z',end:'2026-11-10T10:00:00.000Z',
+    kind:'event',ownership:'calendar',editPolicy:'full',seriesId:'delta-series',
+    recurrence:{rule:{frequency:'daily',count:4}},
+  };
+  const other={...series,id:'delta-other',seriesId:undefined,title:'Other',recurrence:undefined,start:'2026-11-10T13:00:00.000Z',end:'2026-11-10T14:00:00.000Z'};
+  const repo=new C.MemoryCalendarRepository([source],[series,other]);
+  const occurrence=C.expandItem(series,{
+    start:'2026-11-12T00:00:00.000Z',end:'2026-11-13T00:00:00.000Z',
+  },{timeZone:'UTC'})[0];
+  const handler=new C.RepositoryCommandHandler(repo);
+  await handler.execute({
+    type:'move-occurrence',occurrence,
+    start:'2026-11-12T11:00:00.000Z',end:'2026-11-12T12:00:00.000Z',
+    scope:'this-and-following',
+  },{now:'2026-11-01T00:00:00.000Z',timeZone:'UTC'});
+
+  const tailId=repo.read().items.find(item=>item.id!=='delta-series'&&item.id!=='delta-other').id;
+  repo.create({
+    id:'delta-unrelated',calendarId:'delta-series-source',title:'Unrelated',
+    start:'2026-11-10T15:00:00.000Z',end:'2026-11-10T16:00:00.000Z',
+    kind:'event',ownership:'calendar',editPolicy:'full',
+  });
+
+  assert.equal(await handler.undo(),true);
+  assert.deepEqual(repo.read().items.map(item=>item.id),['delta-series','delta-other','delta-unrelated']);
+  assert.equal(repo.read().items[0].recurrence.rule.count,4);
+
+  assert.equal(await handler.redo(),true);
+  assert.deepEqual(repo.read().items.map(item=>item.id),['delta-series','delta-other',tailId,'delta-unrelated']);
+  assert.deepEqual(repo.read().items.slice(0,3).map(item=>item.recurrence?.rule.count),[2,undefined,2]);
+});
+
+test('delta undo still fails closed when an affected item or Calendar source changes',async()=>{
+  const source={id:'delta-guard-source',title:'Guard',visible:true};
+  const item={
+    id:'delta-guard-item',calendarId:'delta-guard-source',title:'Before',
+    start:'2026-11-10T09:00:00.000Z',end:'2026-11-10T10:00:00.000Z',
+    kind:'event',ownership:'calendar',editPolicy:'full',
+  };
+
+  const changedItemRepo=new C.MemoryCalendarRepository([source],[item]);
+  const changedItemHandler=new C.RepositoryCommandHandler(changedItemRepo);
+  await changedItemHandler.execute({type:'update',id:item.id,patch:{title:'Edited'}},{now:'2026-11-01T00:00:00.000Z'});
+  changedItemRepo.update(item.id,{description:'External'});
+  await assert.rejects(()=>changedItemHandler.undo(),/changed outside undo history/i);
+  assert.equal(changedItemRepo.read().items[0].description,'External');
+
+  const changedSourceRepo=new C.MemoryCalendarRepository([{...source,removable:true}],[item]);
+  const changedSourceHandler=new C.RepositoryCommandHandler(changedSourceRepo);
+  await changedSourceHandler.execute({type:'update',id:item.id,patch:{title:'Edited'}},{now:'2026-11-01T00:00:00.000Z'});
+  changedSourceRepo.updateSource(source.id,{title:'Changed source'});
+  await assert.rejects(()=>changedSourceHandler.undo(),/sources changed outside undo history/i);
+});

@@ -54,3 +54,19 @@ test("D4 storage open is failure-clean and custom store names upgrade dynamicall
   assert.match(openDb,/existing\.close\(\)/);
   assert.match(source,/requireStore && !db\.objectStoreNames\.contains\(this\.storeName\)/);
 });
+
+
+test("D5 command history stores affected immutable item deltas rather than full item snapshots",async()=>{
+  const source=await read("../src/core/commands.ts");
+  assert.match(source,/interface HistoryItemChange/);
+  assert.match(source,/interface HistoryRun/);
+  assert.match(source,/readonly changes: readonly HistoryItemChange\[\]/);
+  assert.match(source,/buildHistoryEntry/);
+  assert.match(source,/applyHistoryEntry/);
+  assert.doesNotMatch(source,/readonly before: readonly CalendarItem\[\]/);
+  assert.doesNotMatch(source,/readonly after: readonly CalendarItem\[\]/);
+  assert.doesNotMatch(source,/function cloneItems/);
+  assert.doesNotMatch(source,/function cloneSources/);
+  assert.doesNotMatch(source,/private async executeAtomic/);
+  assert.match(source,/private async applyCommandToStaging/);
+});

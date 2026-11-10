@@ -290,26 +290,153 @@ class CommandStagingRepository implements CalendarRepository {
   }
 }
 
+interface HistoryItemChange {
+  readonly id: string;
+  readonly before?: CalendarItem | undefined;
+  readonly after?: CalendarItem | undefined;
+}
+
+interface HistoryRun {
+  readonly items: readonly CalendarItem[];
+  readonly index: number;
+  readonly previousUnchangedId?: string | undefined;
+  readonly nextUnchangedId?: string | undefined;
+}
+
 interface HistoryEntry {
-  readonly before: readonly CalendarItem[];
-  readonly after: readonly CalendarItem[];
-  readonly sources: readonly CalendarSource[];
+  readonly changes: readonly HistoryItemChange[];
+  readonly beforeRuns: readonly HistoryRun[];
+  readonly afterRuns: readonly HistoryRun[];
+  readonly sourceSignature: string;
 }
 
-function cloneItems(items: readonly CalendarItem[]): readonly CalendarItem[] {
-  return items.map(item => structuredClone(item));
+function sameItem(left: CalendarItem | undefined, right: CalendarItem | undefined): boolean {
+  return left === right || (
+    left !== undefined
+    && right !== undefined
+    && JSON.stringify(left) === JSON.stringify(right)
+  );
 }
 
-function cloneSources(sources: readonly CalendarSource[]): readonly CalendarSource[] {
-  return sources.map(source => structuredClone(source));
+function sourceSignature(sources: readonly CalendarSource[]): string {
+  return JSON.stringify(sources);
 }
 
-function sameItems(a: readonly CalendarItem[], b: readonly CalendarItem[]): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+function changedItemIds(
+  before: readonly CalendarItem[],
+  after: readonly CalendarItem[],
+): readonly string[] {
+  const beforeById = new Map(before.map(item => [item.id, item] as const));
+  const afterById = new Map(after.map(item => [item.id, item] as const));
+  const ids: string[] = [];
+  for (const item of before) {
+    if (!sameItem(item, afterById.get(item.id))) ids.push(item.id);
+  }
+  for (const item of after) {
+    if (!beforeById.has(item.id)) ids.push(item.id);
+  }
+  return ids;
 }
 
-function sameSources(a: readonly CalendarSource[], b: readonly CalendarSource[]): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+function historyRuns(
+  items: readonly CalendarItem[],
+  affectedIds: ReadonlySet<string>,
+): readonly HistoryRun[] {
+  const runs: HistoryRun[] = [];
+  let index = 0;
+  while (index < items.length) {
+    if (!affectedIds.has(items[index]!.id)) {
+      index += 1;
+      continue;
+    }
+    const start = index;
+    const runItems: CalendarItem[] = [];
+    while (index < items.length && affectedIds.has(items[index]!.id)) {
+      runItems.push(items[index]!);
+      index += 1;
+    }
+    const previous = start > 0 ? items[start - 1] : undefined;
+    const next = index < items.length ? items[index] : undefined;
+    runs.push(Object.freeze({
+      items: Object.freeze(runItems),
+      index: start,
+      ...(previous ? { previousUnchangedId: previous.id } : {}),
+      ...(next ? { nextUnchangedId: next.id } : {}),
+    }));
+  }
+  return Object.freeze(runs);
+}
+
+function buildHistoryEntry(
+  before: readonly CalendarItem[],
+  after: readonly CalendarItem[],
+  sources: readonly CalendarSource[],
+): HistoryEntry | undefined {
+  const ids = changedItemIds(before, after);
+  if (!ids.length) return undefined;
+  const affectedIds = new Set(ids);
+  const beforeById = new Map(before.map(item => [item.id, item] as const));
+  const afterById = new Map(after.map(item => [item.id, item] as const));
+  return Object.freeze({
+    changes: Object.freeze(ids.map(id => Object.freeze({
+      id,
+      ...(beforeById.has(id) ? { before: beforeById.get(id)! } : {}),
+      ...(afterById.has(id) ? { after: afterById.get(id)! } : {}),
+    }))),
+    beforeRuns: historyRuns(before, affectedIds),
+    afterRuns: historyRuns(after, affectedIds),
+    sourceSignature: sourceSignature(sources),
+  });
+}
+
+function insertHistoryRun(next: CalendarItem[], run: HistoryRun, label: string): void {
+  const previousIndex = run.previousUnchangedId === undefined
+    ? -1
+    : next.findIndex(item => item.id === run.previousUnchangedId);
+  const followingIndex = run.nextUnchangedId === undefined
+    ? -1
+    : next.findIndex(item => item.id === run.nextUnchangedId);
+
+  if (run.previousUnchangedId !== undefined && run.nextUnchangedId !== undefined) {
+    if (previousIndex < 0 && followingIndex < 0) {
+      throw new Error(`Calendar order changed around ${label}; refusing to guess item placement`);
+    }
+    if (previousIndex >= 0 && followingIndex >= 0 && previousIndex >= followingIndex) {
+      throw new Error(`Calendar order changed around ${label}; refusing to reorder unrelated items`);
+    }
+  }
+
+  let insertionIndex: number;
+  if (previousIndex >= 0) insertionIndex = previousIndex + 1;
+  else if (followingIndex >= 0) insertionIndex = followingIndex;
+  else if (run.previousUnchangedId !== undefined || run.nextUnchangedId !== undefined) {
+    throw new Error(`Calendar order changed around ${label}; refusing to guess item placement`);
+  } else insertionIndex = Math.min(run.index, next.length);
+
+  next.splice(insertionIndex, 0, ...run.items);
+}
+
+function applyHistoryEntry(
+  currentItems: readonly CalendarItem[],
+  entry: HistoryEntry,
+  direction: "undo" | "redo",
+): readonly CalendarItem[] {
+  const expectedKey = direction === "undo" ? "after" : "before";
+  const runs = direction === "undo" ? entry.beforeRuns : entry.afterRuns;
+  const currentById = new Map(currentItems.map(item => [item.id, item] as const));
+  const affectedIds = new Set(entry.changes.map(change => change.id));
+
+  for (const change of entry.changes) {
+    const expected = change[expectedKey];
+    const actual = currentById.get(change.id);
+    if (!sameItem(actual, expected)) {
+      throw new Error(`Calendar item ${change.id} changed outside ${direction} history; refusing to overwrite newer state`);
+    }
+  }
+
+  const next = currentItems.filter(item => !affectedIds.has(item.id));
+  for (const run of runs) insertHistoryRun(next, run, direction);
+  return next;
 }
 
 export class RepositoryCommandHandler implements CalendarCommandHandler {
@@ -330,8 +457,12 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
     if (!entry) return false;
     try {
       const current = this.repository.read();
-      if (!sameItems(current.items, entry.after) || !sameSources(current.sources, entry.sources)) throw new Error("Calendar changed outside undo history; refusing to overwrite newer state");
-      await replaceAtExpectedRevision(this.repository, cloneItems(entry.before), current.revision);
+      if (sourceSignature(current.sources) !== entry.sourceSignature) {
+        throw new Error("Calendar sources changed outside undo history; refusing to apply an item delta against different source state");
+      }
+      const next = applyHistoryEntry(current.items, entry, "undo");
+      assertCalendarStateIntegrity(current.sources, next);
+      await replaceAtExpectedRevision(this.repository, next, current.revision);
       this.redoStack.push(entry);
       return true;
     } catch (error) {
@@ -345,8 +476,12 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
     if (!entry) return false;
     try {
       const current = this.repository.read();
-      if (!sameItems(current.items, entry.before) || !sameSources(current.sources, entry.sources)) throw new Error("Calendar changed outside redo history; refusing to overwrite newer state");
-      await replaceAtExpectedRevision(this.repository, cloneItems(entry.after), current.revision);
+      if (sourceSignature(current.sources) !== entry.sourceSignature) {
+        throw new Error("Calendar sources changed outside redo history; refusing to apply an item delta against different source state");
+      }
+      const next = applyHistoryEntry(current.items, entry, "redo");
+      assertCalendarStateIntegrity(current.sources, next);
+      await replaceAtExpectedRevision(this.repository, next, current.revision);
       this.undoStack.push(entry);
       return true;
     } catch (error) {
@@ -358,26 +493,25 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
   public async execute(command: CalendarCommand, context: CalendarCommandContext): Promise<void> {
     const beforeSnapshot = this.repository.read();
     const staged = new CommandStagingRepository(beforeSnapshot.sources, beforeSnapshot.items, beforeSnapshot.revision);
-    await this.executeAtomic(staged, command, context);
+    await this.applyCommandToStaging(staged, command, context);
     const stagedItems = staged.read().items;
-    if (sameItems(beforeSnapshot.items, stagedItems)) return;
+    const stagedHistory = buildHistoryEntry(beforeSnapshot.items, stagedItems, beforeSnapshot.sources);
+    if (!stagedHistory) return;
 
     // One authoritative repository mutation per logical Calendar command. This makes
     // multi-record operations such as recurrence splitting durable atomically.
     await replaceAtExpectedRevision(this.repository, stagedItems, beforeSnapshot.revision);
 
     const afterSnapshot = this.repository.read();
-    if (!sameSources(beforeSnapshot.sources, afterSnapshot.sources)) return;
-    this.undoStack.push({
-      before: cloneItems(beforeSnapshot.items),
-      after: cloneItems(afterSnapshot.items),
-      sources: cloneSources(afterSnapshot.sources),
-    });
+    if (sourceSignature(beforeSnapshot.sources) !== sourceSignature(afterSnapshot.sources)) return;
+    const history = buildHistoryEntry(beforeSnapshot.items, afterSnapshot.items, afterSnapshot.sources);
+    if (!history) return;
+    this.undoStack.push(history);
     if (this.undoStack.length > Math.max(1, this.historyLimit)) this.undoStack.shift();
     this.redoStack.length = 0;
   }
 
-  private async executeAtomic(repository: CalendarRepository, command: CalendarCommand, context: CalendarCommandContext): Promise<void> {
+  private async applyCommandToStaging(repository: CalendarRepository, command: CalendarCommand, context: CalendarCommandContext): Promise<void> {
     if (command.type === "create") {
       assertSourceAllowsCreate(repository, command.item.calendarId);
       await repository.create(command.item);
