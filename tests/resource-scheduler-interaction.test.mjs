@@ -18,7 +18,7 @@ function occurrence(overrides={}){
   };
 }
 
-test("R6 replacing one rendered multi-resource assignment preserves every unrelated assignment",()=>{
+test("replacing one rendered multi-resource assignment preserves every unrelated assignment",()=>{
   assert.deepEqual(replaceCalendarResourceAssignment(["room-a","doctor","device"],"room-a","room-b"),[
     "room-b","doctor","device",
   ]);
@@ -28,11 +28,30 @@ test("R6 replacing one rendered multi-resource assignment preserves every unrela
   assert.throws(()=>replaceCalendarResourceAssignment(["room-a","room-a"],"room-a","room-b"),/duplicate resource/i);
 });
 
-test("R6 interaction math reuses civil DST semantics and keeps point moves zero-duration",()=>{
+test("interaction math reuses civil DST semantics and keeps point moves zero-duration",()=>{
   assert.equal(snapMinuteCoordinate(22,15,"round"),15);
   assert.equal(snapMinuteCoordinate(23,15,"round"),30);
   const moved=moveResourceOccurrenceByCivilMinutes(occurrence(),30,"UTC","earlier");
   assert.deepEqual(moved,{start:"2026-11-10T09:30:00.000Z",end:"2026-11-10T10:30:00.000Z"});
+
+  const overnight=occurrence({
+    start:"2026-11-10T23:30:00.000Z",end:"2026-11-11T00:30:00.000Z",
+  });
+  assert.deepEqual(moveResourceOccurrenceByCivilMinutes(overnight,60,"UTC","earlier"),{
+    start:"2026-11-11T00:30:00.000Z",end:"2026-11-11T01:30:00.000Z",
+  });
+
+  const beforeFold=occurrence({
+    start:"2026-11-01T04:30:00.000Z",end:"2026-11-01T05:00:00.000Z",
+  });
+  assert.equal(
+    moveResourceOccurrenceByCivilMinutes(beforeFold,60,"America/New_York","earlier").start,
+    "2026-11-01T05:30:00.000Z",
+  );
+  assert.equal(
+    moveResourceOccurrenceByCivilMinutes(beforeFold,60,"America/New_York","later").start,
+    "2026-11-01T06:30:00.000Z",
+  );
   const point=occurrence({start:"2026-11-10T09:00:00.000Z",end:"2026-11-10T09:00:00.000Z",temporalForm:"point"});
   assert.deepEqual(moveResourceOccurrenceByCivilMinutes(point,15,"UTC","earlier"),{
     start:"2026-11-10T09:15:00.000Z",end:"2026-11-10T09:15:00.000Z",
@@ -42,7 +61,7 @@ test("R6 interaction math reuses civil DST semantics and keeps point moves zero-
     "01:30 + 30 civil minutes targets the spring-forward gap and must fail closed");
 });
 
-test("R6 resize math uses core interval constraints and refuses point resize",()=>{
+test("resize math uses core interval constraints and refuses point resize",()=>{
   const resized=resizeResourceOccurrenceByCivilMinutes(occurrence(),"end",-50,15,"UTC","earlier");
   assert.deepEqual(resized,{start:"2026-11-10T09:00:00.000Z",end:"2026-11-10T09:15:00.000Z"});
   const point=occurrence({start:"2026-11-10T09:00:00.000Z",end:"2026-11-10T09:00:00.000Z",temporalForm:"point"});

@@ -32,7 +32,7 @@ function request(overrides={}){
 }
 const allowReassign={capabilities(){return {canReassign:true};}};
 
-test("R5 validates complete target resource assignments and fails closed before policy/mutation",async()=>{
+test("validates complete target resource assignments and fails closed before policy/mutation",async()=>{
   let guardCalls=0;
   const base={resourceCapabilityProvider:allowReassign,resourceGuards:[{id:"g",evaluate(){guardCalls++;return {mode:"allow"};}}]};
   for(const [patch,pattern] of [
@@ -49,7 +49,7 @@ test("R5 validates complete target resource assignments and fails closed before 
   assert.equal(guardCalls,0);
 });
 
-test("R5 composes generic temporal placement before resource guards and preserves warnings",async()=>{
+test("composes generic temporal placement before resource guards and preserves warnings",async()=>{
   const order=[];
   const result=await evaluateCalendarResourcePlacement(resources,request(),{
     resourceCapabilityProvider:allowReassign,
@@ -71,7 +71,7 @@ test("R5 composes generic temporal placement before resource guards and preserve
   assert.deepEqual(failed.messages,["Resource scheduling policy could not be evaluated."]);
 });
 
-test("R5 resource collisions are scoped to shared target resources and reuse temporal overlap semantics",async()=>{
+test("resource collisions are scoped to shared target resources and reuse temporal overlap semantics",async()=>{
   const occupiedA=occurrence({occurrenceId:"a-occ",sourceItemId:"a-item",title:"Occupied A",start:"2026-11-10T09:30:00.000Z",end:"2026-11-10T10:30:00.000Z"});
   const occupiedB=occurrence({occurrenceId:"b-occ",sourceItemId:"b-item",title:"Occupied B",start:"2026-11-10T09:30:00.000Z",end:"2026-11-10T10:30:00.000Z"});
   const outside=occurrence({occurrenceId:"outside",sourceItemId:"outside",title:"Later B",start:"2026-11-10T12:00:00.000Z",end:"2026-11-10T13:00:00.000Z"});
@@ -109,7 +109,7 @@ test("R5 resource collisions are scoped to shared target resources and reuse tem
   assert.equal(lazyLoads,0);
 });
 
-test("R5 temporal and resource authorities are independent and required only for changed dimensions",async()=>{
+test("temporal and resource authorities are independent and required only for changed dimensions",async()=>{
   const trustedMove={capabilities(){return {commandPath:"trusted-host",canMove:true};}};
   let resourceCalls=0;
   const resourceProvider={capabilities(){resourceCalls++;return {canReassign:true};}};
@@ -160,7 +160,7 @@ test("R5 temporal and resource authorities are independent and required only for
   assert.match(deniedResource.messages[0],/resource reassignment is not authorized/i);
 });
 
-test("R5 execution commits exactly once with canonical full assignments and never splits diagonal mutation",async()=>{
+test("execution commits exactly once with canonical full assignments and never splits diagonal mutation",async()=>{
   const changes=[];
   const result=await executeCalendarResourcePlacement(resources,request({
     start:"2026-11-10T11:00:00+00:00",end:"2026-11-10T12:00:00+00:00",
@@ -179,7 +179,7 @@ test("R5 execution commits exactly once with canonical full assignments and neve
   assert.deepEqual(changes[0].assignmentVersion,{revision:7});
 });
 
-test("R5 warnings require explicit acceptance; no-ops and prevented placements never write",async()=>{
+test("warnings require explicit acceptance; no-ops and prevented placements never write",async()=>{
   let commits=0;
   const mutationPort={commit(){commits++;}};
   const warningOptions={
@@ -207,7 +207,7 @@ test("R5 warnings require explicit acceptance; no-ops and prevented placements n
   assert.equal(commits,1);
 });
 
-test("R5 stale assignment versions return stale after one atomic attempt and are never retried",async()=>{
+test("stale assignment versions return stale after one atomic attempt and are never retried",async()=>{
   let commits=0;
   let seen;
   const result=await executeCalendarResourcePlacement(resources,request(),{
@@ -226,7 +226,7 @@ test("R5 stale assignment versions return stale after one atomic attempt and are
   assert.equal(structural.status,"stale");
 });
 
-test("R5 malformed resource collision policy/projections fail closed instead of weakening resource safety",async()=>{
+test("malformed resource collision policy/projections fail closed instead of weakening resource safety",async()=>{
   const malformedPolicy=await evaluateCalendarResourcePlacement(resources,request(),{
     resourceCapabilityProvider:allowReassign,
     resourceCollisionPolicy:{mode:"maybe"},
@@ -245,4 +245,91 @@ test("R5 malformed resource collision policy/projections fail closed instead of 
   });
   assert.equal(badProjection.mode,"prevent");
   assert.deepEqual(badProjection.messages,["Resource conflicts could not be evaluated."]);
+});
+
+
+test("unassigned recurring occurrences preserve every requested recurrence scope in one atomic assignment",async()=>{
+  const row=occurrence({
+    occurrenceId:"unassigned",sourceItemId:"unassigned-item",recurring:true,
+    projectionIdentity:{series:"s",slot:4},
+  });
+  for(const scope of ["this","this-and-following","all"]){
+    const commits=[];
+    const result=await executeCalendarResourcePlacement(resources,{
+      occurrence:row,targetResourceId:"a",fromResourceIds:[],toResourceIds:["a"],
+      start:row.start,end:row.end,scope,timeZone:"UTC",action:"resource-reassign",
+      assignmentVersion:{revision:11},
+    },{
+      source,
+      resourceCapabilityProvider:allowReassign,
+      mutationPort:{commit(change){commits.push(change);}},
+    });
+    assert.equal(result.status,"committed");
+    assert.equal(commits.length,1);
+    assert.equal(commits[0].scope,scope);
+    assert.deepEqual(commits[0].fromResourceIds,[]);
+    assert.deepEqual(commits[0].toResourceIds,["a"]);
+    assert.deepEqual(commits[0].assignmentVersion,{revision:11});
+    assert.strictEqual(commits[0].occurrence,row);
+  }
+});
+
+test("resource placement preserves opaque occurrence identity through one diagonal host mutation",async()=>{
+  const row=occurrence({
+    occurrenceId:"projected",
+    sourceItemId:"projected-item",
+    recurring:true,
+    editPolicy:"readonly",
+    projectionIdentity:{series:{opaque:"host-series"},slot:["x",4]},
+  });
+  const changes=[];
+  const result=await executeCalendarResourcePlacement(resources,request({
+    occurrence:row,
+    start:"2026-11-10T12:00:00.000Z",
+    end:"2026-11-10T13:00:00.000Z",
+    scope:"this-and-following",
+    action:"resource-time-move",
+  }),{
+    source:{...source,readOnly:true},
+    occurrenceCapabilityProvider:{capabilities(){return {commandPath:"trusted-host",canMove:true};}},
+    resourceCapabilityProvider:allowReassign,
+    mutationPort:{commit(change){changes.push(change);}},
+  });
+  assert.equal(result.status,"committed");
+  assert.equal(changes.length,1);
+  assert.strictEqual(changes[0].occurrence,row);
+  assert.deepEqual(changes[0].occurrence.projectionIdentity,row.projectionIdentity);
+  assert.equal(changes[0].scope,"this-and-following");
+});
+
+test("resource placement rejects malformed time zones and mismatched source authority",async()=>{
+  const invalidZone=await evaluateCalendarResourcePlacement(resources,request({timeZone:"Not/A_Real_Zone"}),{
+    source,
+    resourceCapabilityProvider:allowReassign,
+  });
+  assert.equal(invalidZone.mode,"prevent");
+  assert.match(invalidZone.messages[0],/time zone/i);
+
+  const wrongSource=await evaluateCalendarResourcePlacement(resources,request({
+    sourceResourceId:"a",targetResourceId:"a",fromResourceIds:["a"],toResourceIds:["a"],
+    start:"2026-11-10T11:00:00.000Z",end:"2026-11-10T12:00:00.000Z",action:"move",
+  }),{
+    source:{id:"other",title:"Wrong source",visible:true},
+    occurrenceCapabilityProvider:{capabilities(){return {commandPath:"trusted-host",canMove:true};}},
+  });
+  assert.equal(wrongSource.mode,"prevent");
+  assert.match(wrongSource.messages[0],/source does not match/i);
+});
+
+test("non-stale atomic mutation failures are attempted once and propagate unchanged",async()=>{
+  let commits=0;
+  await assert.rejects(
+    ()=>executeCalendarResourcePlacement(resources,request(),{
+      source,
+      resourceCapabilityProvider:allowReassign,
+      mutationPort:{async commit(){commits++;throw new Error("atomic host failure");}},
+    }),
+    /atomic host failure/,
+  );
+  assert.equal(commits,1);
 });

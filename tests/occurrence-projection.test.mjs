@@ -190,3 +190,37 @@ test('event-only query starts no background projection work while event projecti
   const result=await pending;
   assert.deepEqual(result.backgroundRanges,[]);
 });
+
+
+test('projected occurrences require absolute instants, reject redundant item identity and canonicalize offsets before range filtering',async()=>{
+  const repo=new C.MemoryCalendarRepository(sources,[]);
+  const dateOnly=new C.CalendarEngine(repo,[],[{id:'date-only',projectOccurrences(){return [
+    projectedOccurrence({start:'2026-11-09',end:'2026-11-10',originalStart:'2026-11-09'}),
+  ];}}]);
+  await assert.rejects(
+    ()=>dateOnly.query({start:'2026-11-08T18:30:00.000Z',end:'2026-11-09T18:30:00.000Z'}),
+    /absolute ISO date-time/i,
+  );
+
+  const redundantId=new C.CalendarEngine(repo,[],[{id:'redundant-id',projectOccurrences(){return [
+    {...projectedOccurrence(),id:'redundant-item-id'},
+  ];}}]);
+  await assert.rejects(()=>redundantId.query(range),/sourceItemId rather than a redundant item id/i);
+
+  const engine=new C.CalendarEngine(repo,[],[{id:'offset',projectOccurrences(){return [
+    projectedOccurrence({
+      occurrenceId:'offset',
+      start:'2026-11-09T10:00:00+05:30',
+      end:'2026-11-09T11:00:00+05:30',
+      originalStart:'2026-11-09T10:00:00+05:30',
+    }),
+  ];}}]);
+  const inside=await engine.query({start:'2026-11-09T04:00:00.000Z',end:'2026-11-09T06:00:00.000Z'});
+  assert.equal(inside.occurrences.length,1);
+  assert.deepEqual(
+    [inside.occurrences[0].start,inside.occurrences[0].end],
+    ['2026-11-09T04:30:00.000Z','2026-11-09T05:30:00.000Z'],
+  );
+  const outside=await engine.query({start:'2026-11-09T18:30:00.000Z',end:'2026-11-10T18:30:00.000Z'});
+  assert.equal(outside.occurrences.length,0);
+});

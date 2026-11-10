@@ -15,7 +15,7 @@ function occurrence(id,start,end=start,extra={}){
   };
 }
 
-test("R3 creates deterministic horizontal geometry and independent multi-resource render identities",()=>{
+test("creates deterministic horizontal geometry and independent multi-resource render identities",()=>{
   const occurrences=[
     occurrence("a","2026-11-10T09:00:00.000Z","2026-11-10T11:00:00.000Z"),
     occurrence("b","2026-11-10T10:00:00.000Z","2026-11-10T12:00:00.000Z"),
@@ -39,7 +39,7 @@ test("R3 creates deterministic horizontal geometry and independent multi-resourc
   );
 });
 
-test("R3 clips cross-midnight intervals to the requested range without changing authoritative occurrence time",()=>{
+test("clips cross-midnight intervals to the requested range without changing authoritative occurrence time",()=>{
   const event=occurrence("overnight","2026-11-09T23:00:00.000Z","2026-11-10T02:00:00.000Z");
   const [row]=layoutResourceTimeline(resources,[event],[{occurrenceId:"overnight",resourceIds:["room-a"]}],{
     start:"2026-11-10T00:00:00.000Z",end:"2026-11-10T03:00:00.000Z",
@@ -50,7 +50,7 @@ test("R3 clips cross-midnight intervals to the requested range without changing 
   assert.equal(row.occurrence.end,"2026-11-10T02:00:00.000Z");
 });
 
-test("R3 uses the same civil wall-clock DST basis as ordinary timed layout",()=>{
+test("uses the same civil wall-clock DST basis as ordinary timed layout",()=>{
   const spring=occurrence("spring","2026-03-08T06:30:00.000Z","2026-03-08T07:30:00.000Z");
   const [springRow]=layoutResourceTimeline(resources,[spring],[{occurrenceId:"spring",resourceIds:["room-a"]}],{
     start:"2026-03-08T05:00:00.000Z",end:"2026-03-09T04:00:00.000Z",
@@ -68,7 +68,7 @@ test("R3 uses the same civil wall-clock DST basis as ordinary timed layout",()=>
   ]);
 });
 
-test("R3 point occurrences remain zero-width and interval lanes are resource-scoped presentation only",()=>{
+test("point occurrences remain zero-width and interval lanes are resource-scoped presentation only",()=>{
   const pointA=occurrence("p1","2026-11-10T10:00:00.000Z");
   const pointB=occurrence("p2","2026-11-10T10:00:00.000Z");
   const block=occurrence("block","2026-11-10T09:30:00.000Z","2026-11-10T10:30:00.000Z");
@@ -86,7 +86,7 @@ test("R3 point occurrences remain zero-width and interval lanes are resource-sco
   assert.equal(roomB.laneCount,1);
 });
 
-test("R3 collapse affects visible rows only; assignments remain host-authoritative",()=>{
+test("collapse affects visible rows only; assignments remain host-authoritative",()=>{
   const event=occurrence("hidden","2026-11-10T10:00:00.000Z","2026-11-10T11:00:00.000Z");
   const assignments=[{occurrenceId:"hidden",resourceIds:["room-a"]}];
   const range={start:"2026-11-10T09:00:00.000Z",end:"2026-11-10T12:00:00.000Z"};
@@ -94,7 +94,7 @@ test("R3 collapse affects visible rows only; assignments remain host-authoritati
   assert.deepEqual(assignments,[{occurrenceId:"hidden",resourceIds:["room-a"]}]);
 });
 
-test("R3 keeps folded fall-back geometry bounded when the requested range begins inside an overlap",()=>{
+test("keeps folded fall-back geometry bounded when the requested range begins inside an overlap",()=>{
   const interval=occurrence("folded","2026-11-01T06:00:00.000Z","2026-11-01T07:00:00.000Z");
   const point=occurrence("folded-point","2026-11-01T06:30:00.000Z");
   const range={start:"2026-11-01T05:45:00.000Z",end:"2026-11-01T07:00:00.000Z"};

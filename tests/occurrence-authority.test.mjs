@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as C from '../dist/index.js';
 import { baselineOccurrenceCapabilities, calendarOccurrenceCommandContext, resolveOccurrenceCapabilities, temporalMutationCapabilityRequirements } from '../dist/core/authority.js';
 import { CalendarCommandLifecycle } from '../dist/view/command-lifecycle.js';
+import { occurrenceWithPreview } from '../dist/view/occurrence-preview.js';
 import { CalendarCommandStaleError } from '../dist/core/commands.js';
 
 const source={id:'host',title:'Host',visible:true};
@@ -147,4 +148,29 @@ test('temporal patch authority distinguishes move from independent edge changes 
   assert.deepEqual(temporalMutationCapabilityRequirements({beforeStart:100,beforeEnd:200,afterStart:100,afterEnd:250}),['canResizeEnd']);
   assert.deepEqual(temporalMutationCapabilityRequirements({beforeStart:100,beforeEnd:200,afterStart:150,afterEnd:260}),['canResizeStart','canResizeEnd']);
   assert.deepEqual(temporalMutationCapabilityRequirements({beforeStart:100,beforeEnd:200,afterStart:100,afterEnd:200,crossesAllDayBoundary:true}),['canMove','canMoveBetweenAllDayAndTimed']);
+});
+
+
+test('command lifecycle distinguishes rejected mutation from committed refresh failure',async()=>{
+  const lifecycle=new CalendarCommandLifecycle();
+  const rejected=await lifecycle.run('reject','move',()=>{throw new Error('reject');},{refresh(){}});
+  assert.equal(rejected,'rejected');
+
+  let committed=false;
+  const refreshFailed=await lifecycle.run('refresh-failure','move',()=>{committed=true;},{
+    refresh(){throw new Error('offline');},
+  });
+  assert.equal(committed,true);
+  assert.equal(refreshFailed,'committed-refresh-failed');
+});
+
+test('tentative occurrence geometry can be reconstructed after authoritative re-render',()=>{
+  const row=occurrence();
+  const preview={patch:{start:'2026-11-09T12:00:00.000Z',end:'2026-11-09T13:00:00.000Z'}};
+  const first=occurrenceWithPreview(row,preview,'UTC');
+  const refreshed=occurrenceWithPreview({...row,title:'Fresh authoritative title'},preview,'UTC');
+  assert.equal(first.start,'2026-11-09T12:00:00.000Z');
+  assert.equal(refreshed.start,'2026-11-09T12:00:00.000Z');
+  assert.equal(refreshed.title,'Fresh authoritative title');
+  assert.equal(row.start,'2026-11-09T10:00:00.000Z');
 });

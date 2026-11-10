@@ -14,7 +14,7 @@ const resources = [
 const occ = id => ({occurrenceId:id});
 const occurrences = [occ("z"),occ("a"),occ("unassigned")];
 
-test("R2 validates full resource hierarchy; never accepts invalid identities, parent links or cyclic ancestry",()=>{
+test("validates full resource hierarchy; never accepts invalid identities, parent links or cyclic ancestry",()=>{
   assert.equal(validateCalendarResources(resources),resources);
   const bad = (variant, error) => assert.throws(()=>validateCalendarResources(variant),error);
   bad([...resources,resources[0]],/duplicate resource/i);
@@ -34,7 +34,7 @@ test("R2 validates full resource hierarchy; never accepts invalid identities, pa
   bad([{id:"a",title:"  "}],/title/i);
 });
 
-test("R2 flattening is deterministic, respects caller-only collapse state and allows assignable parents",()=>{
+test("flattening is deterministic, respects caller-only collapse state and allows assignable parents",()=>{
   const reversed=[...resources].reverse();
   const rows=flattenCalendarResources(resources);
   assert.deepEqual(rows.map(r=>[r.resource.id,r.depth,r.index,r.acceptsAssignments,r.hasChildren]),[
@@ -49,7 +49,7 @@ test("R2 flattening is deterministic, respects caller-only collapse state and al
   assert.deepEqual(flattenCalendarResources(resources).map(r=>r.resource.id),rows.map(r=>r.resource.id));
 });
 
-test("R2 rejects invalid assignment projections including duplicates, unknown IDs, group-only resources and opaque tokens",()=>{
+test("rejects invalid assignment projections including duplicates, unknown IDs, group-only resources and opaque tokens",()=>{
   const check=(assignments,error,occs=occurrences)=>assert.throws(()=>validateCalendarResourceAssignments(resources,occs,assignments),error);
   check([{occurrenceId:"not-projected",resourceIds:["roomA"]}],/unknown occurrence/i);
   check([{occurrenceId:"a",resourceIds:["missing"]}],/unknown resource/i);
@@ -64,7 +64,7 @@ test("R2 rejects invalid assignment projections including duplicates, unknown ID
   assert.deepEqual(validateCalendarResourceAssignments(resources,occurrences,[]),[]);
 });
 
-test("R2 stable multi-resource associations preserve all assignments independent of projection order",()=>{
+test("stable multi-resource associations preserve all assignments independent of projection order",()=>{
   const assignments=[
     {occurrenceId:"z",resourceIds:["doctor","roomB","roomA"],version:{revision:7}},
     {occurrenceId:"a",resourceIds:["roomB"]},
@@ -85,7 +85,7 @@ test("R2 stable multi-resource associations preserve all assignments independent
 });
 
 
-test("R2 flattening remains stack-safe and deterministic for a very deep valid hierarchy",()=>{
+test("flattening remains stack-safe and deterministic for a very deep valid hierarchy",()=>{
   const depth=12000;
   const deep=Array.from({length:depth},(_,index)=>({
     id:`r${index}`,title:`Resource ${index}`,

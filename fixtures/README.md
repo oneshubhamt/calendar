@@ -1,5 +1,5 @@
 # Director fixtures
 
-Reusable Director-specific fixtures live in `src/fixtures/director.ts` and are exported only from the opt-in subpath `@director/calendar/fixtures/director`.
+Repository-only Director fixtures live in `src/fixtures/director.ts`.
 
-They model Study Director plans/history, Revision Director obligations/daily plans/exams, Practice Desk attempts/scheduler-derived due cards, scheduled source actions and a 04:00 logical study-day boundary. They are integration fixtures, not part of the generic calendar root.
+They model Study Director plans/history, Revision Director obligations/daily plans/exams, Practice Desk attempts/scheduler-derived due cards, scheduled source actions and a 04:00 logical study-day boundary. They support repository tests and demos only: they are not exported from `@director/calendar` and are excluded from the published package build.

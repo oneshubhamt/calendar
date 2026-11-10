@@ -97,3 +97,28 @@ test('point geometry disables resize and all-day conversion even on the trusted-
   assert.equal(capabilities.canResizeStart,false);
   assert.equal(capabilities.canResizeEnd,false);
 });
+
+
+test('nearby point markers use visual lanes without acquiring temporal duration',()=>{
+  const layouts=C.layoutTimedDay([
+    occurrence(point({id:'near-a',start:'2026-11-09T15:00:00.000Z'})),
+    occurrence(point({id:'near-b',start:'2026-11-09T15:05:00.000Z'})),
+  ],new Date('2026-11-09T00:00:00.000Z'),'UTC');
+  assert.deepEqual(layouts.map(row=>row.heightMinutes),[0,0]);
+  assert.deepEqual(new Set(layouts.map(row=>row.visualLaneCount)),new Set([2]));
+  assert.equal(new Set(layouts.map(row=>row.visualLane)).size,2);
+});
+
+test('civil timeline rejects spring gaps and explicitly disambiguates fall overlaps',()=>{
+  const springDay=new Date('2026-03-08T05:00:00.000Z');
+  assert.equal(C.civilMinuteResolution(springDay,150,'America/New_York').kind,'gap');
+  assert.equal(C.instantAtCivilMinute(springDay,150,'America/New_York','earlier'),null);
+
+  const fallDay=new Date('2026-11-01T04:00:00.000Z');
+  const overlap=C.civilMinuteResolution(fallDay,90,'America/New_York');
+  assert.equal(overlap.kind,'overlap');
+  assert.equal(overlap.instants.length,2);
+  const earlier=C.instantAtCivilMinute(fallDay,90,'America/New_York','earlier');
+  const later=C.instantAtCivilMinute(fallDay,90,'America/New_York','later');
+  assert.equal(later.getTime()-earlier.getTime(),60*60_000);
+});

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveOccurrencePresentation, resolveSourceActions } from '../dist/view/presentation.js';
+import { safePresentationCss, safeAddonCss, calendarHostCss } from '../dist/view/extension-styles.js';
 
 function occurrence(overrides={}) {
   return {
@@ -74,4 +75,43 @@ test('malformed and duplicate action identities fail closed and provider failure
   ];},execute(){}};
   assert.deepEqual(resolveSourceActions(duplicate,occurrence()).map(action=>action.id),['ok']);
   assert.deepEqual(resolveSourceActions({actions(){throw new Error('host unavailable');},execute(){}},occurrence()),[]);
+});
+
+
+test('presentation extensions fail independently and extension CSS cannot claim Calendar geometry',()=>{
+  const errors=[];
+  const resolved=resolveOccurrencePresentation([
+    {presentOccurrence(){throw new Error('broken');}},
+    {presentOccurrence(){return {subtitle:'still rendered'};}},
+  ],occurrence(),(index,error)=>errors.push([index,error.message]));
+  assert.equal(resolved.subtitle.text,'still rendered');
+  assert.deepEqual(errors,[[0,'broken']]);
+
+  assert.match(
+    safePresentationCss('.custom{opacity:.8;border-style:dashed}'),
+    /\.dc-root \.custom\{opacity:\.8;border-style:dashed\}/,
+  );
+  for(const unsafe of [
+    '.custom{position:absolute;color:red}',
+    '.custom{all:unset}',
+    '.custom{animation:host 1s}',
+    '@import url(https://example.invalid/host.css);',
+    '.custom{color:red!important}',
+    '.custom{color:red;/* bypass */position:absolute}',
+    '.custom{color:red;--calendar-geometry:1}',
+    '.custom} body{color:red}',
+  ]) assert.equal(safePresentationCss(unsafe),'');
+
+  assert.equal(safeAddonCss('.tool} body{display:block}'),'');
+  assert.equal(safeAddonCss('.addon{color:red!important}'),'');
+  assert.equal(safeAddonCss('.addon{color:red;/* ambiguous */display:grid}'),'');
+
+  const scoped=calendarHostCss([], [{
+    id:'sample',
+    styles:'.tool{display:grid;gap:4px}@media(max-width:600px){.tool,.extra{display:block}}',
+  }]);
+  assert.match(scoped,/\[data-calendar-addon="0"\] \.tool\{display:grid;gap:4px\}/);
+  assert.match(scoped,/@media \(max-width:600px\)\{\[data-calendar-addon="0"\] \.tool,\[data-calendar-addon="0"\] \.extra\{display:block\}\}/);
+  assert.equal(scoped.startsWith('.tool{'),false);
+  assert.equal(scoped.includes('\n.tool{'),false);
 });

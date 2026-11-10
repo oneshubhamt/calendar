@@ -771,3 +771,18 @@ test('command staging owns create input before execute yields',async()=>{
   assert.equal(repo.read().items[0].title,'Original');
   assert.equal(repo.read().items[0].metadata.nested.value,'original');
 });
+
+
+test('one-off occurrence identity remains stable across movement without duplicating source identity as id',()=>{
+  const base=event({id:'single'});
+  const before=C.occurrenceFromItem(base,{timeZone:'UTC'});
+  const after=C.occurrenceFromItem({
+    ...base,
+    start:'2026-03-01T16:00:00.000Z',
+    end:'2026-03-01T17:00:00.000Z',
+  },{timeZone:'UTC'});
+  assert.equal(before.occurrenceId,'item:single');
+  assert.equal(after.occurrenceId,before.occurrenceId);
+  assert.equal(before.sourceItemId,'single');
+  assert.equal(Object.hasOwn(before,'id'),false);
+});
