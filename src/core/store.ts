@@ -238,6 +238,15 @@ export function assertCalendarBackgroundRangeIntegrity(
     if (raw.label !== undefined) {
       if (typeof raw.label !== "string" || !raw.label.trim() || raw.label.length > 2048) throw new Error(`${label} label is invalid`);
     }
+    if (raw.display !== undefined) {
+      const display = record(raw.display, `${label} display`);
+      for (const key of ["color", "textColor", "className"] as const) {
+        const value = display[key];
+        if (value !== undefined && (typeof value !== "string" || !value.trim() || value.length > 2048)) {
+          throw new Error(`${label} display ${key} is invalid`);
+        }
+      }
+    }
     if (raw.metadata !== undefined) assertMetadata(raw.metadata, `${label} metadata`);
 
     if (rangeIds.has(id)) throw new Error(`Duplicate calendar background range: ${id}`);
