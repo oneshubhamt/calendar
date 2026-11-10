@@ -50,3 +50,51 @@ test('C11 programme documentation uses the authoritative C1 through C11 sequence
   const headings = [...programme.matchAll(/^## Phase C(\d+) —/gm)].map(match => Number(match[1]));
   assert.deepEqual(headings, [1,2,3,4,5,6,7,8,9,10,11]);
 });
+
+
+test('background ranges and availability remain isolated from event mechanics at programme closure', async () => {
+  const [
+    engine, layout, interaction, commands, recurrence, personal, reminders, presentation, view, availability, root, packageText,
+  ] = await Promise.all([
+    read('../src/core/calendar-engine.ts'),
+    read('../src/core/layout.ts'),
+    read('../src/core/interaction.ts'),
+    read('../src/core/commands.ts'),
+    read('../src/core/recurrence.ts'),
+    read('../src/features/personal.ts'),
+    read('../src/interoperability/reminders.ts'),
+    read('../src/view/presentation.ts'),
+    read('../src/view/calendar-ui.ts'),
+    read('../src/features/availability.ts'),
+    read('../src/index.ts'),
+    read('../package.json'),
+  ]);
+
+  assert.match(engine,/CalendarQueryResult[\s\S]*backgroundRanges/);
+  assert.match(engine,/assertCalendarBackgroundRangeIntegrity/);
+
+  for (const [name, source] of [
+    ['interaction',interaction],['commands',commands],['recurrence',recurrence],
+    ['personal search',personal],['reminders',reminders],['occurrence presentation/actions',presentation],
+  ]) {
+    assert.doesNotMatch(source,/CalendarBackgroundRange|backgroundRanges|calendarAvailability/,`${name} must remain event-only`);
+  }
+
+  const timedLayout=layout.match(/export function layoutTimedDay\([\s\S]*?\n}/)?.[0] ?? '';
+  assert.match(timedLayout,/readonly CalendarOccurrence\[\]/);
+  assert.doesNotMatch(timedLayout,/CalendarBackgroundRange|backgroundRanges/);
+
+  const agenda=view.match(/private renderAgenda\([\s\S]*?\n  }\n\n  private /)?.[0] ?? '';
+  const year=view.match(/private renderYear\([\s\S]*?\n  }\n\n  private /)?.[0] ?? '';
+  assert.doesNotMatch(agenda,/backgroundRanges|backgroundLayer|dayLevelBackgroundLayer/);
+  assert.doesNotMatch(year,/backgroundRanges|backgroundLayer|dayLevelBackgroundLayer/);
+
+  assert.doesNotMatch(view,/features\/availability/);
+  assert.doesNotMatch(availability,/\.\.\/view\/|\.\.\/storage\/|\.\.\/interoperability\//);
+  assert.doesNotMatch(root,/features\/availability/);
+
+  const pkg=JSON.parse(packageText);
+  assert.equal(pkg.exports['./features/availability'].import,'./dist/features/availability.js');
+  assert.equal(Calendar.createAvailabilityBackgroundProvider,undefined);
+  assert.equal(Calendar.createAvailabilityPlacementGuard,undefined);
+});
