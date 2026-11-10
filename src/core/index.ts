@@ -3,6 +3,7 @@ export * from "./time.js";
 export * from "./temporal.js";
 export * from "./civil-timeline.js";
 export * from "./recurrence.js";
+export * from "./event-series.js";
 export * from "./layout.js";
 export * from "./interaction.js";
 export * from "./calendar-engine.js";
