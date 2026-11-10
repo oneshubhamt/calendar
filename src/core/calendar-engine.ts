@@ -85,7 +85,14 @@ export class CalendarEngine {
    */
   public subscribe(listener: (invalidation: CalendarEngineInvalidation) => void): () => void {
     this.invalidationListeners.add(listener);
-    if (this.invalidationListeners.size === 1) this.attachInputs();
+    if (this.invalidationListeners.size === 1) {
+      try {
+        this.attachInputs();
+      } catch (error) {
+        this.invalidationListeners.delete(listener);
+        throw error;
+      }
+    }
     return () => {
       this.invalidationListeners.delete(listener);
       if (this.invalidationListeners.size === 0) this.detachInputs();
