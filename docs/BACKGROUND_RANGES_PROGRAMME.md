@@ -39,7 +39,7 @@ passive background rendering layer
 
 optional availability semantics
         ├── may project background ranges
-        └── may later contribute placement policy
+        └── may explicitly contribute placement policy
 ```
 
 This mirrors the existing distinction between Calendar-owned item projection and host-owned occurrence projection without turning backgrounds into events.
@@ -69,7 +69,7 @@ A range such as 09:00–17:00 could mean either:
 - informational working hours; or
 - the only period in which scheduling is permitted.
 
-Those meanings must not be inferred from presentation. A later availability feature may provide recurring rules and exceptions and may optionally contribute a placement decision such as `allow`, `warn` or `prevent`. Any such decision should be integrated once into the existing placement-validation path used by create, edit, drag, resize, keyboard transforms and add-ons.
+Those meanings must not be inferred from presentation. The optional availability feature may provide recurring rules and exceptions and may explicitly contribute a placement decision such as `allow`, `warn` or `prevent`. Such decisions are integrated once into the existing placement-validation path used by create, edit, drag, resize, keyboard transforms and add-ons.
 
 ## Programme
 
