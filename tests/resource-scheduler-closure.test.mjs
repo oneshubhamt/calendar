@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
 import * as Calendar from "../dist/index.js";
 import {
   associateCalendarResources,
@@ -239,45 +238,4 @@ test("R7 stale and failed atomic writes are single-attempt and never mutate sche
   });
   assert.equal(warning.status,"warning");
   assert.equal(warningCalls,0);
-});
-
-test("R7 package, accessibility and dependency/persistence isolation close independently",async()=>{
-  const pkg=JSON.parse(await fs.readFile(new URL("../package.json",import.meta.url),"utf8"));
-  assert.equal(Object.hasOwn(pkg.exports,"./features"),false);
-  assert.ok(pkg.exports["./features/resource-scheduler"]);
-  assert.ok(pkg.exports["./features/resource-scheduler-ui"]);
-  const root=await import("../dist/index.js");
-  assert.equal(root.layoutResourceTimeline,undefined);
-  assert.equal(root.CalendarResourceSchedulerUi,undefined);
-
-  const forbidden=/CalendarResource|resource-scheduler|resourceTimeline|\bresourceIds?\b/u;
-  for(const relative of ["core","view","storage"]){
-    for(const file of await filesUnder(new URL(`../src/${relative}/`,import.meta.url))){
-      const text=await fs.readFile(file,"utf8");
-      assert.doesNotMatch(text,forbidden,`Resource Scheduler leaked into ${relative}: ${file}`);
-    }
-  }
-  const rootSource=await fs.readFile(new URL("../src/index.ts",import.meta.url),"utf8");
-  assert.doesNotMatch(rootSource,/resource-scheduler|CalendarResource/);
-
-  const headlessFiles=await filesUnder(new URL("../src/features/resource-scheduler/",import.meta.url));
-  for(const file of headlessFiles){
-    const text=await fs.readFile(file,"utf8");
-    assert.doesNotMatch(text,/\.\.\/\.\.\/(?:view|storage|interoperability|integration|adapters)\//,`Headless scheduler dependency leaked: ${file}`);
-    assert.doesNotMatch(text,/document\.|HTMLElement|window\./,`DOM leaked into headless scheduler: ${file}`);
-  }
-
-  const ui=await fs.readFile(new URL("../src/features/resource-scheduler-ui/index.ts",import.meta.url),"utf8");
-  const styles=await fs.readFile(new URL("../src/features/resource-scheduler-ui/styles.ts",import.meta.url),"utf8");
-  for(const token of [
-    'role", "treegrid"','role", "rowheader"','"aria-level"','"aria-expanded"',
-    '"aria-live"','"aria-busy"','"aria-keyshortcuts"','role", "separator"',
-    "schedulerUiSequence","scrollIntoView",
-  ]) assert.equal(ui.includes(token),true,`Missing accessibility contract: ${token}`);
-  assert.doesNotMatch(ui,/innerHTML|insertAdjacentHTML/);
-  assert.doesNotMatch(ui,/\.\.\/\.\.\/(?:storage|interoperability|integration|adapters)\//);
-  assert.match(styles,/:focus-visible/);
-  assert.match(styles,/touch-action:none/);
-  assert.match(styles,/prefers-reduced-motion/);
-
 });

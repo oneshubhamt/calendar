@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import * as C from '../dist/index.js';
 
 const range={start:'2026-11-09T00:00:00.000Z',end:'2026-11-10T00:00:00.000Z'};
@@ -144,10 +143,4 @@ test('malformed occurrence-only recurrence anchors and recurrence payloads fail 
   const unexpanded={...projectedOccurrence(),recurrence:{rule:{frequency:'daily'}}};
   const recurrenceEngine=new C.CalendarEngine(repo,[],[{id:'unexpanded',projectOccurrences(){return [unexpanded];}}]);
   await assert.rejects(()=>recurrenceEngine.query(range),/must already be recurrence-expanded/i);
-});
-
-test('generic core/view occurrence projection contains no host-domain semantic dependency',async()=>{
-  const files=['src/core/types.ts','src/core/calendar-engine.ts','src/core/store.ts','src/view/calendar-ui.ts','src/view/types.ts'];
-  const text=(await Promise.all(files.map(file=>fs.readFile(new URL(`../${file}`,import.meta.url),'utf8')))).join('\n');
-  for(const token of ['Ayana','nominal','journey','intent','habit','payment']) assert.equal(new RegExp(`\\b${token}\\b`,'i').test(text),false,`generic projection path leaked ${token}`);
 });

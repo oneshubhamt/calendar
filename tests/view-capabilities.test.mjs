@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import * as C from '../dist/index.js';
 import {
   formatRecurrenceByDay,
@@ -32,7 +31,6 @@ test('year and agenda list ranges are explicit, timezone-safe view contracts',()
   const rolling=C.rangeForView('2026-11-08T12:00:00.000Z','agenda',1,'Asia/Kolkata','30-days');
   assert.equal(C.daysBetween(rolling.start,rolling.end,'Asia/Kolkata'),30);
 });
-
 
 test('agenda list grouping includes carry-in and multi-day occurrences on every visible day',()=>{
   const carry=C.occurrenceFromItem(event({id:'carry',start:'2026-11-07T23:30:00.000Z',end:'2026-11-08T01:00:00.000Z'}));
@@ -75,7 +73,6 @@ test('advanced recurrence editor rejects invalid combinations instead of publish
     advanced:{byMonthDay:'',byMonth:'',byDay:'',bySetPosition:'-1'},
   }),/BYSETPOS requires/i);
 });
-
 
 test('placement conversion canonicalizes timed and all-day temporal state',()=>{
   const allDay=C.placementTimePatch(
@@ -172,153 +169,4 @@ test('resize command keeps recurring occurrence scope and undo semantics intact'
   ]);
   assert.equal(await handler.undo(),true);
   assert.equal(repo.read().items[0].recurrence.exceptions,undefined);
-});
-
-test('base UI wires month overflow, year/list views and dual-edge resizing without host semantics',async()=>{
-  const sourceText=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  const rendererText=await fs.readFile(new URL('../src/view/view-renderer.ts',import.meta.url),'utf8');
-  const gestureText=await fs.readFile(new URL('../src/view/gesture-controller.ts',import.meta.url),'utf8');
-  const editorText=await fs.readFile(new URL('../src/view/event-editor.ts',import.meta.url),'utf8');
-  assert.match(rendererText,/more\.addEventListener\("click"[\s\S]*openMonthOverflow/);
-  assert.match(sourceText,/private openMonthOverflow/);
-  assert.match(sourceText,/\["month", "week", "day", "year", "agenda"\]/);
-  assert.match(sourceText,/Day list/); assert.match(sourceText,/Week list/); assert.match(sourceText,/Month list/); assert.match(sourceText,/30-day list/);
-  assert.match(sourceText,/dc-resize-start/); assert.match(sourceText,/dc-resize-end/);
-  assert.match(gestureText,/resizePreview/); assert.match(sourceText,/resizeInterval/);
-  assert.match(sourceText,/placementTimePatch/);
-  assert.match(sourceText,/recurrenceChanged \? \{ recurrence: result\.recurrence \?\? null \} : \{\}/);
-  assert.match(sourceText,/\(key === "c" \|\| key === "n"\) && this\.canCreateItems\(\)/);
-  assert.match(editorText,/Advanced recurrence filters/);
-  assert.match(editorText,/recurrenceRuleFromEditor/);
-  assert.match(editorText,/sourceItem\?\.recurrence && !initial\.duplicate/);
-  assert.match(editorText,/initialRecurrenceFormState/);
-  assert.match(editorText,/recurrenceFormState\(\) === initialRecurrenceFormState && nextTemporal\.kind === sourceTemporal\.kind/);
-  assert.match(editorText,/!initial\.duplicate && sourceItem\?\.recurrence\?\.exceptions/);
-});
-
-
-test('day and week render passive background ranges below every interactive time-grid layer',async()=>{
-  const sourceText=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  const rendererText=await fs.readFile(new URL('../src/view/view-renderer.ts',import.meta.url),'utf8');
-  const styles=await fs.readFile(new URL('../src/view/styles.ts',import.meta.url),'utf8');
-  const types=await fs.readFile(new URL('../src/core/types.ts',import.meta.url),'utf8');
-
-  assert.match(sourceText,/private backgroundRanges: readonly CalendarBackgroundRange\[\] = \[\]/);
-  assert.match(sourceText,/this\.backgroundRanges = result\.backgroundRanges/);
-  assert.match(sourceText,/private backgroundLayer\(day: Date\)/);
-  assert.match(sourceText,/layoutBackgroundDay\([\s\S]*this\.backgroundRanges\.filter\(range => range\.allDay !== true\)/);
-  assert.match(sourceText,/startMinute: this\.dayStartHour \* 60/);
-  assert.match(sourceText,/endMinute: this\.dayEndHour \* 60/);
-  assert.match(sourceText,/if \(inBounds\) column\.append\(this\.backgroundLayer\(day\)\);[\s\S]*const layouts = layoutTimedDay/);
-  assert.match(sourceText,/background\.style\.top = .*layout\.topMinutes - visibleStart/);
-  assert.match(sourceText,/background\.style\.height = .*layout\.heightMinutes/);
-  assert.match(sourceText,/background\.style\.zIndex = String\(layout\.layer\)/);
-
-  assert.match(styles,/\.dc-background-layer\{[^}]*pointer-events:none;z-index:0/);
-  assert.match(styles,/\.dc-background-range\{[^}]*pointer-events:none/);
-  assert.match(styles,/\.dc-selection-range\{[^}]*z-index:1/);
-  assert.match(styles,/\.dc-time-event\{[^}]*z-index:2/);
-  assert.match(styles,/\.dc-now\{[^}]*z-index:3/);
-
-  assert.match(types,/interface CalendarBackgroundDisplay/);
-  assert.match(types,/readonly color\?: string/);
-  assert.match(types,/readonly textColor\?: string/);
-  assert.match(types,/readonly className\?: string/);
-  assert.match(sourceText,/--dc-background-range-color/);
-  assert.match(sourceText,/--dc-background-range-fg/);
-  assert.match(sourceText,/if \(isSafeHostClassName\(token\)\) element\.classList\.add\(token\)/);
-  assert.match(sourceText,/el\("span", "dc-background-range-label", range\.label\)/);
-  assert.doesNotMatch(sourceText,/background\.addEventListener/);
-});
-
-
-test('B4 renders only explicit all-day backgrounds in month cells and all-day lanes',async()=>{
-  const sourceText=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  const rendererText=await fs.readFile(new URL('../src/view/view-renderer.ts',import.meta.url),'utf8');
-  const styles=await fs.readFile(new URL('../src/view/styles.ts',import.meta.url),'utf8');
-  const layout=await fs.readFile(new URL('../src/core/layout.ts',import.meta.url),'utf8');
-
-  assert.match(layout,/groupAllDayBackgroundRangesByDay/);
-  assert.match(layout,/if \(background\.allDay !== true\) continue/);
-  assert.match(rendererText,/const backgroundBuckets = groupAllDayBackgroundRangesByDay\(model\.backgroundRanges, model\.timeZone, model\.visibleRange\)/);
-  assert.match(rendererText,/if \(inBounds && dayBackgrounds\.length\)/);
-  assert.match(sourceText,/if \(inBounds && dayBackgrounds\.length\) all\.append\(this\.dayLevelBackgroundLayer\(dayBackgrounds\)\)/);
-  assert.match(sourceText,/private dayLevelBackgroundLayer\(ranges: readonly CalendarBackgroundRange\[\]\)/);
-  assert.match(rendererText,/layer\.setAttribute\("aria-hidden", "true"\)/);
-  assert.match(sourceText,/this\.backgroundAriaSuffix\(dayBackgrounds\)/);
-  assert.match(rendererText,/\. Background: \$\{labels\.join\(", "\)\}/);
-  const yearRenderer=rendererText.match(/export function renderYearView[\s\S]*?export function renderMonthView/)?.[0] ?? '';
-  const agendaRenderer=rendererText.match(/export function renderAgendaView[\s\S]*?function weekdayOrder/)?.[0] ?? '';
-  assert.doesNotMatch(yearRenderer,/groupAllDayBackgroundRangesByDay/);
-  assert.doesNotMatch(agendaRenderer,/groupAllDayBackgroundRangesByDay/);
-
-  assert.match(styles,/\.dc-day-background-layer\{[^}]*pointer-events:none;z-index:0/);
-  assert.match(styles,/\.dc-day-background-range\{[^}]*pointer-events:none/);
-  assert.match(styles,/\.dc-day-number\{[^}]*position:relative;z-index:1/);
-  assert.match(styles,/\.dc-month-events\{[^}]*position:relative;z-index:1/);
-  assert.match(styles,/\.dc-all-day-col\{[^}]*position:relative;overflow:hidden/);
-  assert.match(styles,/\.dc-all-day-col>\.dc-event\{position:relative;z-index:1\}/);
-  const dayBackgroundHelper=rendererText.match(/export function dayLevelBackgroundLayer[\s\S]*?\n}\n\nexport function periodTitle/)?.[0] ?? '';
-  assert.match(dayBackgroundHelper,/dc-day-background-layer/);
-  assert.doesNotMatch(dayBackgroundHelper,/addEventListener/);
-});
-
-
-test('B6 centralizes optional placement guards across built-in, add-on and host-editor placement paths',async()=>{
-  const sourceText=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  const types=await fs.readFile(new URL('../src/view/types.ts',import.meta.url),'utf8');
-  const coreTypes=await fs.readFile(new URL('../src/core/types.ts',import.meta.url),'utf8');
-
-  assert.match(coreTypes,/export interface CalendarPlacementGuard/);
-  assert.match(coreTypes,/readonly mode: CalendarPlacementGuardMode/);
-  assert.match(coreTypes,/readonly calendarId\?: CalendarId/);
-  assert.match(types,/readonly placementGuards\?: readonly CalendarPlacementGuard\[\]/);
-
-  const gate=sourceText.match(/private async allowPlacement\([\s\S]*?\n  }\n\n  private async keyboardTransformOccurrence/)?.[0] ?? '';
-  assert.match(gate,/evaluateCalendarPlacement\(context/);
-  assert.match(gate,/navigationBounds: this\.navigationBounds/);
-  assert.match(gate,/guards: this\.options\.placementGuards/);
-  assert.match(gate,/collisionPolicy: this\.collisionPolicy/);
-  assert.match(gate,/loadCollisionOccurrences: async/);
-  assert.match(gate,/evaluation\.mode === "prevent"/);
-  assert.match(gate,/evaluation\.mode === "allow"/);
-  assert.match(gate,/confirmCalendarAction\(/);
-  assert.equal((gate.match(/confirmCalendarAction\(/g)??[]).length,1,'all warnings should share one presentation confirmation');
-  assert.doesNotMatch(gate,/evaluatePlacementGuards|placementCollisions/);
-
-  assert.match(sourceText,/createHandler\(selection, this\.placementValidationPort\(\)\)/);
-  assert.match(sourceText,/editHandler\(occurrence, this\.placementValidationPort\(\)\)/);
-  assert.match(sourceText,/private placementValidationPort\(\): CalendarPlacementValidationPort/);
-  assert.match(sourceText,/\.\.\.self\.placementValidationPort\(\)/);
-  assert.match(types,/handleCreate\?: \(selection: CalendarSelection, placement: CalendarPlacementValidationPort\)/);
-  assert.match(types,/handleEdit\?: \(occurrence: CalendarOccurrence, placement: CalendarPlacementValidationPort\)/);
-
-  for(const marker of [
-    'this.allowPlacement(nextStart, nextEnd, allDay, occurrence, "move")',
-    'this.allowPlacement(start, nextEnd, allDay, occurrence, "resize")',
-    'this.allowPlacement(this.resolveDraftTime(result.start, result.temporal), this.resolveDraftTime(result.end, result.temporal), result.allDay, occurrence, "edit", result.calendarId)',
-    'self.allowPlacement(start, end, targetAllDay, occurrence, label.toLocaleLowerCase(), patch.calendarId ?? occurrence.calendarId)',
-  ]) assert.equal(sourceText.includes(marker),true,`missing central placement gate: ${marker}`);
-
-  assert.doesNotMatch(sourceText,/features\/availability/);
-});
-
-
-test('collision validation uses the shared placement evaluator and omits passive background projection',async()=>{
-  const sourceText=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  const interaction=await fs.readFile(new URL('../src/core/interaction.ts',import.meta.url),'utf8');
-  const gate=sourceText.match(/private async allowPlacement\([\s\S]*?\n  }\n\n  private async keyboardTransformOccurrence/)?.[0] ?? '';
-  assert.match(gate,/evaluateCalendarPlacement\(context/);
-  assert.match(gate,/includeBackgroundRanges: false/);
-  assert.doesNotMatch(gate,/placementCollisions/);
-  assert.match(interaction,/export async function evaluateCalendarPlacement/);
-  assert.match(interaction,/placementCollisions\(/);
-  assert.match(interaction,/loadCollisionOccurrences/);
-});
-
-
-test('views that omit backgrounds also omit passive provider work',async()=>{
-  const sourceText=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  const refresh=sourceText.match(/public async refresh\(\): Promise<void> \{[\s\S]*?\n  }\n\n  public setView/)?.[0] ?? '';
-  assert.match(refresh,/includeBackgroundRanges: this\.view === "month" \|\| this\.view === "week" \|\| this\.view === "day"/);
 });

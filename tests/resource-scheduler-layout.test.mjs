@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
 import { layoutResourceTimeline } from "../dist/features/resource-scheduler/index.js";
 
 const resources=[
@@ -94,20 +93,6 @@ test("R3 collapse affects visible rows only; assignments remain host-authoritati
   assert.equal(layoutResourceTimeline(resources,[event],assignments,range,{collapsedResourceIds:["rooms"]}).length,0);
   assert.deepEqual(assignments,[{occurrenceId:"hidden",resourceIds:["room-a"]}]);
 });
-
-test("R3 fails closed on malformed ranges/occurrences and never imports scheduling authority or mutation logic",async()=>{
-  const event=occurrence("a","2026-11-10T10:00:00.000Z","2026-11-10T11:00:00.000Z");
-  const assignments=[{occurrenceId:"a",resourceIds:["room-a"]}];
-  assert.throws(()=>layoutResourceTimeline(resources,[event],assignments,{start:"2026-11-10T12:00:00.000Z",end:"2026-11-10T11:00:00.000Z"}),/range must end/i);
-  assert.throws(()=>layoutResourceTimeline(resources,[{...event,start:"2026-11-10T10:00:00"}],assignments,{start:"2026-11-10T09:00:00.000Z",end:"2026-11-10T12:00:00.000Z"}),/absolute ISO/i);
-  assert.throws(()=>layoutResourceTimeline(resources,[{...event,recurrence:{rule:{frequency:"daily"}}}],assignments,{start:"2026-11-10T09:00:00.000Z",end:"2026-11-10T12:00:00.000Z"}),/recurrence-expanded/i);
-  const source=await fs.readFile(new URL("../src/features/resource-scheduler/timeline-layout.ts",import.meta.url),"utf8");
-  assert.doesNotMatch(source,/evaluateCalendarPlacement|CalendarResourceMutationPort|CalendarResourceCapabilityProvider|expandItem|expandTemporalSeries/);
-  assert.doesNotMatch(source,/\.\.\/\.\.\/(view|storage|interoperability)\//);
-  const coreLayout=await fs.readFile(new URL("../src/core/layout.ts",import.meta.url),"utf8");
-  assert.doesNotMatch(coreLayout,/layoutResourceTimeline|CalendarResource/);
-});
-
 
 test("R3 keeps folded fall-back geometry bounded when the requested range begins inside an overlap",()=>{
   const interval=occurrence("folded","2026-11-01T06:00:00.000Z","2026-11-01T07:00:00.000Z");

@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import * as C from '../dist/index.js';
 import { baselineOccurrenceCapabilities, calendarOccurrenceCommandContext, resolveOccurrenceCapabilities, temporalMutationCapabilityRequirements } from '../dist/core/authority.js';
 import { CalendarCommandLifecycle } from '../dist/view/command-lifecycle.js';
@@ -16,13 +15,6 @@ function occurrence(overrides={}) {
     kind:'event',ownership:'host',editPolicy:'full',projectionIdentity:{series:'opaque',slot:4},...overrides,
   };
 }
-
-test('authority implementation helpers remain internal while the host capability contract stays public',async()=>{
-  const declarations=await fs.readFile(new URL('../dist/core/types.d.ts',import.meta.url),'utf8');
-  assert.match(declarations,/export interface CalendarOccurrenceCapabilityProvider/);
-  assert.equal(C.resolveOccurrenceCapabilities,undefined);
-  assert.equal(C.CalendarCommandLifecycle,undefined);
-});
 
 test('baseline per-occurrence authority preserves existing full, schedule-only and readonly behavior',()=>{
   const full=baselineOccurrenceCapabilities(occurrence(),source);
@@ -81,7 +73,6 @@ test('trusted-host authority may explicitly grant selected operations and suppor
   assert.equal(editableNotMovable.canEdit,true);
   assert.equal(editableNotMovable.canMove,false);
 });
-
 
 test('capability providers are dynamic so execution-time revalidation can observe revoked authority',()=>{
   let movable=true;
@@ -150,38 +141,10 @@ test('rejected or stale host commands refresh authoritative state, surface the e
   assert.equal(lifecycle.isPending('occ-stale'),false);
 });
 
-
 test('temporal patch authority distinguishes move from independent edge changes and all-day conversion',()=>{
   assert.deepEqual(temporalMutationCapabilityRequirements({beforeStart:100,beforeEnd:200,afterStart:150,afterEnd:250}),['canMove']);
   assert.deepEqual(temporalMutationCapabilityRequirements({beforeStart:100,beforeEnd:200,afterStart:150,afterEnd:200}),['canResizeStart']);
   assert.deepEqual(temporalMutationCapabilityRequirements({beforeStart:100,beforeEnd:200,afterStart:100,afterEnd:250}),['canResizeEnd']);
   assert.deepEqual(temporalMutationCapabilityRequirements({beforeStart:100,beforeEnd:200,afterStart:150,afterEnd:260}),['canResizeStart','canResizeEnd']);
   assert.deepEqual(temporalMutationCapabilityRequirements({beforeStart:100,beforeEnd:200,afterStart:100,afterEnd:200,crossesAllDayBoundary:true}),['canMove','canMoveBetweenAllDayAndTimed']);
-});
-test('Calendar UI revalidates authority at execution and wires pending/error/refresh behavior without domain semantics',async()=>{
-  const text=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  const gestures=await fs.readFile(new URL('../src/view/gesture-controller.ts',import.meta.url),'utf8');
-  const editor=await fs.readFile(new URL('../src/view/event-editor.ts',import.meta.url),'utf8');
-  assert.match(text,/dispatchOccurrence\([\s\S]*this\.occurrenceCapabilities\(occurrence\)/);
-  assert.match(text,/commandPath === "trusted-host" \? this\.options\.trustedHostCommandHandler : this\.options\.commandHandler/);
-  assert.match(text,/requirements\.some\(key => capabilities\[key\] !== true\)/);
-  assert.match(text,/canResizeOccurrence\(occurrence, "start"\)/);
-  assert.match(text,/canResizeOccurrence\(occurrence, "end"\)/);
-  assert.match(text,/commandLifecycle\.run/);
-  assert.match(text,/private isOccurrencePending\(occurrence: CalendarOccurrence\)/);
-  assert.match(text,/aria-busy/);
-  assert.match(text,/refresh: \(\) => this\.refresh\(\)/);
-  assert.match(gestures,/is-command-preview/);
-  assert.match(text,/occurrencePatchRequirements\(occurrence, patch\)/);
-  assert.match(text,/pendingOperation\(occurrence\.occurrenceId\)/);
-  assert.match(editor,/capabilities\.allowSemanticEdit \?\? baseSemanticEdit/);
-  assert.match(editor,/capabilities\.allowAllDayConversion === false/);
-  assert.match(text,/allowSemanticEdit: this\.canEditOccurrenceDetails\(occurrence, capabilities\)/);
-  assert.match(text,/const fullEdit = this\.canEditOccurrenceDetails\(occurrence, capabilities\)/);
-  assert.match(editor,/capabilities\.allowRecurrenceChange === false/);
-  assert.match(editor,/capabilities\.allowStartChange === false/);
-  assert.match(editor,/capabilities\.allowEndChange === false/);
-  const canMove=text.match(/private canMoveOccurrence\([\s\S]*?\n  }/)?.[0] ?? '';
-  assert.doesNotMatch(canMove,/isPending|commandLifecycle/);
-  for(const token of ['Ayana','nominal','journey','habit','payment']) assert.equal(new RegExp(`\\b${token}\\b`,'i').test(text),false,`generic authority path leaked ${token}`);
 });

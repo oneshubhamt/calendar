@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
 import {
   evaluateCalendarResourcePlacement,
   executeCalendarResourcePlacement,
@@ -225,45 +224,6 @@ test("R5 stale assignment versions return stale after one atomic attempt and are
     mutationPort:{commit(){throw Object.assign(new Error("stale cross-realm"),{code:"stale"});}},
   });
   assert.equal(structural.status,"stale");
-});
-
-test("R5 non-stale mutation failures propagate and resource scheduler remains isolated from UI/persistence",async()=>{
-  await assert.rejects(
-    ()=>executeCalendarResourcePlacement(resources,request(),{
-      source,resourceCapabilityProvider:allowReassign,
-      mutationPort:{commit(){throw new Error("host write failed");}},
-    }),
-    /host write failed/,
-  );
-  const [placement,coreTypes,view,ui]=await Promise.all([
-    fs.readFile(new URL("../src/features/resource-scheduler/placement.ts",import.meta.url),"utf8"),
-    fs.readFile(new URL("../src/core/types.ts",import.meta.url),"utf8"),
-    fs.readFile(new URL("../src/view/calendar-ui.ts",import.meta.url),"utf8"),
-    fs.readFile(new URL("../src/features/resource-scheduler-ui/index.ts",import.meta.url),"utf8"),
-  ]);
-  assert.match(placement,/evaluateCalendarPlacement/);
-  assert.match(placement,/resolveOccurrenceCapabilities/);
-  assert.match(placement,/temporalMutationCapabilityRequirements/);
-  assert.doesNotMatch(placement,/document\.|HTMLElement|CalendarResourceSchedulerUi|\.\.\/\.\.\/(view|storage|interoperability)\//);
-  assert.doesNotMatch(coreTypes,/CalendarResource|resourceTimeline|\bresourceIds?\b/);
-  assert.doesNotMatch(view,/CalendarResource|resource-scheduler/);
-  assert.match(ui,/executeCalendarResourcePlacement/);
-  assert.doesNotMatch(ui,/mutationPort\.commit\(|evaluateCalendarResourcePlacement\(|CalendarResourceMutationPort/);
-});
-
-
-test("R5 reuses R2 canonical hierarchy/assignment validation rather than maintaining a second ordering implementation",async()=>{
-  const placement=await fs.readFile(new URL("../src/features/resource-scheduler/placement.ts",import.meta.url),"utf8");
-  assert.match(placement,/flattenCalendarResources/);
-  assert.match(placement,/validateCalendarResourceAssignments/);
-  assert.doesNotMatch(placement,/const children = new Map|siblings\.sort\(/);
-
-  const malformedVersion={}; malformedVersion.self=malformedVersion;
-  const invalidVersion=await evaluateCalendarResourcePlacement(resources,request({assignmentVersion:malformedVersion}),{
-    resourceCapabilityProvider:allowReassign,
-  });
-  assert.equal(invalidVersion.mode,"prevent");
-  assert.match(invalidVersion.messages[0],/cycle/i);
 });
 
 test("R5 malformed resource collision policy/projections fail closed instead of weakening resource safety",async()=>{

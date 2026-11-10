@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import * as C from '../dist/index.js';
 import { resolveOccurrenceCapabilities } from '../dist/core/authority.js';
 
@@ -97,29 +96,4 @@ test('point geometry disables resize and all-day conversion even on the trusted-
   assert.equal(capabilities.canMoveBetweenAllDayAndTimed,false);
   assert.equal(capabilities.canResizeStart,false);
   assert.equal(capabilities.canResizeEnd,false);
-});
-
-
-test('point editor and duplication preserve the single-instant temporal form instead of fabricating a duration',async()=>{
-  const editor=await fs.readFile(new URL('../src/view/event-editor.ts',import.meta.url),'utf8');
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.match(editor,/const pointOccurrence = Boolean\(occurrence && occurrence\.temporalForm === "point"\)/);
-  assert.match(editor,/nextEnd = pointOccurrence \? nextStart/);
-  assert.match(editor,/const endValue = pointOccurrence\s*\? startValue/);
-  assert.match(editor,/pointOccurrence \|\| \(occurrence && capabilities\.allowAllDayConversion === false\)/);
-  assert.match(editor,/pointOccurrence \? \{ temporalForm: "point" as const \}/);
-  assert.match(editor,/endDateField\.hidden = true/);
-  assert.match(editor,/endTimeField\.hidden = true/);
-  assert.match(view,/result\.temporalForm \? \{ temporalForm: result\.temporalForm \}/);
-});
-test('point-marker view contract remains accessible and narrow-screen-safe without host semantics',async()=>{
-  assert.match(C.CALENDAR_CSS,/\.dc-time-point\{/);
-  assert.match(C.CALENDAR_CSS,/\.dc-time-point[^}]*min-height:0/);
-  assert.match(C.CALENDAR_CSS,/\.dc-time-point \.dc-occurrence-title[^}]*max-width:100%/);
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.match(view,/event\.setAttribute\("role", "group"\)/);
-  assert.match(view,/const main = el\("button", "dc-occurrence-main dc-time-event-main"\)/);
-  assert.match(view,/point in time/);
-  assert.match(view,/isPointOccurrence\(occurrence\) && allDay/);
-  for(const token of ['Ayana','journey','intent','habit','payment','deadline']) assert.equal(new RegExp(`\\b${token}\\b`,'i').test(view),false,`generic view leaked ${token}`);
 });

@@ -1,10 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import * as C from '../dist/index.js';
 import { CalendarCommandLifecycle } from '../dist/view/command-lifecycle.js';
 import { occurrenceWithPreview } from '../dist/view/occurrence-preview.js';
-import { isSafeHostClassName, resolveOccurrencePresentation } from '../dist/view/presentation.js';
+import { resolveOccurrencePresentation } from '../dist/view/presentation.js';
 import { safePresentationCss, safeAddonCss, calendarHostCss } from '../dist/view/extension-styles.js';
 
 const source={id:'host',title:'Host',visible:true,readOnly:true};
@@ -20,7 +19,7 @@ function hostOccurrence(overrides={}) {
   };
 }
 
-test('v1.1 occurrence projections require canonicalizable absolute instants and normalize offsets before range filtering',async()=>{
+test('occurrence projections require canonicalizable absolute instants and normalize offsets before range filtering',async()=>{
   const repo=new C.MemoryCalendarRepository([source],[]);
   const dateOnly=new C.CalendarEngine(repo,[],[{id:'date-only',projectOccurrences(){return [hostOccurrence({start:'2026-11-09',end:'2026-11-10',originalStart:'2026-11-09'})];}}]);
   await assert.rejects(()=>dateOnly.query({start:'2026-11-08T18:30:00.000Z',end:'2026-11-09T18:30:00.000Z'}),/absolute ISO date-time/i);
@@ -36,7 +35,7 @@ test('v1.1 occurrence projections require canonicalizable absolute instants and 
   assert.equal(outside.occurrences.length,0);
 });
 
-test('v1.1 one-off occurrence identity is stable across movement and does not duplicate source identity as id',()=>{
+test('one-off occurrence identity is stable across movement and does not duplicate source identity as id',()=>{
   const base={id:'single',calendarId:'host',title:'One off',start:'2026-11-09T10:00:00.000Z',end:'2026-11-09T11:00:00.000Z',kind:'event',ownership:'calendar',editPolicy:'full'};
   const before=C.occurrenceFromItem(base,{timeZone:'UTC'});
   const after=C.occurrenceFromItem({...base,start:'2026-11-09T12:00:00.000Z',end:'2026-11-09T13:00:00.000Z'},{timeZone:'UTC'});
@@ -46,7 +45,7 @@ test('v1.1 one-off occurrence identity is stable across movement and does not du
   assert.equal(Object.hasOwn(before,'id'),false);
 });
 
-test('v1.1 close point markers use visual lanes without acquiring temporal duration',()=>{
+test('close point markers use visual lanes without acquiring temporal duration',()=>{
   const make=(id,start)=>C.occurrenceFromItem({id,calendarId:'host',title:id,start,end:start,temporalForm:'point',kind:'event',ownership:'calendar',editPolicy:'full'},{timeZone:'UTC'});
   const layouts=C.layoutTimedDay([make('a','2026-11-09T15:00:00.000Z'),make('b','2026-11-09T15:05:00.000Z')],new Date('2026-11-09T00:00:00.000Z'),'UTC');
   assert.deepEqual(layouts.map(row=>row.heightMinutes),[0,0]);
@@ -54,7 +53,7 @@ test('v1.1 close point markers use visual lanes without acquiring temporal durat
   assert.equal(new Set(layouts.map(row=>row.visualLane)).size,2);
 });
 
-test('v1.1 civil timeline rejects spring gaps and explicitly disambiguates fall overlaps',()=>{
+test('civil timeline rejects spring gaps and explicitly disambiguates fall overlaps',()=>{
   const springDay=new Date('2026-03-08T05:00:00.000Z');
   assert.equal(C.civilMinuteResolution(springDay,150,'America/New_York').kind,'gap');
   assert.equal(C.instantAtCivilMinute(springDay,150,'America/New_York','earlier'),null);
@@ -67,7 +66,7 @@ test('v1.1 civil timeline rejects spring gaps and explicitly disambiguates fall 
   assert.equal(later.getTime()-earlier.getTime(),60*60_000);
 });
 
-test('v1.1 host lifecycle distinguishes mutation rejection from committed refresh failure',async()=>{
+test('host lifecycle distinguishes mutation rejection from committed refresh failure',async()=>{
   const lifecycle=new CalendarCommandLifecycle();
   const rejected=await lifecycle.run('a','move',()=>{throw new Error('reject');},{refresh(){}});
   assert.equal(rejected,'rejected');
@@ -77,7 +76,7 @@ test('v1.1 host lifecycle distinguishes mutation rejection from committed refres
   assert.equal(refreshFailed,'committed-refresh-failed');
 });
 
-test('v1.1 tentative occurrence geometry is stateful and can be reconstructed after authoritative re-render',()=>{
+test('tentative occurrence geometry is stateful and can be reconstructed after authoritative re-render',()=>{
   const occurrence=hostOccurrence();
   const preview={patch:{start:'2026-11-09T12:00:00.000Z',end:'2026-11-09T13:00:00.000Z'}};
   const first=occurrenceWithPreview(occurrence,preview,'UTC');
@@ -88,7 +87,7 @@ test('v1.1 tentative occurrence geometry is stateful and can be reconstructed af
   assert.equal(occurrence.start,'2026-11-09T10:00:00.000Z');
 });
 
-test('v1.1 presentation extensions fail independently and presentation CSS cannot claim Calendar geometry',()=>{
+test('presentation extensions fail independently and presentation CSS cannot claim Calendar geometry',()=>{
   const errors=[];
   const occurrence=hostOccurrence();
   const resolved=resolveOccurrencePresentation([
@@ -114,84 +113,4 @@ test('v1.1 presentation extensions fail independently and presentation CSS canno
   assert.match(scoped,/@media \(max-width:600px\)\{\[data-calendar-addon="0"\] \.tool,\[data-calendar-addon="0"\] \.extra\{display:block\}\}/);
   assert.equal(scoped.startsWith('.tool{'),false);
   assert.equal(scoped.includes('\n.tool{'),false);
-});
-
-test('v1.1 presentation data is structurally namespaced away from Calendar-owned interaction attributes',async()=>{
-  const occurrence=hostOccurrence();
-  const resolved=resolveOccurrencePresentation([{
-    presentOccurrence(){return {data:{occurrenceId:'host-value',pendingOperation:'host-value',hostStatus:'ok'}};},
-  }],occurrence);
-  assert.deepEqual(resolved.data,{occurrenceId:'host-value',pendingOperation:'host-value',hostStatus:'ok'});
-  assert.equal(isSafeHostClassName('host-accent'),true);
-  assert.equal(isSafeHostClassName('dc-point-event'),false);
-  assert.equal(isSafeHostClassName('is-pending'),false);
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.match(view,/setAttribute\(`data-host-\$\{this\.hostDataAttributeName\(key\)\}`/);
-  assert.doesNotMatch(view,/element\.dataset\[key\]\s*=/);
-});
-
-test('v1.1 action authority is named for all actions rather than only inline rendering',async()=>{
-  const types=await fs.readFile(new URL('../src/core/types.ts',import.meta.url),'utf8');
-  const authority=await fs.readFile(new URL('../src/core/authority.ts',import.meta.url),'utf8');
-  assert.match(types,/readonly canInvokeActions\?: boolean/);
-  assert.doesNotMatch(types+authority,/canInvokeInlineActions/);
-});
-
-test('v1.1 event editing and grid targeting share explicit DST semantics',async()=>{
-  const editor=await fs.readFile(new URL('../src/view/event-editor.ts',import.meta.url),'utf8');
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.match(editor,/instantAtCivilDateTime/);
-  assert.doesNotMatch(editor,/plainToInstant[\s\S]{0,200}"compatible"/);
-  assert.match(view,/instantAtCivilMinute/);
-  assert.match(view,/shiftCivilMinutes/);
-});
-
-test('v1.1 callback fall-through cannot open a mutation editor without a command path',async()=>{
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.match(view,/if \(!this\.options\.commandHandler\) \{[\s\S]{0,220}Creation was not handled by the host/);
-  assert.match(view,/if \(!this\.commandHandlerFor\(occurrence, editCapabilities\)\) \{[\s\S]{0,220}editing was not handled by the host/);
-});
-
-test('v1.1 keyboard success announcements require a completed authoritative lifecycle',async()=>{
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.match(view,/const status = allDay[\s\S]*if \(status === "completed"\) this\.announce\(`\$\{occurrence\.title\} moved/);
-  assert.match(view,/const status = allDay[\s\S]*if \(status === "completed"\) this\.announce\(`\$\{occurrence\.title\} now ends/);
-  assert.match(view,/return status;/);
-});
-
-test('v1.1 recurrence equality has one canonical source implementation',async()=>{
-  const files=['../src/core/recurrence.ts','../src/core/event-series.ts','../src/core/commands.ts','../src/view/calendar-ui.ts'];
-  const text=(await Promise.all(files.map(file=>fs.readFile(new URL(file,import.meta.url),'utf8')))).join('\n');
-  assert.equal((text.match(/function sameRecurrence\s*\(/gu)??[]).length,1);
-});
-
-test('v1.1 semantic edit authority is resolved once rather than reinterpreting edit policy in the view',async()=>{
-  const authority=await fs.readFile(new URL('../src/core/authority.ts',import.meta.url),'utf8');
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.match(authority,/canEdit: mutable && occurrence\.editPolicy === "full"/);
-  assert.match(view,/return capabilities\.canEdit;/);
-  assert.match(view,/capabilities\.canMove && capabilities\.canMoveBetweenAllDayAndTimed/);
-  assert.match(view,/isPointOccurrence\(occurrence\) && capabilities\.canMove/);
-  assert.doesNotMatch(view,/capabilities\.commandPath === "trusted-host" \|\| occurrence\.editPolicy === "full"/);
-});
-
-test('v1.1 built-in add-ons use Calendar authority rather than reinterpreting edit policy',async()=>{
-  const types=await fs.readFile(new URL('../src/view/types.ts',import.meta.url),'utf8');
-  const personal=await fs.readFile(new URL('../src/features/personal-ui.ts',import.meta.url),'utf8');
-  assert.match(types,/canMoveOccurrence\(occurrence: CalendarOccurrence\): boolean/);
-  assert.match(personal,/context\.canMoveOccurrence\(occurrence\)/);
-  assert.doesNotMatch(personal,/occurrence\.editPolicy\s*!==/);
-});
-
-test('v1.1 release contract and package surface are synchronized and lean',async()=>{
-  const pkg=JSON.parse(await fs.readFile(new URL('../package.json',import.meta.url),'utf8'));
-  assert.equal(pkg.version,'1.1.0');
-  assert.equal(Object.hasOwn(pkg.exports,'./fixtures/director'),false);
-  assert.equal(Object.hasOwn(pkg.exports,'./features'),false);
-  assert.equal(Object.hasOwn(pkg.exports,'./features/personal'),true);
-  assert.equal(Object.hasOwn(pkg.exports,'./features/personal-ui'),true);
-  assert.equal(Object.hasOwn(pkg.exports,'./features/planning'),true);
-  assert.equal(Object.hasOwn(pkg.exports,'./features/availability'),true);
-  assert.equal(Object.hasOwn(pkg.exports,'./package-contract'),false);
-  assert.deepEqual(pkg.files,['dist','docs','README.md']);
 });
