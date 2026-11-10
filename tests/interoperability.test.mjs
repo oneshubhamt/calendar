@@ -114,3 +114,93 @@ test('failed reminder delivery remains retryable', async()=>{
   assert.equal((await coordinator.check(new Date('2026-01-02T09:00:00Z'))).length,0);
   assert.equal((await coordinator.check(new Date('2026-01-02T09:01:00Z'))).length,1); assert.equal(calls,2);
 });
+
+
+test('Google publish retry adopts its deterministic remote event after state-write failure',async()=>{
+  const repo=new Core.MemoryCalendarRepository([source],[event()]);
+  let durableState=null;
+  let writeAttempts=0;
+  const states={
+    read(){return durableState?structuredClone(durableState):null;},
+    write(state){
+      writeAttempts++;
+      if(writeAttempts===1) throw Error('simulated state write failure');
+      durableState=structuredClone(state);
+    },
+    remove(){durableState=null;},
+  };
+  let remote=null;
+  let insertAttempts=0;
+  let recoveryReads=0;
+  const transport={
+    async listEvents(){return {items:[],nextSyncToken:'token'};},
+    async getEvent(_calendarId,eventId){
+      recoveryReads++;
+      assert.equal(eventId,remote.id);
+      return structuredClone(remote);
+    },
+    async listInstances(){return {items:[]};},
+    async insertEvent(_calendarId,payload){
+      insertAttempts++;
+      if(remote) throw new Google.GoogleCalendarHttpError(409,'duplicate',JSON.stringify({error:{errors:[{reason:'duplicate'}]}}));
+      remote={...payload,etag:'"remote-1"'};
+      return structuredClone(remote);
+    },
+    async updateEvent(){throw Error('unused');},
+    async patchEvent(){throw Error('unused');},
+    async deleteEvent(){throw Error('unused');},
+  };
+  const adapter=new Google.GoogleCalendarSyncAdapter(transport,repo,states,{id:'crash-safe',googleCalendarId:'remote',localCalendarId:'personal',mode:'publish'});
+  await assert.rejects(()=>adapter.sync(),/simulated state write failure/);
+  assert.equal(insertAttempts,1);
+  assert.match(remote.id,/^dcal[0-9a-v]{28}$/);
+  assert.equal(remote.extendedProperties.private.calendarItemId,'e1');
+
+  const result=await adapter.sync();
+  assert.equal(insertAttempts,2);
+  assert.equal(recoveryReads,1);
+  assert.equal(result.pushed,1);
+  assert.equal(result.state.links.length,1);
+  assert.equal(result.state.links[0].identity.eventId,remote.id);
+});
+
+test('Google two-way retry reattaches its deterministic remote event without duplicating the local item',async()=>{
+  const repo=new Core.MemoryCalendarRepository([source],[event()]);
+  let durableState=null;
+  let writeAttempts=0;
+  const states={
+    read(){return durableState?structuredClone(durableState):null;},
+    write(state){
+      writeAttempts++;
+      if(writeAttempts===1) throw Error('simulated state write failure');
+      durableState=structuredClone(state);
+    },
+    remove(){durableState=null;},
+  };
+  let remote=null;
+  let insertAttempts=0;
+  const transport={
+    async listEvents(){return {items:remote?[structuredClone(remote)]:[],nextSyncToken:'token'};},
+    async getEvent(){throw Error('unexpected recovery read');},
+    async listInstances(){return {items:[]};},
+    async insertEvent(_calendarId,payload){
+      insertAttempts++;
+      remote={...payload,etag:'"remote-1"'};
+      return structuredClone(remote);
+    },
+    async updateEvent(){throw Error('unused');},
+    async patchEvent(){throw Error('unused');},
+    async deleteEvent(){throw Error('unused');},
+  };
+  const adapter=new Google.GoogleCalendarSyncAdapter(transport,repo,states,{id:'crash-safe-two-way',googleCalendarId:'remote',localCalendarId:'personal',mode:'two-way'});
+  await assert.rejects(()=>adapter.sync(),/simulated state write failure/);
+  assert.equal(insertAttempts,1);
+
+  const result=await adapter.sync();
+  assert.equal(insertAttempts,1);
+  assert.equal(repo.read().items.length,1);
+  assert.equal(repo.read().items[0].id,'e1');
+  assert.equal(result.state.links.length,1);
+  assert.equal(result.state.links[0].localItemId,'e1');
+  assert.equal(result.state.links[0].identity.eventId,remote.id);
+});

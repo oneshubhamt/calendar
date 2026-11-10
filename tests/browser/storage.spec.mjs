@@ -166,7 +166,74 @@ test("interop persistence rejects malformed sync state and reminder records", as
   }, databaseName);
 
   expect(errors.sync).toMatch(/mode is invalid/i);
-  expect(errors.reminder).toMatch(/claimedAt is invalid/i);
+  expect(errors.reminder).toMatch(/claimedAt.*absolute ISO date-time/i);
+  await deleteDatabase(page, databaseName);
+});
+
+test("interop persistence canonicalizes absolute timestamps and rejects enclosing identity mismatches", async ({ page }, testInfo) => {
+  const databaseName = uniqueDatabaseName(testInfo, "interop-strict-invariants");
+  await page.goto("/tests/browser/harness.html");
+
+  const result = await page.evaluate(async databaseName => {
+    const { IndexedDbSyncStateStore, IndexedDbReminderReceiptStore } = await import("/dist/interoperability/storage.js");
+    const sync = new IndexedDbSyncStateStore(databaseName);
+    const baseItem = {
+      id: "remote-base", calendarId: "personal", title: "Remote base",
+      start: "2026-11-10T09:00:00.000Z", end: "2026-11-10T10:00:00.000Z",
+      kind: "event", ownership: "external", editPolicy: "full",
+    };
+    const baseLink = {
+      localItemId: "local",
+      identity: { provider: "google", connectionId: "conn", externalCalendarId: "remote", eventId: "g1" },
+      baseLocalFingerprint: "local-fingerprint",
+      baseRemoteFingerprint: "remote-fingerprint",
+      baseRemoteItem: baseItem,
+      status: "clean",
+      lastSyncedAt: "2026-11-10T15:30:00+05:30",
+    };
+    const baseState = {
+      provider: "google", connectionId: "conn", mode: "two-way",
+      externalCalendarId: "remote", localCalendarId: "personal",
+      links: [baseLink],
+      lastFullSyncAt: "2026-11-10T15:30:00+05:30",
+      lastIncrementalSyncAt: "2026-11-10T16:30:00+05:30",
+    };
+
+    const errors = {};
+    try { await sync.write({ ...baseState, lastFullSyncAt: "2026-11-10" }); }
+    catch (error) { errors.timestamp = String(error); }
+    try {
+      await sync.write({
+        ...baseState,
+        links: [{ ...baseLink, identity: { ...baseLink.identity, provider: "other" } }],
+      });
+    } catch (error) { errors.provider = String(error); }
+    try {
+      await sync.write({
+        ...baseState,
+        links: [{ ...baseLink, baseRemoteItem: { ...baseItem, calendarId: "wrong-local-calendar" } }],
+      });
+    } catch (error) { errors.remoteCalendar = String(error); }
+
+    const receipts = new IndexedDbReminderReceiptStore(databaseName);
+    try {
+      await receipts.claim("floating-claim", {
+        token: "t", claimedAt: "2026-11-10T10:00:00", expiresAt: "2026-11-10T10:15:00Z",
+      });
+    } catch (error) { errors.claim = String(error); }
+
+    await sync.write(baseState);
+    return { errors, state: await sync.read("conn") };
+  }, databaseName);
+
+  expect(result.errors.timestamp).toMatch(/absolute ISO date-time/i);
+  expect(result.errors.provider).toMatch(/provider does not match/i);
+  expect(result.errors.remoteCalendar).toMatch(/baseRemoteItem calendarId does not match/i);
+  expect(result.errors.claim).toMatch(/absolute ISO date-time/i);
+  expect(result.state.lastFullSyncAt).toBe("2026-11-10T10:00:00.000Z");
+  expect(result.state.lastIncrementalSyncAt).toBe("2026-11-10T11:00:00.000Z");
+  expect(result.state.links[0].lastSyncedAt).toBe("2026-11-10T10:00:00.000Z");
+
   await deleteDatabase(page, databaseName);
 });
 
@@ -260,7 +327,7 @@ test("two tabs serialize one Google connection before remote publish and shared 
     return await new IndexedDbSyncStateStore(databaseName).read("shared-connection");
   }, databaseName);
   expect(state.links).toHaveLength(1);
-  expect(state.links[0].identity.eventId).toBe("g1");
+  expect(state.links[0].identity.eventId).toMatch(/^dcal[0-9a-v]{28}$/);
 
   await second.close();
   await deleteDatabase(page, databaseName);

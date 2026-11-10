@@ -144,3 +144,49 @@ test('malformed occurrence-only recurrence anchors and recurrence payloads fail 
   const recurrenceEngine=new C.CalendarEngine(repo,[],[{id:'unexpanded',projectOccurrences(){return [unexpanded];}}]);
   await assert.rejects(()=>recurrenceEngine.query(range),/must already be recurrence-expanded/i);
 });
+
+
+test('independent item occurrence and background projection groups start concurrently',async()=>{
+  const repo=new C.MemoryCalendarRepository(sources,[]);
+  const started=[];
+  let resolveItems,resolveOccurrences,resolveBackgrounds;
+  const itemGate=new Promise(resolve=>{resolveItems=resolve;});
+  const occurrenceGate=new Promise(resolve=>{resolveOccurrences=resolve;});
+  const backgroundGate=new Promise(resolve=>{resolveBackgrounds=resolve;});
+  const engine=new C.CalendarEngine(
+    repo,
+    [{id:'item-gate',project(){started.push('items');return itemGate;}}],
+    [{id:'occurrence-gate',projectOccurrences(){started.push('occurrences');return occurrenceGate;}}],
+    [{id:'background-gate',projectBackgroundRanges(){started.push('backgrounds');return backgroundGate;}}],
+  );
+  const pending=engine.query(range);
+  await Promise.resolve();
+  assert.deepEqual(new Set(started),new Set(['items','occurrences','backgrounds']));
+  resolveItems([]);
+  resolveOccurrences([]);
+  resolveBackgrounds([]);
+  const result=await pending;
+  assert.deepEqual(result.occurrences,[]);
+  assert.deepEqual(result.backgroundRanges,[]);
+});
+
+test('event-only query starts no background projection work while event projection groups remain concurrent',async()=>{
+  const repo=new C.MemoryCalendarRepository(sources,[]);
+  const started=[];
+  let resolveItems,resolveOccurrences;
+  const itemGate=new Promise(resolve=>{resolveItems=resolve;});
+  const occurrenceGate=new Promise(resolve=>{resolveOccurrences=resolve;});
+  const engine=new C.CalendarEngine(
+    repo,
+    [{id:'item-gate',project(){started.push('items');return itemGate;}}],
+    [{id:'occurrence-gate',projectOccurrences(){started.push('occurrences');return occurrenceGate;}}],
+    [{id:'background',projectBackgroundRanges(){started.push('backgrounds');return [];}}],
+  );
+  const pending=engine.query(range,{includeBackgroundRanges:false});
+  await Promise.resolve();
+  assert.deepEqual(new Set(started),new Set(['items','occurrences']));
+  resolveItems([]);
+  resolveOccurrences([]);
+  const result=await pending;
+  assert.deepEqual(result.backgroundRanges,[]);
+});
