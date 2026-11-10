@@ -3,12 +3,10 @@ import type {
   CalendarBackgroundRange,
   CalendarCollisionPolicy,
   CalendarOverlapDisambiguation,
-  CalendarCommand,
   CalendarId,
   CalendarItem,
   CalendarItemPatch,
   CalendarOccurrence,
-  CalendarOccurrenceCommand,
   CalendarRange,
   CalendarSnapPolicy,
   CalendarSource,
@@ -61,7 +59,6 @@ import { confirmCalendarAction, requestCalendarDate } from "./dialogs.js";
 import {
   CalendarMutationCoordinator,
   mutationCommitted,
-  type CalendarMutationDispatchResult,
 } from "./mutation-coordinator.js";
 import { hostDataAttributeName, isSafeHostClassName, resolveOccurrencePresentation, type ResolvedCalendarOccurrencePresentation, type ResolvedCalendarSourceAction } from "./presentation.js";
 import { calendarHostCss } from "./extension-styles.js";
@@ -1374,6 +1371,42 @@ export class CalendarUi {
     }
     if (!await confirmCalendarAction(this.host, "Delete event", `Delete “${occurrence.title}”?`, "Delete", true)) return;
     await this.mutations.dispatchOccurrence({ type: "cancel-occurrence", occurrence, scope }, ["canDelete"], "delete");
+  }
+
+  private async moveToDay(occurrence: CalendarOccurrence, day: Date, allDay: boolean): Promise<void> {
+    if (!this.canMoveOccurrenceToPlacement(occurrence, allDay)) {
+      this.announce(`${occurrence.title}: this move is not allowed.`);
+      return;
+    }
+    const originalStart = toDate(occurrence.start);
+    if (allDay) {
+      const start = startOfDay(day, this.timeZone);
+      const days = calendarDaySpan(toDate(occurrence.start), toDate(occurrence.end), this.timeZone);
+      const end = addDays(start, days, this.timeZone);
+      if (!await this.allowPlacement(start, end, true, occurrence, "move")) return;
+      await this.mutations.issueOccurrencePatch(
+        occurrence,
+        placementTimePatch(start, end, true, this.timeZone),
+        "Move",
+        this.mutations.moveRequirements(occurrence, true),
+        "move",
+      );
+      return;
+    }
+    const start = withLocalTime(day, originalStart, this.timeZone, this.dstOverlapDisambiguation);
+    if (!start) {
+      this.announce("Move is unavailable because the target local time does not exist.");
+      return;
+    }
+    const end = new Date(start.getTime() + durationMs(occurrence));
+    if (!await this.allowPlacement(start, end, false, occurrence, "move")) return;
+    await this.mutations.issueOccurrencePatch(
+      occurrence,
+      { start: start.toISOString(), end: end.toISOString(), allDay: false, precision: "minute" },
+      "Move",
+      this.mutations.moveRequirements(occurrence, false),
+      "move",
+    );
   }
 
   private setOccurrencePending(occurrenceId: string, operation: string, pending: boolean): void {
