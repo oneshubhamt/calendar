@@ -5,6 +5,18 @@ import { parsePlainDate } from "./temporal.js";
 import { hasExplicitOffset } from "./time.js";
 import { CalendarStaleRevisionError } from "./revision.js";
 import { notifyObservers } from "./notifications.js";
+import {
+  applyCalendarItemPatch,
+  createCalendarItemInState,
+  createCalendarSourceInState,
+  removeCalendarItemFromState,
+  removeCalendarSourceFromState,
+  updateCalendarItemInState,
+  updateCalendarSourceInState,
+  type CalendarStateCollections,
+} from "./state-transitions.js";
+
+export { applyCalendarItemPatch, applyCalendarSourcePatch } from "./state-transitions.js";
 
 const EDIT_POLICIES = new Set(["full", "schedule-only", "readonly", "generated"]);
 const TEMPORAL_KINDS = new Set(["instant", "zoned", "floating", "date"]);
@@ -262,47 +274,6 @@ export function assertCalendarBackgroundRangeIntegrity(
   }
 }
 
-export function applyCalendarItemPatch(item: CalendarItem, patch: CalendarItemPatch): CalendarItem {
-  const description = patch.description === null ? undefined : patch.description ?? item.description;
-  const location = patch.location === null ? undefined : patch.location ?? item.location;
-  const recurrence = patch.recurrence === null ? undefined : patch.recurrence ?? item.recurrence;
-  const temporal = patch.temporal === null ? undefined : patch.temporal ?? item.temporal;
-  const display = patch.display === null ? undefined : patch.display ?? item.display;
-  const metadata = patch.metadata === null ? undefined : patch.metadata ?? item.metadata;
-  const reminders = patch.reminders === null ? undefined : patch.reminders ?? item.reminders;
-  return {
-    ...item,
-    ...(patch.calendarId !== undefined ? { calendarId: patch.calendarId } : {}),
-    ...(patch.title !== undefined ? { title: patch.title } : {}),
-    ...(description !== undefined ? { description } : { description: undefined }),
-    ...(location !== undefined ? { location } : { location: undefined }),
-    ...(patch.start !== undefined ? { start: patch.start } : {}),
-    ...(patch.end !== undefined ? { end: patch.end } : {}),
-    ...(patch.allDay !== undefined ? { allDay: patch.allDay } : {}),
-    ...(patch.precision !== undefined ? { precision: patch.precision } : {}),
-    ...(temporal !== undefined ? { temporal } : { temporal: undefined }),
-    ...(patch.temporalForm !== undefined ? { temporalForm: patch.temporalForm } : {}),
-    ...(patch.kind !== undefined ? { kind: patch.kind } : {}),
-    ...(patch.editPolicy !== undefined ? { editPolicy: patch.editPolicy } : {}),
-    ...(recurrence !== undefined ? { recurrence } : { recurrence: undefined }),
-    ...(reminders !== undefined ? { reminders } : { reminders: undefined }),
-    ...(display !== undefined ? { display } : { display: undefined }),
-    ...(metadata !== undefined ? { metadata } : { metadata: undefined }),
-  } as CalendarItem;
-}
-
-export function applyCalendarSourcePatch(source: CalendarSource, patch: CalendarSourcePatch): CalendarSource {
-  const display = patch.display === null ? undefined : patch.display ?? source.display;
-  const metadata = patch.metadata === null ? undefined : patch.metadata ?? source.metadata;
-  return {
-    ...source,
-    ...(patch.title !== undefined ? { title: patch.title } : {}),
-    ...(patch.visible !== undefined ? { visible: patch.visible } : {}),
-    ...(display !== undefined ? { display } : { display: undefined }),
-    ...(metadata !== undefined ? { metadata } : { metadata: undefined }),
-  };
-}
-
 function deepFreezeCalendarValue<T>(value: T, seen = new WeakSet<object>()): T {
   if (!value || typeof value !== "object") return value;
   const object = value as object;
@@ -361,55 +332,38 @@ export class MemoryCalendarRepository implements CalendarRepository {
   }
 
   public create(item: CalendarItem): void {
-    this.commit(this.snapshotValue.sources, [...this.snapshotValue.items, item]);
+    this.commit(createCalendarItemInState(this.snapshotValue, item));
   }
 
   public update(id: CalendarItemId, patch: CalendarItemPatch): void {
-    const index = this.snapshotValue.items.findIndex(item => item.id === id);
-    if (index < 0) throw new Error(`Calendar item not found: ${id}`);
-    const updated = applyCalendarItemPatch(this.snapshotValue.items[index]!, patch);
-    this.commit(
-      this.snapshotValue.sources,
-      this.snapshotValue.items.map((item, i) => i === index ? updated : item),
-    );
+    this.commit(updateCalendarItemInState(this.snapshotValue, id, patch));
   }
 
   public remove(id: CalendarItemId): void {
-    const next = this.snapshotValue.items.filter(item => item.id !== id);
-    if (next.length === this.snapshotValue.items.length) throw new Error(`Calendar item not found: ${id}`);
-    this.commit(this.snapshotValue.sources, next);
+    this.commit(removeCalendarItemFromState(this.snapshotValue, id));
   }
 
   public replace(items: readonly CalendarItem[]): void {
-    this.commit(this.snapshotValue.sources, items);
+    this.commit({ sources: this.snapshotValue.sources, items });
   }
 
   public replaceAtRevision(items: readonly CalendarItem[], expectedRevision: number): void {
     if (this.snapshotValue.revision !== expectedRevision) {
       throw new CalendarStaleRevisionError(expectedRevision, this.snapshotValue.revision);
     }
-    this.commit(this.snapshotValue.sources, items);
+    this.commit({ sources: this.snapshotValue.sources, items });
   }
 
   public createSource(source: CalendarSource): void {
-    this.commit([...this.snapshotValue.sources, source], this.snapshotValue.items);
+    this.commit(createCalendarSourceInState(this.snapshotValue, source));
   }
 
   public updateSource(id: string, patch: CalendarSourcePatch): void {
-    const index = this.snapshotValue.sources.findIndex(source => source.id === id);
-    if (index < 0) throw new Error(`Calendar source not found: ${id}`);
-    const next = this.snapshotValue.sources.map((source, i) => i === index ? applyCalendarSourcePatch(source, patch) : source);
-    this.commit(next, this.snapshotValue.items);
+    this.commit(updateCalendarSourceInState(this.snapshotValue, id, patch));
   }
 
   public removeSource(id: string): void {
-    const source = this.snapshotValue.sources.find(row => row.id === id);
-    if (!source) throw new Error(`Calendar source not found: ${id}`);
-    if (source.removable !== true) throw new Error("Calendar source is not removable");
-    if (this.snapshotValue.items.some(item => item.calendarId === id)) {
-      throw new Error("Move or delete events from this calendar before removing it");
-    }
-    this.commit(this.snapshotValue.sources.filter(row => row.id !== id), this.snapshotValue.items);
+    this.commit(removeCalendarSourceFromState(this.snapshotValue, id));
   }
 
   public subscribe(listener: (snapshot: CalendarSnapshot) => void): () => void {
@@ -417,11 +371,11 @@ export class MemoryCalendarRepository implements CalendarRepository {
     return () => this.listeners.delete(listener);
   }
 
-  private commit(sources: readonly CalendarSource[], items: readonly CalendarItem[]): void {
+  private commit(state: CalendarStateCollections): void {
     this.snapshotValue = materializeCalendarSnapshot(
       this.snapshotValue,
-      sources,
-      items,
+      state.sources,
+      state.items,
       this.snapshotValue.revision + 1,
     );
     notifyObservers(this.listeners, this.snapshotValue);

@@ -9,11 +9,18 @@ import type {
 import { CalendarStaleRevisionError } from "../core/revision.js";
 import { notifyObservers } from "../core/notifications.js";
 import {
-  applyCalendarItemPatch,
-  applyCalendarSourcePatch,
   assertCalendarStateIntegrity,
   materializeCalendarSnapshot,
 } from "../core/store.js";
+import {
+  createCalendarItemInState,
+  createCalendarSourceInState,
+  removeCalendarItemFromState,
+  removeCalendarSourceFromState,
+  updateCalendarItemInState,
+  updateCalendarSourceInState,
+  type CalendarStateCollections,
+} from "../core/state-transitions.js";
 
 // Fresh durable namespace: no Calendar application has ever been installed against another
 // persistent schema. IndexedDB version 1 is the sole accepted durable topology.
@@ -229,60 +236,42 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
 
   public async create(item: CalendarItem): Promise<void> {
     const current = this.read();
-    if (current.items.some(existing => existing.id === item.id)) throw new Error(`Duplicate calendar item: ${item.id}`);
-    if (!current.sources.some(source => source.id === item.calendarId)) throw new Error(`Unknown calendar source: ${item.calendarId}`);
-    await this.commit([...current.items, item], current.sources, current.revision);
+    await this.commit(createCalendarItemInState(current, item), current.revision);
   }
 
   public async update(id: string, patch: CalendarItemPatch): Promise<void> {
     const current = this.read();
-    const index = current.items.findIndex(item => item.id === id);
-    if (index < 0) throw new Error(`Calendar item not found: ${id}`);
-    const next = applyCalendarItemPatch(current.items[index]!, patch);
-    if (!current.sources.some(source => source.id === next.calendarId)) throw new Error(`Unknown calendar source: ${next.calendarId}`);
-    await this.commit(current.items.map((item, i) => i === index ? next : item), current.sources, current.revision);
+    await this.commit(updateCalendarItemInState(current, id, patch), current.revision);
   }
 
   public async remove(id: string): Promise<void> {
     const current = this.read();
-    const next = current.items.filter(item => item.id !== id);
-    if (next.length === current.items.length) throw new Error(`Calendar item not found: ${id}`);
-    await this.commit(next, current.sources, current.revision);
+    await this.commit(removeCalendarItemFromState(current, id), current.revision);
   }
 
   public async replace(items: readonly CalendarItem[]): Promise<void> {
     const current = this.read();
-    assertCalendarStateIntegrity(current.sources, items);
-    await this.commit(items, current.sources, current.revision);
+    await this.commit({ sources: current.sources, items }, current.revision);
   }
 
   public async replaceAtRevision(items: readonly CalendarItem[], expectedRevision: number): Promise<void> {
     const current = this.read();
-    assertCalendarStateIntegrity(current.sources, items);
-    await this.commit(items, current.sources, expectedRevision);
+    await this.commit({ sources: current.sources, items }, expectedRevision);
   }
 
   public async createSource(source: CalendarSource): Promise<void> {
     const current = this.read();
-    if (current.sources.some(existing => existing.id === source.id)) throw new Error(`Duplicate calendar source: ${source.id}`);
-    await this.commit(current.items, [...current.sources, source], current.revision);
+    await this.commit(createCalendarSourceInState(current, source), current.revision);
   }
 
   public async updateSource(id: string, patch: CalendarSourcePatch): Promise<void> {
     const current = this.read();
-    const index = current.sources.findIndex(source => source.id === id);
-    if (index < 0) throw new Error(`Calendar source not found: ${id}`);
-    const next = current.sources.map((source, i) => i === index ? applyCalendarSourcePatch(source, patch) : source);
-    await this.commit(current.items, next, current.revision);
+    await this.commit(updateCalendarSourceInState(current, id, patch), current.revision);
   }
 
   public async removeSource(id: string): Promise<void> {
     const current = this.read();
-    const source = current.sources.find(row => row.id === id);
-    if (!source) throw new Error(`Calendar source not found: ${id}`);
-    if (source.removable !== true) throw new Error("Calendar source is not removable");
-    if (current.items.some(item => item.calendarId === id)) throw new Error("Move or delete events from this calendar before removing it");
-    await this.commit(current.items, current.sources.filter(row => row.id !== id), current.revision);
+    await this.commit(removeCalendarSourceFromState(current, id), current.revision);
   }
 
   public subscribe(listener: (snapshot: CalendarSnapshot) => void): () => void {
@@ -328,11 +317,11 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   }
 
   private async commit(
-    items: readonly CalendarItem[],
-    sources: readonly CalendarSource[],
+    state: CalendarStateCollections,
     expectedRevision: number,
   ): Promise<void> {
     if (!this.loaded || !this.db) throw new Error("IndexedDbCalendarRepository.open() must complete first");
+    const { items, sources } = state;
     assertCalendarStateIntegrity(sources, items);
     if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
       throw new RangeError("Expected Calendar revision must be a non-negative integer");

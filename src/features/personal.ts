@@ -1,5 +1,5 @@
 import type {
-  CalendarItem, CalendarItemKind, CalendarItemPatch, CalendarOccurrence, CalendarRange,
+  CalendarItem, CalendarItemKind, CalendarItemPatch, CalendarOccurrence,
   CalendarSource, ISODate, ISODateTime, RecurrenceRule,
   CalendarMetadata, CalendarOwnership, EditPolicy,
 } from "../core/types.js";
@@ -277,28 +277,6 @@ export function instantiateRoutine(template: CalendarRoutineTemplate, date: ISOD
       createdAt: now, updatedAt: now,
     } as CalendarItem;
   });
-}
-
-export interface AgendaDayGroup {
-  readonly date: ISODate;
-  readonly occurrences: readonly CalendarOccurrence[];
-}
-
-/** Generic agenda grouping with no milestone/planning semantics. */
-export function agendaDays(occurrences: readonly CalendarOccurrence[], range: CalendarRange, timeZone: string): readonly AgendaDayGroup[] {
-  const map = new Map<string, CalendarOccurrence[]>();
-  for (const item of occurrences) {
-    const key = dateKey(item.start, timeZone);
-    const rows = map.get(key) ?? [];
-    rows.push(item); map.set(key, rows);
-  }
-  const out: AgendaDayGroup[] = [];
-  for (let day = startOfDay(range.start, timeZone); day < toDate(range.end); day = addDays(day, 1, timeZone)) {
-    const key = dateKey(day, timeZone);
-    const rows = (map.get(key) ?? []).sort((a,b) => toDate(a.start).getTime() - toDate(b.start).getTime());
-    if (rows.length) out.push({ date: key, occurrences: rows });
-  }
-  return out;
 }
 
 export function personalCalendarSource(id: string, title: string, category?: string): CalendarSource {

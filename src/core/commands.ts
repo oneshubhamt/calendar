@@ -12,7 +12,13 @@ import type {
   RecurrenceException,
 } from "./types.js";
 import { projectTemporalPatchToSeries, rebaseTemporalSeriesExceptions, sameRecurrence, temporalSeriesIdentityAtOrdinal, temporalSeriesOrdinal } from "./recurrence.js";
-import { applyCalendarItemPatch, assertCalendarStateIntegrity, materializeCalendarSnapshot } from "./store.js";
+import { assertCalendarStateIntegrity, materializeCalendarSnapshot } from "./store.js";
+import {
+  createCalendarItemInState,
+  removeCalendarItemFromState,
+  updateCalendarItemInState,
+  type CalendarStateCollections,
+} from "./state-transitions.js";
 import { CalendarStaleError } from "./revision.js";
 
 /** Host command rejection caused by obsolete authoritative state. */
@@ -240,38 +246,33 @@ class CommandStagingRepository implements CalendarRepository {
   }
 
   public create(item: CalendarItem): void {
-    this.stage([...this.snapshotValue.items, item]);
+    this.stage(createCalendarItemInState(this.snapshotValue, item));
   }
 
   public update(id: string, patch: CalendarItemPatch): void {
-    const index = this.snapshotValue.items.findIndex(item => item.id === id);
-    if (index < 0) throw new Error(`Calendar item not found: ${id}`);
-    this.stage(this.snapshotValue.items.map((item, i) => i === index ? applyCalendarItemPatch(item, patch) : item));
+    this.stage(updateCalendarItemInState(this.snapshotValue, id, patch));
   }
 
   public remove(id: string): void {
-    const next = this.snapshotValue.items.filter(item => item.id !== id);
-    if (next.length === this.snapshotValue.items.length) throw new Error(`Calendar item not found: ${id}`);
-    this.stage(next);
+    this.stage(removeCalendarItemFromState(this.snapshotValue, id));
   }
 
   public replace(items: readonly CalendarItem[]): void {
-    this.stage(items);
+    this.stage({ sources: this.snapshotValue.sources, items });
   }
 
   public replaceAtRevision(items: readonly CalendarItem[], expectedRevision: number): void {
     if (expectedRevision !== this.snapshotValue.revision) {
       throw new Error(`Staging revision mismatch: expected ${expectedRevision}, found ${this.snapshotValue.revision}`);
     }
-    this.stage(items);
+    this.stage({ sources: this.snapshotValue.sources, items });
   }
 
-  private stage(items: readonly CalendarItem[]): void {
-    assertCalendarStateIntegrity(this.snapshotValue.sources, items);
+  private stage(state: CalendarStateCollections): void {
     this.snapshotValue = materializeCalendarSnapshot(
       this.snapshotValue,
-      this.snapshotValue.sources,
-      items,
+      state.sources,
+      state.items,
       this.snapshotValue.revision,
     );
   }
