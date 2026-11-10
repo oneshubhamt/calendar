@@ -12,7 +12,6 @@ import { resolveOccurrencePresentation } from "../../view/presentation.js";
 import {
   executeCalendarResourcePlacement,
   flattenCalendarResources,
-  layoutResourceTimeline,
   replaceCalendarResourceAssignment,
   type CalendarResource,
   type CalendarResourceAssignment,
