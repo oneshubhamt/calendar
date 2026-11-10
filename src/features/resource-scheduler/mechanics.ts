@@ -3,7 +3,7 @@ import { assertCalendarMetadataIntegrity } from "../../core/store.js";
 import type {
   CalendarResource, CalendarResourceAssignment, CalendarResourceId,
   CalendarResourceAssignmentVersion,
-} from "./index.js";
+} from "./types.js";
 
 export interface CalendarResourceRow {
   readonly resource: CalendarResource;

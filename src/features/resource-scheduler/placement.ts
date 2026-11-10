@@ -17,7 +17,8 @@ import {
   temporalMutationCapabilityRequirements,
   type CalendarOccurrenceCapabilityKey,
 } from "../../core/authority.js";
-import { CalendarCommandStaleError } from "../../core/commands.js";
+import { CalendarStaleError } from "../../core/revision.js";
+import { sameCanonicalValue } from "../../core/canonical-value.js";
 import { assertTimeZone } from "../../core/temporal.js";
 import { parseAbsoluteDateTime } from "../../core/time.js";
 import { flattenCalendarResources, validateCalendarResourceAssignments } from "./mechanics.js";
@@ -31,7 +32,7 @@ import type {
   CalendarResourcePlacementChange,
   CalendarResourcePlacementContext,
   CalendarResourcePlacementGuard,
-} from "./index.js";
+} from "./types.js";
 
 export interface CalendarResourcePlacementRequest extends CalendarResourcePlacementContext {
   readonly scope: SeriesEditScope;
@@ -164,10 +165,6 @@ function normalizedResourceSets(
     throw new Error(`Target resource ${request.targetResourceId} is not in the target assignment`);
   }
   return { from, to, resourceById };
-}
-
-function sameIds(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function combineMode(...modes: readonly CalendarPlacementGuardMode[]): CalendarPlacementGuardMode {
@@ -311,7 +308,7 @@ async function evaluateResourceCollisions(
 }
 
 function staleError(error: unknown): boolean {
-  return error instanceof CalendarCommandStaleError
+  return error instanceof CalendarStaleError
     || Boolean(error && typeof error === "object" && (error as { readonly code?: unknown }).code === "stale");
 }
 
@@ -420,7 +417,7 @@ export async function evaluateCalendarResourcePlacement(
     end: temporalContext.end,
     action: request.action,
   };
-  const resourceChanged = !sameIds(normalized.from, normalized.to);
+  const resourceChanged = !sameCanonicalValue(normalized.from, normalized.to);
   const requiredTemporalCapabilities = temporalMutationCapabilityRequirements({
     beforeStart, beforeEnd, afterStart, afterEnd,
   });

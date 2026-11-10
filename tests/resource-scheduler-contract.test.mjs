@@ -21,7 +21,13 @@ test("R1 exposes Resource Scheduler only through its explicit optional package s
 });
 
 test("R1 Resource Scheduler contracts depend only on core types", async () => {
-  const source = await read("../src/features/resource-scheduler/index.ts");
+  const [source,barrel,mechanics,placement,timeline]=await Promise.all([
+    read("../src/features/resource-scheduler/types.ts"),
+    read("../src/features/resource-scheduler/index.ts"),
+    read("../src/features/resource-scheduler/mechanics.ts"),
+    read("../src/features/resource-scheduler/placement.ts"),
+    read("../src/features/resource-scheduler/timeline-layout.ts"),
+  ]);
   for (const contract of [
     "CalendarResourceDisplay",
     "CalendarResource",
@@ -42,6 +48,10 @@ test("R1 Resource Scheduler contracts depend only on core types", async () => {
   assert.match(source, /projectAssignments\([\s\S]*range: CalendarRange,[\s\S]*occurrences: readonly CalendarOccurrence\[\]/);
   assert.doesNotMatch(source, /\.\.\/\.\.\/(view|storage|interoperability)\//);
   assert.doesNotMatch(source, /document\.|HTMLElement|CalendarUiAddon/);
+  assert.match(barrel,/from "\.\/types\.js"/);
+  for (const implementation of [mechanics,placement,timeline]) assert.doesNotMatch(implementation,/from "\.\/index\.js"/);
+  assert.match(placement,/CalendarStaleError/);
+  assert.doesNotMatch(placement,/CalendarCommandStaleError/);
 });
 
 test("R1 keeps root, core and ordinary view resource-free", async () => {

@@ -14,7 +14,7 @@ import type {
   CalendarResourceAssignment,
   CalendarResourceAssignmentVersion,
   CalendarResourceId,
-} from "./index.js";
+} from "./types.js";
 
 const MINUTE_MS = 60_000;
 

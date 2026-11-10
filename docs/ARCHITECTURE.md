@@ -100,7 +100,7 @@ Provides optional DOM-free availability semantics. `CalendarAvailabilityDefiniti
 
 ### `features/resource-scheduler`
 
-Resource Scheduler is an optional, DOM-free sibling capability for hosts that schedule a second dimension such as rooms, people or equipment. Resources are not Calendar sources and are never inferred from event metadata. The feature owns a flat `parentId` hierarchy contract, range-bounded resource projection, range-bounded batch assignment projection, independent reassignment authority, feature-local resource placement guards and an atomic resource/time mutation port.
+Resource Scheduler is an optional, DOM-free sibling capability for hosts that schedule a second dimension such as rooms, people or equipment. Resources are not Calendar sources and are never inferred from event metadata. The feature owns a flat `parentId` hierarchy contract, range-bounded resource projection, range-bounded batch assignment projection, independent reassignment authority, feature-local resource placement guards and an atomic resource/time mutation port. Its contracts live in a dedicated type leaf; mechanics, placement and timeline modules depend on that leaf rather than importing their own public barrel.
 
 The base remains resource-free: `CalendarItem`, `CalendarOccurrence` and `CalendarView` gain no resource fields or resource timeline member; ordinary `CalendarUi` and `layoutTimedDay()` do not understand resource rows; Calendar persistence stores no resource tree or assignments by default. Hosts remain authoritative for resource and assignment state. A host that does not import this subpath receives no Resource Scheduler module or runtime work.
 
