@@ -194,7 +194,6 @@ export interface CalendarUiAddonContext extends CalendarPlacementValidationPort 
   announce(message: string): void;
   createSource(source: CalendarSource): Promise<void>;
   createDraft(draft: CalendarCreateDraft, purpose: CalendarItemFactoryInput["purpose"], original?: CalendarOccurrence): Promise<CalendarItem | null>;
-  canPlaceDraft(draft: CalendarCreateDraft, original?: CalendarOccurrence, action?: string): Promise<boolean>;
   patchOccurrence(occurrence: CalendarOccurrence, patch: CalendarItemPatch, label?: string): Promise<boolean>;
 }
 
