@@ -14,6 +14,7 @@ view/                 generic month/week/day/year + list UI and generic event/re
 features/personal     pure search/filter, quick-create, calendars, copy/move, routines
 features/personal-ui  OPTIONAL DOM controls for those personal conveniences
 features/planning     OPTIONAL deadlines/milestones/planned-vs-actual presentation
+features/availability OPTIONAL recurring available/unavailable background semantics
 storage/              IndexedDB repository
 interoperability/     ICS, Google Calendar, sync, overlays, reminders
 integration/          OPTIONAL host adapters
@@ -21,7 +22,7 @@ integration/          OPTIONAL host adapters
 
 `kind`, `ownership`, `sourceType` and host metadata are extensible identifiers/data. Generic behavior is governed by explicit capabilities and policies such as `editPolicy`, `readOnly`, `allowCreate`, `removable` and temporal semantics—not by application names or reserved domain kinds.
 
-The root export is deliberately lean: **core + view only**. IndexedDB storage, interoperability, personal conveniences, planning semantics and host integrations are explicit subpaths. The base view does not import either optional feature, so a host can use `core + view` without IndexedDB, Google/ICS, quick-create/search/routines/source-creation code.
+The root export is deliberately lean: **core + view only**. IndexedDB storage, interoperability, personal conveniences, planning semantics, availability semantics and host integrations are explicit subpaths. The base view imports none of those optional features, so a host can use `core + view` without IndexedDB, Google/ICS, quick-create/search/routines/source-creation or availability-rule code.
 
 ## Host customization
 
@@ -38,6 +39,7 @@ A host can:
 - use a read-only snapshot provider when the host owns persistence/commands elsewhere, or a mutable repository when Calendar owns writes; projected host data can publish invalidations without transferring ownership;
 - supply `CalendarProjectionProvider` items for Calendar-owned recurrence expansion, or `CalendarOccurrenceProjectionProvider` occurrences when the host has already expanded recurrence for the requested range; host-expanded `start`, `end` and `originalStart` values must be absolute ISO date-times and are canonicalized before range filtering, while any host-local recurrence key belongs in opaque `projectionIdentity`;
 - supply `CalendarBackgroundProjectionProvider` values for passive, already-expanded temporal context that remains separate from events and scheduling constraints; `layoutBackgroundDay()` provides civil/DST-safe timed geometry, day/week timed ranges render through a dedicated pointer-transparent background layer, and explicit `allDay: true` ranges shade Month cells plus Day/Week all-day lanes without entering event rows; optional background display color/text/class tokens remain cosmetic-only;
+- optionally import `features/availability` to express available/unavailable definitions (including Calendar recurrence/exceptions) and expand them through the existing recurrence engine into passive background ranges; this feature owns no persistence and never enforces placement;
 - supply `CalendarOccurrenceCapabilityProvider` for per-occurrence move/conversion/resize/open/edit/delete/recurrence/action authority; default-path results can only narrow existing policy, while explicit `trusted-host` authority routes through `trustedHostCommandHandler` and is revalidated at execution; editor saves and add-on patches derive the same move/resize/conversion requirements from the temporal fields they actually change, and trusted-host semantic editing is not re-blocked by a legacy schedule-only editor branch;
 - Calendar applies its built-in occurrence command lifecycle for operation-specific pending state, occurrence-level duplicate suppression, stable occurrence/source/projection identity context, explicit stale-command errors, accessible failures and authoritative refresh after asynchronous host commands; pointer drag/resize previews are stateful and survive re-render until host resolution, and a committed mutation whose reprojection fails is reported distinctly from a rejected mutation so retry cannot duplicate a successful write;
 - independently suppress Calendar-owned toolbar/date-navigation/view-switch/source/create chrome through `chrome`, including a fully toolbar-free embedded day grid while keyboard/grid interactions remain active;
