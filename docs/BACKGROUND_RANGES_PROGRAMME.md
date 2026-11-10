@@ -108,11 +108,13 @@ B2 is complete through `layoutBackgroundDay()`. Geometry is clipped against the 
 
 B3 is complete. Day/week timed backgrounds render through a dedicated pointer-transparent z-index-0 layer beneath selection (`1`), events (`2+`) and the current-time marker (`3`). `allDay` background ranges remain deferred to B4. Background color/text/class presentation is cosmetic-only; class tokens use the existing safe host-class gate and extension CSS still cannot claim Calendar geometry. Optional labels are rendered as plain text and do not add interaction handlers.
 
-### B4 — Full-day/month behavior
+### B4 — Full-day/month behavior ✅
 
 - support explicit full-day background ranges in month cells;
 - keep timed backgrounds out of month shading;
 - preserve navigation-bound behavior and accessibility truthfulness.
+
+B4 is complete. Only explicit `allDay: true` background ranges enter day-level rendering. They are grouped across the local days their absolute interval overlaps, rendered as passive full-surface shading in Month cells and Day/Week all-day lanes, omitted entirely on out-of-bounds days, and represented in accessible day/all-day descriptions through bounded label summaries. Timed backgrounds remain excluded from Month/day-level shading. Year and Agenda remain intentionally unsupported for backgrounds.
 
 ### B5 — Optional availability semantics
 
