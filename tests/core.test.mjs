@@ -216,6 +216,10 @@ test('background range projections stay passive, canonical and fail closed', asy
       expected:/label is invalid/i,
       ranges:[{id:'bad-label',start:'2026-11-10T09:00:00Z',end:'2026-11-10T10:00:00Z',label:'   '}],
     },
+    {
+      expected:/display color is invalid/i,
+      ranges:[{id:'bad-display',start:'2026-11-10T09:00:00Z',end:'2026-11-10T10:00:00Z',display:{color:42}}],
+    },
   ];
   for(const {expected,ranges} of invalidCases){
     const invalidEngine=new C.CalendarEngine(repo,[],[],[{id:'invalid',projectBackgroundRanges:()=>ranges}]);
