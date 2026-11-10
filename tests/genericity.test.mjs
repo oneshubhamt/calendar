@@ -174,7 +174,7 @@ test('optional availability semantics reuse Calendar recurrence and preserve pas
       rule:{frequency:'weekly',byWeekday:[1,2,3,4,5],count:5},
       exceptions:[
         {originalStart:'2026-11-11T09:00:00',cancelled:true},
-        {originalStart:'2026-11-12T09:00:00',replacement:{start:'2026-11-12T10:00:00',end:'2026-11-12T18:00:00',title:'Late hours'}},
+        {originalStart:'2026-11-12T09:00:00',replacement:{start:'2026-11-12T10:00:00',end:'2026-11-12T18:00:00',label:'Late hours'}},
       ],
     },
     display:{className:'availability-window'},
@@ -268,7 +268,7 @@ test('availability definitions fail closed and remain an optional feature bounda
     ],
     {start:'2026-11-10T00:00:00Z',end:'2026-11-11T00:00:00Z'},
     {timeZone:'UTC'},
-  ),/Duplicate calendar item/i);
+  ),/Duplicate availability definition/i);
 
   const root=await import('../dist/index.js');
   assert.equal('expandAvailabilityDefinitions' in root,false);
