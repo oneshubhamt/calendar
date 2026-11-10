@@ -278,3 +278,43 @@ test('availability definitions fail closed and remain an optional feature bounda
   const pkg=JSON.parse(await fs.readFile(new URL('../package.json',import.meta.url),'utf8'));
   assert.equal(pkg.exports['./features/availability'].import,'./dist/features/availability.js');
 });
+
+
+test('availability placement guards are explicit opt-in policies over passive availability semantics',async()=>{
+  const definitions=()=>[
+    {id:'available-a',state:'available',calendarId:'personal',start:'2026-11-10T09:00:00Z',end:'2026-11-10T12:00:00Z'},
+    {id:'available-b',state:'available',calendarId:'personal',start:'2026-11-10T12:00:00Z',end:'2026-11-10T17:00:00Z'},
+    {id:'blocked',state:'unavailable',calendarId:'personal',start:'2026-11-10T13:00:00Z',end:'2026-11-10T14:00:00Z'},
+    {id:'other-source',state:'unavailable',calendarId:'ayana:journey',start:'2026-11-10T10:00:00Z',end:'2026-11-10T11:00:00Z'},
+  ];
+  const requireAvailable=Availability.createAvailabilityPlacementGuard({
+    id:'required-hours',timeZone:'UTC',definitions,policy:'require-available',mode:'prevent',
+  });
+  const context=(start,end,calendarId='personal')=>({start,end,allDay:false,action:'create',timeZone:'UTC',calendarId});
+
+  assert.deepEqual(await requireAvailable.evaluate(context('2026-11-10T09:30:00Z','2026-11-10T12:30:00Z')),{mode:'allow'});
+  assert.equal((await requireAvailable.evaluate(context('2026-11-10T12:30:00Z','2026-11-10T14:30:00Z'))).mode,'prevent');
+  assert.equal((await requireAvailable.evaluate(context('2026-11-10T08:30:00Z','2026-11-10T09:30:00Z'))).mode,'prevent');
+  assert.deepEqual(await requireAvailable.evaluate(context('2026-11-10T10:00:00Z','2026-11-10T11:00:00Z','ayana:journey')),{mode:'prevent',message:'This placement is outside available time.'});
+
+  const warnUnavailable=Availability.createAvailabilityPlacementGuard({
+    id:'avoid-blocked',timeZone:'UTC',definitions,policy:'exclude-unavailable',mode:'warn',message:'Preferred scheduling conflict.',
+  });
+  assert.deepEqual(await warnUnavailable.evaluate(context('2026-11-10T13:15:00Z','2026-11-10T13:45:00Z')),{mode:'warn',message:'Preferred scheduling conflict.'});
+  assert.deepEqual(await warnUnavailable.evaluate(context('2026-11-10T12:00:00Z','2026-11-10T12:30:00Z')),{mode:'allow'});
+
+  const point=await requireAvailable.evaluate(context('2026-11-10T11:00:00Z','2026-11-10T11:00:00Z'));
+  assert.deepEqual(point,{mode:'allow'});
+
+  const backgroundProvider=Availability.createAvailabilityBackgroundProvider({id:'visual-only',timeZone:'UTC',definitions});
+  assert.equal('evaluate' in backgroundProvider,false,'visual availability provider must remain non-enforcing');
+});
+
+test('availability placement guard policy configuration fails closed at construction',()=>{
+  assert.throws(()=>Availability.createAvailabilityPlacementGuard({
+    id:'bad-policy',timeZone:'UTC',definitions:()=>[],policy:'maybe',mode:'prevent',
+  }),/policy is invalid/i);
+  assert.throws(()=>Availability.createAvailabilityPlacementGuard({
+    id:'bad-mode',timeZone:'UTC',definitions:()=>[],policy:'exclude-unavailable',mode:'allow',
+  }),/mode is invalid/i);
+});
