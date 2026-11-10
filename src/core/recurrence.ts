@@ -47,8 +47,8 @@ export interface CalendarTemporalSeries {
 }
 
 export interface CalendarTemporalSeriesPatch {
-  readonly start?: ISODateTime | undefined;
-  readonly end?: ISODateTime | undefined;
+  readonly start?: ISODateTime;
+  readonly end?: ISODateTime;
 }
 
 
@@ -66,13 +66,13 @@ export interface CalendarResolvedTemporalPlacement {
 
 export interface CalendarTemporalSeriesException<TPatch extends CalendarTemporalSeriesPatch = CalendarTemporalSeriesPatch> {
   readonly originalStart: ISODateTime;
-  readonly cancelled?: boolean | undefined;
-  readonly replacement?: TPatch | undefined;
+  readonly cancelled?: boolean;
+  readonly replacement?: TPatch;
 }
 
 export interface CalendarTemporalSeriesRecurrence<TPatch extends CalendarTemporalSeriesPatch = CalendarTemporalSeriesPatch> {
   readonly rule: RecurrenceRule;
-  readonly exceptions?: readonly CalendarTemporalSeriesException<TPatch>[] | undefined;
+  readonly exceptions?: readonly CalendarTemporalSeriesException<TPatch>[];
 }
 
 export interface CalendarResolvedTemporalRange<TPatch extends CalendarTemporalSeriesPatch = CalendarTemporalSeriesPatch> {
