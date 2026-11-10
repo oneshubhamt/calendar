@@ -495,8 +495,7 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
     const staged = new CommandStagingRepository(beforeSnapshot.sources, beforeSnapshot.items, beforeSnapshot.revision);
     await this.applyCommandToStaging(staged, command, context);
     const stagedItems = staged.read().items;
-    const stagedHistory = buildHistoryEntry(beforeSnapshot.items, stagedItems, beforeSnapshot.sources);
-    if (!stagedHistory) return;
+    if (!changedItemIds(beforeSnapshot.items, stagedItems).length) return;
 
     // One authoritative repository mutation per logical Calendar command. This makes
     // multi-record operations such as recurrence splitting durable atomically.
