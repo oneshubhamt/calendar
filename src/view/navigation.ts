@@ -1,12 +1,7 @@
-import type { CalendarRange, ISODate } from "../core/types.js";
+import type { CalendarNavigationBounds, CalendarRange, ISODate } from "../core/types.js";
 import { addDays, dateKey, startOfDay, toDate } from "../core/time.js";
 import { parsePlainDate } from "../core/temporal.js";
-import type { CalendarNavigationBounds } from "./types.js";
-
-export interface ResolvedCalendarNavigationBounds {
-  readonly min?: ISODate;
-  readonly max?: ISODate;
-}
+export type ResolvedCalendarNavigationBounds = CalendarNavigationBounds;
 
 export function resolveNavigationBounds(bounds: CalendarNavigationBounds | undefined): ResolvedCalendarNavigationBounds {
   if (!bounds) return {};
@@ -29,20 +24,6 @@ export function clampNavigationDate(value: Date | string, bounds: ResolvedCalend
   if (bounds.min && key < bounds.min) return toDate(bounds.min, timeZone);
   if (bounds.max && key > bounds.max) return toDate(bounds.max, timeZone);
   return date;
-}
-
-export function placementInNavigationBounds(
-  start: Date,
-  end: Date,
-  bounds: ResolvedCalendarNavigationBounds,
-  timeZone: string,
-): boolean {
-  const min = bounds.min ? startOfDay(bounds.min, timeZone).getTime() : Number.NEGATIVE_INFINITY;
-  const maxExclusive = bounds.max ? addDays(startOfDay(bounds.max, timeZone), 1, timeZone).getTime() : Number.POSITIVE_INFINITY;
-  const startMs = start.getTime();
-  const endMs = end.getTime();
-  if (startMs === endMs) return startMs >= min && startMs < maxExclusive;
-  return endMs > startMs && startMs >= min && endMs <= maxExclusive;
 }
 
 /** Intersect an engine projection query with inclusive local-date navigation bounds without changing view geometry. */
