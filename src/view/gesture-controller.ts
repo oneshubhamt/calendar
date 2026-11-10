@@ -66,10 +66,18 @@ export class CalendarGestureController {
     return Date.now() <= this.suppressOccurrenceClickUntil;
   }
 
+  public isDragging(): boolean {
+    return this.drag !== null;
+  }
+
+  public cancelActiveDrag(): void {
+    this.cancelDrag();
+  }
+
   public destroy(): void {
     this.cancelTouchPress();
     this.cancelPointerArm();
-    this.cancelActiveDrag();
+    this.cancelDrag();
     this.stopAutoScroll();
   }
 
@@ -208,7 +216,7 @@ export class CalendarGestureController {
     const cancel = (event: PointerEvent) => {
       if (!this.drag || event.pointerId !== this.drag.pointerId) return;
       cleanup();
-      this.cancelActiveDrag();
+      this.cancelDrag();
     };
     this.dragListenerCleanup?.();
     this.dragListenerCleanup = cleanup;
@@ -218,7 +226,7 @@ export class CalendarGestureController {
     this.startAutoScroll();
   }
 
-  private cancelActiveDrag(): void {
+  private cancelDrag(): void {
     this.dragListenerCleanup?.();
     const drag = this.drag;
     this.drag = null;

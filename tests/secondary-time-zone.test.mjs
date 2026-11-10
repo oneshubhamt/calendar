@@ -79,7 +79,7 @@ test('primary geometry, projection and command semantics continue to use only th
   const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
   assert.match(view,/layoutTimedDay\(this\.displayOccurrences\(\), day, this\.timeZone\)/);
   assert.match(view,/this\.engine\.query\(projectionRange, \{[\s\S]{0,220}visibleSourceIds,[\s\S]{0,80}timeZone: this\.timeZone/);
-  assert.match(view,/calendarOccurrenceCommandContext\(command, new Date\(\)\.toISOString\(\), this\.timeZone\)/);
+  assert.match(view,/calendarOccurrenceCommandContext\(command, this\.clock\.now\(\)\.toISOString\(\), this\.timeZone\)/);
   assert.doesNotMatch(view,/calendarOccurrenceCommandContext\([^\n]*secondaryTimeZone/);
   assert.doesNotMatch(view,/engine\.query\([^\n]*secondaryTimeZone/);
   assert.doesNotMatch(view,/layoutTimedDay\([^\n]*secondaryTimeZone/);

@@ -35,7 +35,7 @@ import {
 } from "./gesture-controller.js";
 import { groupAgendaByDay, groupAllDayBackgroundRangesByDay, groupByDay, layoutBackgroundDay, layoutTimedDay } from "../core/layout.js";
 import { sameRecurrence } from "../core/recurrence.js";
-import { evaluateCalendarPlacement, normalizeSnapPolicy, placementInNavigationBounds, placementTimePatch, resizeInterval, snapMinuteCoordinate } from "../core/interaction.js";
+import { evaluateCalendarPlacement, normalizeSnapPolicy, placementInNavigationBounds, placementTimePatch, resizeInterval, snapMinuteCoordinate, type CalendarResizeEdge } from "../core/interaction.js";
 import {
   calendarOccurrenceCommandContext, resolveOccurrenceCapabilities, temporalMutationCapabilityRequirements,
   type CalendarOccurrenceCapabilityKey, type ResolvedCalendarOccurrenceCapabilities,
@@ -1151,6 +1151,18 @@ export class CalendarUi {
     await this.issueTimedCommand({ type: "move-occurrence", occurrence: drag.occurrence, start: start.toISOString(), end: end.toISOString(), scope: "this" }, "Move", ["canMove"]);
   }
 
+  private timeAtGridMinute(
+    day: Date,
+    minute: number,
+    strategy: import("../core/types.js").CalendarSnapStrategy,
+    action: string,
+  ): Date | null {
+    const snapped = snapMinuteCoordinate(minute, this.slotMinutes, strategy);
+    const target = instantAtCivilMinute(day, snapped, this.timeZone, this.dstOverlapDisambiguation);
+    if (!target) this.announce(`${action} is unavailable because that local time does not exist during the time-zone transition.`);
+    return target;
+  }
+
   private beginRangeSelection(pointer: PointerEvent, day: Date, column: HTMLElement): void {
     pointer.preventDefault();
     pointer.stopPropagation();
@@ -1974,9 +1986,9 @@ export class CalendarUi {
   }
 
   private onKeyDown(event: KeyboardEvent): void {
-    if (event.key === "Escape" && this.drag) {
+    if (event.key === "Escape" && this.gestures.isDragging()) {
       event.preventDefault();
-      this.cancelActiveDrag();
+      this.gestures.cancelActiveDrag();
       return;
     }
     const target = event.target as HTMLElement;
