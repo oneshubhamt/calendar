@@ -204,7 +204,11 @@ test('mutation coordinator revalidates occurrence authority and owns pending pre
     onPendingChange:(id,operation,pending)=>transitions.push([id,operation,pending]),
     onSettled:()=>{},
     confirmPlacementWarning:async()=>true,
+    selectSeriesScope:async()=> 'all',
   });
+
+  const stableOccurrences=[row];
+  assert.strictEqual(coordinator.previewOccurrences(stableOccurrences),stableOccurrences);
 
   const command={
     type:'move-occurrence',
@@ -216,6 +220,9 @@ test('mutation coordinator revalidates occurrence authority and owns pending pre
   const pending=coordinator.dispatchOccurrence(command,['canMove'],'move');
   await Promise.resolve();
   assert.equal(coordinator.isPending(row),true);
+  const previewed=coordinator.previewOccurrences(stableOccurrences);
+  assert.notStrictEqual(previewed,stableOccurrences);
+  assert.equal(previewed[0].start,'2026-11-09T12:00:00.000Z');
   assert.equal(coordinator.previewOccurrence(row).start,'2026-11-09T12:00:00.000Z');
   release();
   assert.equal(await pending,'completed');

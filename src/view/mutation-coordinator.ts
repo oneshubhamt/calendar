@@ -11,6 +11,7 @@ import type {
   CalendarPlacementGuard,
   CalendarSource,
   CalendarTemporalSpec,
+  SeriesEditScope,
 } from "../core/types.js";
 import type { CalendarClock } from "../core/time.js";
 import type {
@@ -31,6 +32,7 @@ import { CalendarCommandLifecycle, type CalendarCommandLifecycleStatus } from ".
 import { occurrenceWithPreview, previewPatchForCommand, type PendingOccurrencePreview } from "./occurrence-preview.js";
 import { resolveSourceActions, type ResolvedCalendarSourceAction } from "./presentation.js";
 import { CalendarEngine } from "../core/calendar-engine.js";
+import { isDateLikeOccurrence, isPointOccurrence } from "./occurrence-form.js";
 
 export type CalendarMutationDispatchResult = CalendarCommandLifecycleStatus | "cancelled";
 
@@ -65,14 +67,10 @@ interface CalendarMutationCoordinatorOptions {
   readonly onPendingChange: (occurrenceId: string, operation: string, pending: boolean) => void;
   readonly onSettled: () => void;
   readonly confirmPlacementWarning: (messages: readonly string[], action: string) => Promise<boolean>;
-}
-
-function isPointOccurrence(occurrence: CalendarOccurrence): boolean {
-  return occurrence.temporalForm === "point";
-}
-
-function isDateLikeOccurrence(occurrence: CalendarOccurrence): boolean {
-  return Boolean(occurrence.allDay || occurrence.precision === "date" || occurrence.temporal?.kind === "date");
+  readonly selectSeriesScope: (
+    action: string,
+    allowThisAndFollowing?: boolean,
+  ) => Promise<SeriesEditScope | null>;
 }
 
 export class CalendarMutationCoordinator {
@@ -149,6 +147,11 @@ export class CalendarMutationCoordinator {
   public previewOccurrence(occurrence: CalendarOccurrence): CalendarOccurrence {
     const preview = this.pendingPreviews.get(occurrence.occurrenceId);
     return preview ? occurrenceWithPreview(occurrence, preview, this.options.timeZone) : occurrence;
+  }
+
+  public previewOccurrences(occurrences: readonly CalendarOccurrence[]): readonly CalendarOccurrence[] {
+    if (this.pendingPreviews.size === 0) return occurrences;
+    return occurrences.map(occurrence => this.previewOccurrence(occurrence));
   }
 
   public sourceItem(occurrence: CalendarOccurrence): CalendarItem | undefined {
@@ -322,6 +325,52 @@ export class CalendarMutationCoordinator {
     else if (status === "suppressed") {
       this.options.announce(`${authoritative.title}: a command is already pending.`);
     }
+  }
+
+  public moveRequirements(
+    occurrence: CalendarOccurrence,
+    allDay: boolean,
+  ): readonly CalendarOccurrenceCapabilityKey[] {
+    return isDateLikeOccurrence(occurrence) === allDay
+      ? ["canMove"]
+      : ["canMove", "canMoveBetweenAllDayAndTimed"];
+  }
+
+  public async issueOccurrencePatch(
+    occurrence: CalendarOccurrence,
+    patch: CalendarItemPatch,
+    action: string,
+    requirements: readonly CalendarOccurrenceCapabilityKey[] = ["canMove"],
+    operation = "edit",
+  ): Promise<CalendarMutationDispatchResult> {
+    let scope: SeriesEditScope = "all";
+    if (occurrence.recurring) {
+      const selected = await this.options.selectSeriesScope(action);
+      if (!selected) return "cancelled";
+      scope = selected;
+    }
+    return await this.dispatchOccurrence(
+      { type: "update-occurrence", occurrence, patch, scope },
+      requirements,
+      operation,
+    );
+  }
+
+  public async issueTimedCommand(
+    command: Extract<CalendarCommand, { type: "move-occurrence" | "resize-occurrence" }>,
+    action: string,
+    requirements: readonly CalendarOccurrenceCapabilityKey[],
+  ): Promise<CalendarMutationDispatchResult> {
+    let next = command;
+    if (command.occurrence.recurring) {
+      const scope = await this.options.selectSeriesScope(action);
+      if (!scope) return "cancelled";
+      next = { ...command, scope };
+    }
+    const operation = command.type === "move-occurrence"
+      ? "move"
+      : requirements.includes("canResizeStart") ? "resize-start" : "resize-end";
+    return await this.dispatchOccurrence(next, requirements, operation);
   }
 
   public async dispatchOccurrence(

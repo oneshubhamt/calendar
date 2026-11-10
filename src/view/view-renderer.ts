@@ -6,7 +6,9 @@ import type {
   CalendarView,
   Weekday,
 } from "../core/types.js";
-import type { CalendarSelection } from "./types.js";
+
+import { isDateLikeOccurrence } from "./occurrence-form.js";
+export { isDateLikeOccurrence } from "./occurrence-form.js";import type { CalendarSelection } from "./types.js";
 import type { ResolvedCalendarOccurrencePresentation } from "./presentation.js";
 import { groupAgendaByDay, groupAllDayBackgroundRangesByDay, groupByDay } from "../core/layout.js";
 import { addDays, addMonths, dateKey, rangeForView, startOfDay, toDate } from "../core/time.js";
@@ -296,6 +298,3 @@ function weekdayOrder(weekStartsOn: Weekday): readonly Weekday[] {
   return Array.from({ length: 7 }, (_, index) => ((weekStartsOn + index) % 7) as Weekday);
 }
 
-export function isDateLikeOccurrence(occurrence: CalendarOccurrence): boolean {
-  return Boolean(occurrence.allDay || occurrence.precision === "date" || occurrence.temporal?.kind === "date");
-}
