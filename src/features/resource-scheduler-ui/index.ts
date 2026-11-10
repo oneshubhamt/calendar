@@ -8,7 +8,7 @@ import type {
 } from "../../core/types.js";
 import { normalizeSnapPolicy, snapMinuteCoordinate } from "../../core/interaction.js";
 import type { CalendarUiExtension } from "../../view/types.js";
-import { isSafeHostClassName, resolveOccurrencePresentation } from "../../view/presentation.js";
+import { resolveOccurrencePresentation } from "../../view/presentation.js";
 import {
   executeCalendarResourcePlacement,
   flattenCalendarResources,
@@ -28,8 +28,14 @@ import {
   resizeResourceOccurrenceByCivilMinutes,
 } from "./interaction.js";
 import { RESOURCE_SCHEDULER_CSS } from "./styles.js";
+import {
+  clamp,
+  element,
+  renderResourceSchedulerSurface,
+  resourceSchedulerEmptyState,
+  safeClassTokens,
+} from "./rendering.js";
 
-const MAX_AXIS_TICKS = 240;
 const POINTER_MOVE_THRESHOLD = 4;
 const AUTO_SCROLL_ZONE = 32;
 const AUTO_SCROLL_STEP = 18;
@@ -117,17 +123,6 @@ export interface CalendarResourceSchedulerUiOptions {
   readonly interaction?: CalendarResourceSchedulerInteractionOptions | undefined;
 }
 
-function element<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  className?: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
 function positiveNumber(value: number | undefined, fallback: number, label: string): number {
   const resolved = value ?? fallback;
   if (!Number.isFinite(resolved) || resolved <= 0) throw new RangeError(`${label} must be positive and finite`);
@@ -136,14 +131,6 @@ function positiveNumber(value: number | undefined, fallback: number, label: stri
 
 function hostDataAttributeName(key: string): string {
   return key.replace(/[A-Z]/gu, letter => `-${letter.toLowerCase()}`);
-}
-
-function safeClassTokens(value: string | undefined): readonly string[] {
-  return value?.split(/\s+/u).filter(isSafeHostClassName) ?? [];
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
 }
 
 export class CalendarResourceSchedulerUi {
@@ -291,177 +278,31 @@ export class CalendarResourceSchedulerUi {
   }
 
   private emptyState(): HTMLElement {
-    const empty = element("div", "dc-rs-empty", "No resource schedule data.");
-    empty.setAttribute("role", "status");
-    return empty;
+    return resourceSchedulerEmptyState();
   }
 
   private renderProjection(
     projection: CalendarResourceSchedulerProjection,
     collapsed: ReadonlySet<CalendarResourceId>,
   ): HTMLElement {
-    const collapsedIds = [...collapsed];
-    const rows = flattenCalendarResources(projection.resources, collapsedIds);
-    const layouts = layoutResourceTimeline(
-      projection.resources,
-      projection.occurrences,
-      projection.assignments,
-      projection.range,
-      { timeZone: this.timeZone, collapsedResourceIds: collapsedIds },
-    );
-    const rangeGeometry = resolveResourceTimelineRangeGeometry(projection.range, this.timeZone);
-    const timelineWidth = Math.max(this.minTimelineWidth, rangeGeometry.widthMinutes * this.pixelsPerMinute);
-    const scale = timelineWidth / rangeGeometry.widthMinutes;
-    const tickMinutes = this.resolvedTickMinutes(rangeGeometry.end - rangeGeometry.start);
     this.prepareExtensions(projection);
-
-    const scroll = element("div", "dc-rs-scroll");
-    scroll.tabIndex = 0;
-    if (this.interaction) {
-      const help = element("div", "dc-rs-sr-only", "Use Alt+Left/Right to move in time and Alt+Up/Down to move between resources. Focus a resize handle and use Left/Right to resize.");
-      help.id = this.interactionHelpId;
-      scroll.append(help);
-    }
-    scroll.setAttribute("role", "region");
-    scroll.setAttribute("aria-label", `${this.ariaLabel} timeline; scroll horizontally for time and vertically for resources`);
-
-    const grid = element("div", "dc-rs-treegrid");
-    grid.setAttribute("role", "treegrid");
-    grid.setAttribute("aria-label", this.ariaLabel);
-    grid.setAttribute("aria-rowcount", String(rows.length + 1));
-    grid.append(this.headerRow(projection.range, rangeGeometry, timelineWidth, scale, tickMinutes));
-
-    const layoutsByRow = new Map<number, CalendarResourceTimelineLayoutItem[]>();
-    for (const layout of layouts) {
-      const row = layoutsByRow.get(layout.resourceRow) ?? [];
-      row.push(layout);
-      layoutsByRow.set(layout.resourceRow, row);
-    }
-
-    for (const row of rows) {
-      const rowLayouts = layoutsByRow.get(row.index) ?? [];
-      grid.append(this.resourceRow(row.resource, row.depth, row.hasChildren, row.acceptsAssignments, row.index, rowLayouts, timelineWidth, scale, tickMinutes, collapsed.has(row.resource.id)));
-    }
-    if (!rows.length) {
-      const empty = element("div", "dc-rs-empty", "No resources in this range.");
-      empty.setAttribute("role", "row");
-      grid.append(empty);
-    }
-    scroll.append(grid);
-    return scroll;
-  }
-
-  private headerRow(
-    range: CalendarRange,
-    geometry: ReturnType<typeof resolveResourceTimelineRangeGeometry>,
-    timelineWidth: number,
-    scale: number,
-    tickMinutes: number,
-  ): HTMLElement {
-    const row = element("div", "dc-rs-row dc-rs-header-row");
-    row.setAttribute("role", "row");
-    const corner = element("div", "dc-rs-corner", "Resources");
-    corner.setAttribute("role", "columnheader");
-    const axis = element("div", "dc-rs-axis");
-    axis.setAttribute("role", "columnheader");
-    axis.setAttribute("aria-label", `Time axis in ${this.timeZone}`);
-    axis.style.width = `${timelineWidth}px`;
-
-    const elapsedMinutes = (geometry.end - geometry.start) / 60_000;
-    const includeDate = elapsedMinutes >= 24 * 60;
-    const formatter = new Intl.DateTimeFormat(this.locale, {
-      ...(includeDate ? { month: "short", day: "numeric" } : {}),
-      hour: "numeric",
-      minute: "2-digit",
+    return renderResourceSchedulerSurface({
+      projection,
+      collapsed,
+      locale: this.locale,
       timeZone: this.timeZone,
+      ariaLabel: this.ariaLabel,
+      pixelsPerMinute: this.pixelsPerMinute,
+      minTimelineWidth: this.minTimelineWidth,
+      baseRowHeight: this.baseRowHeight,
+      eventHeight: this.eventHeight,
+      axisTickMinutes: this.axisTickMinutes,
+      ...(this.interaction ? { interactionHelpId: this.interactionHelpId } : {}),
+    }, {
+      renderOccurrence: (layout, rowIndex, timelineWidth, scale) =>
+        this.occurrenceElement(layout, rowIndex, timelineWidth, scale),
+      toggleResource: resourceId => this.toggleResource(resourceId),
     });
-    const tickMs = tickMinutes * 60_000;
-    const seen = new Set<string>();
-    for (let instant = geometry.start; instant <= geometry.end; instant += tickMs) {
-      const minute = geometry.coordinate(instant);
-      if (minute < 0 || minute > geometry.widthMinutes) continue;
-      const key = minute.toFixed(6);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const tick = element("div", "dc-rs-axis-tick", formatter.format(new Date(instant)));
-      tick.style.left = `${clamp(minute * scale, 0, timelineWidth)}px`;
-      tick.setAttribute("aria-hidden", "true");
-      axis.append(tick);
-    }
-    axis.dataset.rangeStart = range.start;
-    axis.dataset.rangeEnd = range.end;
-    row.append(corner, axis);
-    return row;
-  }
-
-  private resourceRow(
-    resource: CalendarResource,
-    depth: number,
-    hasChildren: boolean,
-    acceptsAssignments: boolean,
-    rowIndex: number,
-    layouts: readonly CalendarResourceTimelineLayoutItem[],
-    timelineWidth: number,
-    scale: number,
-    tickMinutes: number,
-    collapsed: boolean,
-  ): HTMLElement {
-    const row = element("div", "dc-rs-row dc-rs-resource-row");
-    row.setAttribute("role", "row");
-    row.setAttribute("aria-level", String(depth + 1));
-    row.dataset.resourceId = resource.id;
-    if (hasChildren) row.setAttribute("aria-expanded", String(!collapsed));
-
-    const header = element("div", "dc-rs-row-header");
-    header.setAttribute("role", "rowheader");
-    header.style.setProperty("--dc-rs-depth", String(depth));
-    if (resource.display?.color) header.style.setProperty("--dc-rs-resource-accent", resource.display.color);
-    for (const token of safeClassTokens(resource.display?.className)) header.classList.add(token);
-
-    if (hasChildren) {
-      const toggle = element("button", "dc-rs-toggle", collapsed ? "▸" : "▾");
-      toggle.type = "button";
-      toggle.dataset.resourceId = resource.id;
-      toggle.setAttribute("aria-expanded", String(!collapsed));
-      toggle.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} ${resource.title}`);
-      toggle.addEventListener("click", () => this.toggleResource(resource.id));
-      header.append(toggle);
-    } else {
-      const spacer = element("span", "dc-rs-toggle-spacer");
-      spacer.setAttribute("aria-hidden", "true");
-      header.append(spacer);
-    }
-
-    const copy = element("span", "dc-rs-resource-copy");
-    const title = element("span", "dc-rs-resource-title");
-    if (resource.display?.icon) {
-      const icon = element("span", "dc-rs-resource-icon", resource.display.icon);
-      icon.setAttribute("aria-hidden", "true");
-      title.append(icon);
-    }
-    title.append(document.createTextNode(resource.title));
-    copy.append(title);
-    if (hasChildren || !acceptsAssignments) {
-      copy.append(element("span", "dc-rs-resource-meta", hasChildren
-        ? (acceptsAssignments ? "Group · assignable" : "Group")
-        : "Not assignable"));
-    }
-    header.append(copy);
-
-    const laneCount = Math.max(1, ...layouts.map(layout => layout.laneCount));
-    const rowHeight = Math.max(this.baseRowHeight, laneCount * this.eventHeight + 10);
-    const track = element("div", "dc-rs-track");
-    track.setAttribute("role", "gridcell");
-    track.setAttribute("aria-label", `${resource.title}; ${layouts.length} scheduled item${layouts.length === 1 ? "" : "s"}`);
-    track.style.width = `${timelineWidth}px`;
-    track.style.height = `${rowHeight}px`;
-    track.style.setProperty("--dc-rs-tick-px", `${tickMinutes * scale}px`);
-
-    for (const layout of layouts) {
-      track.append(this.occurrenceElement(layout, rowIndex, timelineWidth, scale));
-    }
-    row.append(header, track);
-    return row;
   }
 
   private occurrenceElement(
@@ -1057,12 +898,6 @@ export class CalendarResourceSchedulerUi {
         this.reportError({ stage: "prepare", index, error });
       }
     }
-  }
-
-  private resolvedTickMinutes(rangeMilliseconds: number): number {
-    const elapsedMinutes = Math.max(1, rangeMilliseconds / 60_000);
-    const multiplier = Math.max(1, Math.ceil(elapsedMinutes / this.axisTickMinutes / MAX_AXIS_TICKS));
-    return this.axisTickMinutes * multiplier;
   }
 
   private toggleResource(resourceId: CalendarResourceId, expand?: boolean): void {
