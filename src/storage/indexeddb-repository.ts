@@ -163,6 +163,7 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   private db: IDBDatabase | null = null;
   private channel: BroadcastChannel | null = null;
   private refreshPromise: Promise<void> | null = null;
+  private requestedRefreshRevision = -1;
   private readonly listeners = new Set<(snapshot: CalendarSnapshot) => void>();
 
   public constructor(options: IndexedDbCalendarRepositoryOptions) {
@@ -213,6 +214,7 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
     this.loaded = false;
     this.snapshotValue = undefined;
     this.refreshPromise = null;
+    this.requestedRefreshRevision = -1;
   }
 
   public async create(item: CalendarItem): Promise<void> {
@@ -415,19 +417,39 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
 
   private async reloadFromStorage(minimumRevision = -1): Promise<void> {
     if (!this.loaded) return;
+    this.requestedRefreshRevision = Math.max(this.requestedRefreshRevision, minimumRevision);
     if (this.refreshPromise) return await this.refreshPromise;
+
     this.refreshPromise = (async () => {
-      const persisted = await this.readPersistedState();
-      if (!this.loaded || !persisted) return;
-      const current = this.read();
-      if (persisted.revision <= current.revision || persisted.revision < minimumRevision) return;
-      this.snapshotValue = materializeCalendarSnapshot(current, persisted.sources, persisted.items, persisted.revision);
-      for (const listener of this.listeners) listener(this.snapshotValue);
+      while (this.loaded) {
+        const requestedRevision = this.requestedRefreshRevision;
+        this.requestedRefreshRevision = -1;
+
+        const persisted = await this.readPersistedState();
+        if (!this.loaded) return;
+        if (persisted) {
+          const current = this.read();
+          if (persisted.revision > current.revision) {
+            this.snapshotValue = materializeCalendarSnapshot(current, persisted.sources, persisted.items, persisted.revision);
+            for (const listener of this.listeners) listener(this.snapshotValue);
+          }
+        }
+
+        const currentRevision = this.read().revision;
+        if (this.requestedRefreshRevision <= currentRevision) {
+          this.requestedRefreshRevision = -1;
+          return;
+        }
+        if (requestedRevision > currentRevision && this.requestedRefreshRevision < requestedRevision) {
+          this.requestedRefreshRevision = requestedRevision;
+        }
+      }
     })();
     try {
       await this.refreshPromise;
     } finally {
       this.refreshPromise = null;
+      if (!this.loaded) this.requestedRefreshRevision = -1;
     }
   }
 

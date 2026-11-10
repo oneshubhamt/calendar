@@ -70,3 +70,15 @@ test("D5 command history stores affected immutable item deltas rather than full 
   assert.doesNotMatch(source,/private async executeAtomic/);
   assert.match(source,/private async applyCommandToStaging/);
 });
+
+
+test("D2 cross-tab reload coordinator drains newer invalidations instead of dropping them",async()=>{
+  const source=await read("../src/storage/indexeddb-repository.ts");
+  const reload=source.match(/private async reloadFromStorage\([\s\S]*?\n  }\n\n  private async migrateLegacySnapshot/)?.[0] ?? "";
+  assert.match(source,/private requestedRefreshRevision = -1/);
+  assert.match(reload,/Math\.max\(this\.requestedRefreshRevision, minimumRevision\)/);
+  assert.match(reload,/while \(this\.loaded\)/);
+  assert.match(reload,/this\.requestedRefreshRevision = -1/);
+  assert.match(reload,/if \(this\.refreshPromise\) return await this\.refreshPromise/);
+  assert.match(reload,/this\.requestedRefreshRevision <= currentRevision/);
+});
