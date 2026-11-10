@@ -1,6 +1,60 @@
 import { expect, test } from "@playwright/test";
 import { mountVisualCalendar } from "./visual-fixture.mjs";
 
+test("live temporal chrome advances across midnight without re-querying projections", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-11-10T23:59:30.000Z") });
+  await page.goto("/tests/browser/harness.html");
+  await page.evaluate(async () => {
+    const [{ CalendarEngine }, { MemoryCalendarRepository }, { CalendarUi }] = await Promise.all([
+      import("/dist/core/calendar-engine.js"),
+      import("/dist/core/store.js"),
+      import("/dist/view/calendar-ui.js"),
+    ]);
+    const source = { id: "personal", title: "Personal", visible: true, removable: true };
+    let projectionCalls = 0;
+    const projection = {
+      id: "temporal-probe",
+      projectItems() {
+        projectionCalls += 1;
+        return [];
+      },
+    };
+    const engine = new CalendarEngine(new MemoryCalendarRepository([source], []), [projection]);
+    const host = document.getElementById("browser-test-host");
+    const calendar = new CalendarUi(host, engine, {
+      locale: "en-US",
+      timeZone: "UTC",
+      initialDate: "2026-11-10",
+      initialView: "week",
+      dayStartHour: 0,
+      dayEndHour: 24,
+    });
+    await calendar.refresh();
+    globalThis.__temporalCalendar = { calendar, projectionCalls: () => projectionCalls };
+  });
+  await page.locator(".dc-now").waitFor();
+
+  const before = await page.evaluate(() => ({
+    queryCount: globalThis.__temporalCalendar.projectionCalls(),
+    today: [...document.querySelectorAll(".dc-day-header.is-today")].map(node => node.dataset.calendarDate?.slice(0, 10)),
+    nowTop: document.querySelector(".dc-now")?.style.top,
+  }));
+  expect(before.today).toEqual(["2026-11-10"]);
+  expect(Number.parseFloat(before.nowTop)).toBeCloseTo(1439.5, 1);
+
+  await page.clock.fastForward(90_000);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+
+  const after = await page.evaluate(() => ({
+    queryCount: globalThis.__temporalCalendar.projectionCalls(),
+    today: [...document.querySelectorAll(".dc-day-header.is-today")].map(node => node.dataset.calendarDate?.slice(0, 10)),
+    nowTop: document.querySelector(".dc-now")?.style.top,
+  }));
+  expect(after.queryCount).toBe(before.queryCount);
+  expect(after.today).toEqual(["2026-11-11"]);
+  expect(Number.parseFloat(after.nowTop)).toBeCloseTo(1, 1);
+});
+
 test("week view renders interactive events and passive background layers in a real browser", async ({ page }) => {
   await mountVisualCalendar(page, { view: "week" });
   await expect(page.getByRole("group", { name: "Week calendar" })).toBeVisible();

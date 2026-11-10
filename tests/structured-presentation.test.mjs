@@ -53,9 +53,12 @@ test('presentation content is preserved as text and the view has no HTML injecti
   assert.equal(result.title.text,malicious);
   assert.equal(result.subtitle.text,malicious);
   assert.equal(result.badges[0].label,malicious);
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.doesNotMatch(view,/innerHTML|outerHTML|insertAdjacentHTML/);
-  assert.match(view,/function el<[\s\S]*node\.textContent = text/);
+  const [view,renderer]=await Promise.all([
+    fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8'),
+    fs.readFile(new URL('../src/view/view-renderer.ts',import.meta.url),'utf8'),
+  ]);
+  assert.doesNotMatch(view+renderer,/innerHTML|outerHTML|insertAdjacentHTML/);
+  assert.match(renderer,/function el<[\s\S]*node\.textContent = text/);
   assert.match(view,/dc-occurrence-title", presentation\.title\?\.text \?\? occurrence\.title/);
 });
 

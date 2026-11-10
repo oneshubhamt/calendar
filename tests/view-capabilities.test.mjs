@@ -244,9 +244,9 @@ test('B4 renders only explicit all-day backgrounds in month cells and all-day la
   assert.match(rendererText,/if \(inBounds && dayBackgrounds\.length\)/);
   assert.match(sourceText,/if \(inBounds && dayBackgrounds\.length\) all\.append\(this\.dayLevelBackgroundLayer\(dayBackgrounds\)\)/);
   assert.match(sourceText,/private dayLevelBackgroundLayer\(ranges: readonly CalendarBackgroundRange\[\]\)/);
-  assert.match(sourceText,/layer\.setAttribute\("aria-hidden", "true"\)/);
+  assert.match(rendererText,/layer\.setAttribute\("aria-hidden", "true"\)/);
   assert.match(sourceText,/this\.backgroundAriaSuffix\(dayBackgrounds\)/);
-  assert.match(sourceText,/\. Background: \$\{labels\.join\(", "\)\}/);
+  assert.match(rendererText,/\. Background: \$\{labels\.join\(", "\)\}/);
   const yearRenderer=rendererText.match(/export function renderYearView[\s\S]*?export function renderMonthView/)?.[0] ?? '';
   const agendaRenderer=rendererText.match(/export function renderAgendaView[\s\S]*?function weekdayOrder/)?.[0] ?? '';
   assert.doesNotMatch(yearRenderer,/groupAllDayBackgroundRangesByDay/);
