@@ -21,7 +21,7 @@ export interface CalendarResourceDisplay {
 
 /**
  * Flat resource hierarchy. Direct assignment is permitted only when
- * acceptsAssignments is explicitly true; hierarchy validation is an R2 concern.
+ * acceptsAssignments is explicitly true; hierarchy validation is performed by validateCalendarResources().
  */
 export interface CalendarResource {
   readonly id: CalendarResourceId;
@@ -124,3 +124,6 @@ export interface CalendarResourcePlacementChange {
 export interface CalendarResourceMutationPort {
   commit(change: CalendarResourcePlacementChange): Promise<void> | void;
 }
+
+export { validateCalendarResources, flattenCalendarResources, validateCalendarResourceAssignments, associateCalendarResources } from "./mechanics.js";
+export type { CalendarResourceRow, CalendarResourceAssociation } from "./mechanics.js";

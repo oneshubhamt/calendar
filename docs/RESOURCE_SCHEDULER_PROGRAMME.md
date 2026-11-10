@@ -69,6 +69,12 @@ R1 intentionally contains no hierarchy validation, assignment integrity mechanic
 
 Add fail-closed validation for duplicate/missing/self/cyclic hierarchy relationships, deterministic sibling order and flattening, caller-supplied collapsed IDs, explicit assignability, assignment/resource integrity and deterministic multi-resource association. No DOM.
 
+### R2 implementation notes
+
+Pure operations are `validateCalendarResources()`, `flattenCalendarResources(resources, collapsedResourceIds)`, `validateCalendarResourceAssignments(resources, occurrences, assignments)` and `associateCalendarResources(resources, occurrences, assignments)`. Validation rejects malformed IDs/titles, duplicate IDs, invalid order/display/metadata, orphan/self/cyclic ancestry, invalid collapse IDs, unknown/duplicate occurrence or resource assignments, non-assignable targets and malformed opaque versions. Siblings sort by explicit integer order then resource ID; assignments normalize in flattened resource order, and association pairs sort by row then occurrence ID. Unassigned occurrences have no association pairs, with no synthetic assignment record. Collapsed IDs are caller-provided UI state, never stored.
+
+These routines do not fetch host providers, interpret recurrence, mutate assignments, allocate resource UI, implement geometry, or persist state. Providers continue to own their projections. Assignment validation uses the complete hierarchy, independent of UI collapse state.
+
 ## R3 — Resource timeline geometry
 
 Add dedicated `layoutResourceTimeline()`. Reuse existing time/civil/DST semantics; do not alter `layoutTimedDay()`. Produce deterministic horizontal time geometry, resource rows, overlap lanes and occurrence-resource render identity.
@@ -91,6 +97,6 @@ Add horizontal time drag, vertical resource reassignment, diagonal combined drag
 
 Verify hierarchy integrity, collapse/order, multi-resource behavior, unassigned events, resource-scoped policy, recurrence scopes, DST/cross-midnight/point occurrences, temporal/resource authority, trusted host projections, stale versions, atomic failure behavior, accessibility and negative dependency/persistence leakage. Then run the complete repository quality gate.
 
-## Current architecture after R1
+## Current architecture after R2
 
-The headless contract lives only under `src/features/resource-scheduler/` and is exported only from `@director/calendar/features/resource-scheduler`. It imports core types only. Base root/core/view remain unchanged and resource-free. The module is contract-only in R1, so importing no Resource Scheduler subpath means no Resource Scheduler runtime module is loaded.
+The headless contract lives only under `src/features/resource-scheduler/` and is exported only from `@director/calendar/features/resource-scheduler`. It imports core types only. Base root/core/view remain unchanged and resource-free. R2 adds only pure headless validation/projection mechanics. No Resource Scheduler runtime module is loaded unless its explicit subpath is imported.
