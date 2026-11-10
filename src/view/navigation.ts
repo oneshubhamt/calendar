@@ -1,4 +1,4 @@
-import type { CalendarNavigationBounds, CalendarRange, ISODate } from "../core/types.js";
+import type { CalendarNavigationBounds, CalendarRange } from "../core/types.js";
 import { addDays, dateKey, startOfDay, toDate } from "../core/time.js";
 import { parsePlainDate } from "../core/temporal.js";
 export type ResolvedCalendarNavigationBounds = CalendarNavigationBounds;
