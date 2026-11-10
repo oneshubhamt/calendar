@@ -132,7 +132,7 @@ test("no-BroadcastChannel fallback refreshes when a passive tab returns to the f
   await page.bringToFront();
   await createItem(page, event("fallback", { title: "Fallback invalidation" }));
   await observer.bringToFront();
-  await expect.poll(async () => (await repositoryState(observer)).revision).toBe(1);
+  await expect.poll(async () => (await repositoryState(observer)).revision, { timeout: 7_000 }).toBe(1);
   expect((await repositoryState(observer)).items.map(item => item.id)).toEqual(["fallback"]);
 
   await closeRepository(observer);

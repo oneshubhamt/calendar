@@ -402,6 +402,15 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
     });
   }
 
+  private requestRevisionCheck(): void {
+    void this.readPersistedRevision().then(revision => {
+      if (!this.loaded || revision <= this.read().revision) return;
+      this.requestReload(revision);
+    }).catch(() => {
+      // Advisory freshness check only; the next signal or poll can retry.
+    });
+  }
+
   private openInvalidationChannel(): void {
     if (this.channel || this.storageInvalidation) return;
     const key = `@director/calendar:${this.dbName}:revision`;
@@ -426,11 +435,12 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
         this.requestReload(revision);
       };
       const onForeground = (): void => {
-        if (this.loaded) this.requestReload();
+        if (this.loaded) this.requestRevisionCheck();
       };
       const onVisibility = (): void => {
         if (document.visibilityState === "visible") onForeground();
       };
+      const pollTimer = window.setInterval(onForeground, 3_000);
       window.addEventListener("storage", onStorage);
       window.addEventListener("focus", onForeground);
       window.addEventListener("pageshow", onForeground);
@@ -438,6 +448,7 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
       this.storageInvalidation = {
         key,
         dispose: () => {
+          window.clearInterval(pollTimer);
           window.removeEventListener("storage", onStorage);
           window.removeEventListener("focus", onForeground);
           window.removeEventListener("pageshow", onForeground);
@@ -501,6 +512,17 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
       this.refreshPromise = null;
       if (!this.loaded) this.requestedRefreshRevision = -1;
     }
+  }
+
+  private async readPersistedRevision(): Promise<number> {
+    if (!this.db) throw new Error("Calendar IndexedDB is not open");
+    const value = await new Promise<unknown>((resolve, reject) => {
+      const tx = openTransaction(this.db!, STORE_NAME, "readonly");
+      const request = tx.objectStore(STORE_NAME).get(META_KEY);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error("Could not read Calendar revision"));
+    });
+    return storedMeta(value)?.revision ?? 0;
   }
 
   private async readPersistedState(): Promise<PersistedCalendarState | undefined> {
