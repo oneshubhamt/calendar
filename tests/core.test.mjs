@@ -370,3 +370,56 @@ test('event-only engine queries do not invoke passive background providers', asy
   await assert.rejects(()=>engine.query(range),/passive provider failure/i);
   assert.equal(backgroundCalls,1);
 });
+
+
+test('shared placement evaluation centralizes bounds guards and collisions with lazy event loading',async()=>{
+  const base={
+    start:'2026-11-10T09:00:00.000Z',
+    end:'2026-11-10T10:00:00.000Z',
+    allDay:false,
+    action:'move',
+    timeZone:'UTC',
+    calendarId:'personal',
+  };
+
+  let loads=0;
+  const outOfBounds=await C.evaluateCalendarPlacement(base,{
+    navigationBounds:{min:'2026-11-11'},
+    collisionPolicy:{mode:'prevent'},
+    loadCollisionOccurrences:()=>{loads+=1;return [];},
+  });
+  assert.equal(outOfBounds.mode,'prevent');
+  assert.match(outOfBounds.messages[0],/outside the allowed calendar date range/i);
+  assert.equal(loads,0);
+
+  const guardBlocked=await C.evaluateCalendarPlacement(base,{
+    guards:[{id:'blocked',evaluate:()=>({mode:'prevent',message:'Policy block.'})}],
+    collisionPolicy:{mode:'prevent'},
+    loadCollisionOccurrences:()=>{loads+=1;return [];},
+  });
+  assert.deepEqual(guardBlocked.messages,['Policy block.']);
+  assert.equal(loads,0);
+
+  const collision=C.occurrenceFromItem(event({
+    id:'occupied',
+    title:'Occupied',
+    start:'2026-11-10T09:30:00.000Z',
+    end:'2026-11-10T10:30:00.000Z',
+  }));
+  const warned=await C.evaluateCalendarPlacement(base,{
+    guards:[{id:'preference',evaluate:()=>({mode:'warn',message:'Outside preference.'})}],
+    collisionPolicy:{mode:'warn'},
+    loadCollisionOccurrences:()=>{loads+=1;return [collision];},
+  });
+  assert.equal(warned.mode,'warn');
+  assert.deepEqual(warned.messages,['Outside preference.','It overlaps Occupied.']);
+  assert.equal(warned.collisions.length,1);
+  assert.equal(loads,1);
+
+  const failed=await C.evaluateCalendarPlacement(base,{
+    collisionPolicy:{mode:'prevent'},
+    loadCollisionOccurrences:()=>{throw new Error('query failed');},
+  });
+  assert.equal(failed.mode,'prevent');
+  assert.deepEqual(failed.messages,['Scheduling conflicts could not be evaluated.']);
+});
