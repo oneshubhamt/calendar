@@ -25,6 +25,8 @@ export interface CalendarQueryOptions {
   readonly timeZone?: string | undefined;
   /** Host/feature-neutral occurrence predicate applied after recurrence expansion/projection. */
   readonly predicate?: ((occurrence: CalendarOccurrence) => boolean) | undefined;
+  /** False for event-only queries such as collision checks; passive providers are then not invoked at all. */
+  readonly includeBackgroundRanges?: boolean | undefined;
 }
 
 
@@ -124,17 +126,20 @@ export class CalendarEngine {
 
     const occurrences = [...itemOccurrences, ...visibleProjectedOccurrences].sort(sortOccurrences);
 
-    const projectedBackgroundRanges = (await Promise.all(this.backgroundProjections.map(provider => provider.projectBackgroundRanges(range))))
-      .flat()
-      .map(normalizeProjectedBackgroundRange);
-    assertCalendarBackgroundRangeIntegrity(snapshot.sources, projectedBackgroundRanges);
-    const backgroundRanges = projectedBackgroundRanges
-      .filter(background => (background.calendarId === undefined || visible.has(background.calendarId))
-        && intersectsRange(background.start, background.end, range.start, range.end, false))
-      .sort((left, right) =>
-        toDate(left.start).getTime() - toDate(right.start).getTime()
-        || toDate(left.end).getTime() - toDate(right.end).getTime()
-        || left.id.localeCompare(right.id));
+    let backgroundRanges: readonly CalendarBackgroundRange[] = [];
+    if (options.includeBackgroundRanges !== false) {
+      const projectedBackgroundRanges = (await Promise.all(this.backgroundProjections.map(provider => provider.projectBackgroundRanges(range))))
+        .flat()
+        .map(normalizeProjectedBackgroundRange);
+      assertCalendarBackgroundRangeIntegrity(snapshot.sources, projectedBackgroundRanges);
+      backgroundRanges = projectedBackgroundRanges
+        .filter(background => (background.calendarId === undefined || visible.has(background.calendarId))
+          && intersectsRange(background.start, background.end, range.start, range.end, false))
+        .sort((left, right) =>
+          toDate(left.start).getTime() - toDate(right.start).getTime()
+          || toDate(left.end).getTime() - toDate(right.end).getTime()
+          || left.id.localeCompare(right.id));
+    }
 
     return {
       range,
