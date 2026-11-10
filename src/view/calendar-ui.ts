@@ -4,6 +4,7 @@ import type {
   CalendarCollisionPolicy,
   CalendarOverlapDisambiguation,
   CalendarCommand,
+  CalendarId,
   CalendarItem,
   CalendarItemPatch,
   CalendarOccurrence,
@@ -17,7 +18,7 @@ import type {
   Weekday,
 } from "../core/types.js";
 import type {
-  CalendarCreateDraft, CalendarItemFactoryInput, CalendarKindOption, CalendarSelection, CalendarUiAddonContext, CalendarUiChromeOptions, CalendarUiOptions,
+  CalendarCreateDraft, CalendarItemFactoryInput, CalendarKindOption, CalendarPlacementValidationPort, CalendarSelection, CalendarUiAddonContext, CalendarUiChromeOptions, CalendarUiOptions,
 } from "./types.js";
 import { CalendarEngine } from "../core/calendar-engine.js";
 import { addDays, addMonths, addYears, dateKey, rangeForView, resolvedTimeZone, startOfDay, startOfYear, toDate } from "../core/time.js";
@@ -26,7 +27,7 @@ import { civilMinuteOfInstant, civilMinuteResolution, instantAtCivilMinute, shif
 import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from "./time-zone-scale.js";
 import { groupAgendaByDay, groupAllDayBackgroundRangesByDay, groupByDay, layoutBackgroundDay, layoutTimedDay } from "../core/layout.js";
 import { sameRecurrence } from "../core/recurrence.js";
-import { normalizeSnapPolicy, placementCollisions, placementTimePatch, resizeInterval, resizePreview, type CalendarResizeEdge } from "../core/interaction.js";
+import { evaluatePlacementGuards, normalizeSnapPolicy, placementCollisions, placementTimePatch, resizeInterval, resizePreview, type CalendarResizeEdge } from "../core/interaction.js";
 import {
   calendarOccurrenceCommandContext, resolveOccurrenceCapabilities, temporalMutationCapabilityRequirements,
   type CalendarOccurrenceCapabilityKey, type ResolvedCalendarOccurrenceCapabilities,
@@ -1620,7 +1621,7 @@ export class CalendarUi {
     }
     this.hostHook("Calendar onCreate callback", () => this.options.callbacks?.onCreate?.(selection), undefined);
     const createHandler = this.options.callbacks?.handleCreate;
-    if (createHandler && await this.hostHookAsync("Calendar handleCreate callback", () => createHandler(selection), false)) return;
+    if (createHandler && await this.hostHookAsync("Calendar handleCreate callback", () => createHandler(selection, this.placementValidationPort()), false)) return;
     if (!this.options.commandHandler) {
       this.announce("Creation was not handled by the host and no built-in command handler is available.");
       return;
@@ -1642,7 +1643,7 @@ export class CalendarUi {
       ...(result.reminders ? { reminders: result.reminders } : {}),
     }, "create");
     const withSeries = result.recurrence ? { ...item, seriesId: item.id } : item;
-    if (!await this.allowPlacement(this.resolveDraftTime(withSeries.start, withSeries.temporal), this.resolveDraftTime(withSeries.end, withSeries.temporal), Boolean(withSeries.allDay), undefined, "create")) return;
+    if (!await this.allowPlacement(this.resolveDraftTime(withSeries.start, withSeries.temporal), this.resolveDraftTime(withSeries.end, withSeries.temporal), Boolean(withSeries.allDay), undefined, "create", withSeries.calendarId)) return;
     await this.dispatch({ type: "create", item: withSeries });
   }
 
@@ -1736,7 +1737,7 @@ export class CalendarUi {
   private async editOccurrence(occurrence: CalendarOccurrence): Promise<void> {
     if (this.isOccurrencePending(occurrence) || !this.canEditOccurrence(occurrence)) return;
     const editHandler = this.options.callbacks?.handleEdit;
-    if (editHandler && await this.hostHookAsync("Calendar handleEdit callback", () => editHandler(occurrence), false)) return;
+    if (editHandler && await this.hostHookAsync("Calendar handleEdit callback", () => editHandler(occurrence, this.placementValidationPort()), false)) return;
     const editCapabilities = this.occurrenceCapabilities(occurrence);
     if (!this.commandHandlerFor(occurrence, editCapabilities)) {
       this.announce(`${occurrence.title}: editing was not handled by the host and no built-in command path is available.`);
@@ -1781,7 +1782,7 @@ export class CalendarUi {
       if (!selected) return;
       scope = selected;
     }
-    if (!await this.allowPlacement(this.resolveDraftTime(result.start, result.temporal), this.resolveDraftTime(result.end, result.temporal), result.allDay, occurrence, "edit")) return;
+    if (!await this.allowPlacement(this.resolveDraftTime(result.start, result.temporal), this.resolveDraftTime(result.end, result.temporal), result.allDay, occurrence, "edit", result.calendarId)) return;
     await this.dispatchOccurrence(
       { type: "update-occurrence", occurrence, patch, scope },
       this.occurrencePatchRequirements(occurrence, patch),
@@ -1804,7 +1805,7 @@ export class CalendarUi {
       ...(result.reminders ? { reminders: result.reminders } : {}),
     }, "duplicate", occurrence);
     const withSeries = result.recurrence ? { ...item, seriesId: item.id } : item;
-    if (!await this.allowPlacement(this.resolveDraftTime(withSeries.start, withSeries.temporal), this.resolveDraftTime(withSeries.end, withSeries.temporal), Boolean(withSeries.allDay), undefined, "create")) return;
+    if (!await this.allowPlacement(this.resolveDraftTime(withSeries.start, withSeries.temporal), this.resolveDraftTime(withSeries.end, withSeries.temporal), Boolean(withSeries.allDay), undefined, "create", withSeries.calendarId)) return;
     await this.dispatch({ type: "create", item: withSeries });
   }
 
@@ -2024,27 +2025,49 @@ export class CalendarUi {
     allDay: boolean,
     occurrence: CalendarOccurrence | undefined,
     action: string,
+    calendarId: CalendarId | undefined = occurrence?.calendarId,
   ): Promise<boolean> {
     if (!placementInNavigationBounds(start, end, this.navigationBounds, this.timeZone)) {
       this.announce(`${action} blocked because it is outside the allowed calendar date range.`);
       return false;
     }
-    if (this.collisionPolicy.mode === "allow") return true;
-    const queryStart = addDays(startOfDay(start, this.timeZone), -1, this.timeZone);
-    const queryEnd = addDays(startOfDay(end, this.timeZone), 2, this.timeZone);
-    const queryRange = boundProjectionRange({ start: queryStart.toISOString(), end: queryEnd.toISOString() }, this.navigationBounds, this.timeZone);
-    const allSources = new Set(this.sources.map(source => source.id));
-    const result = await this.engine.query(queryRange, { visibleSourceIds: allSources, timeZone: this.timeZone });
-    const collisions = placementCollisions(result.occurrences, start, end, allDay, this.collisionPolicy, occurrence?.occurrenceId);
-    if (!collisions.length) return true;
-    const names = [...new Set(collisions.map(row => row.occurrence.title))];
-    const summary = names.slice(0, 3).join(", ") + (names.length > 3 ? ` and ${names.length - 3} more` : "");
-    if (this.collisionPolicy.mode === "prevent") {
-      this.announce(`${action} blocked because it overlaps ${summary}.`);
+
+    const guardEvaluation = await evaluatePlacementGuards(this.options.placementGuards, {
+      start: start.toISOString(),
+      end: end.toISOString(),
+      allDay,
+      action,
+      timeZone: this.timeZone,
+      ...(calendarId ? { calendarId } : {}),
+      ...(occurrence ? { occurrence } : {}),
+    });
+    if (guardEvaluation.mode === "prevent") {
+      this.announce(`${action} blocked. ${guardEvaluation.messages.join(" ")}`);
       return false;
     }
-    const allowed = await confirmCalendarAction(this.host, "Scheduling conflict", `${action} overlaps ${summary}. Continue?`, "Continue");
-    if (!allowed) this.announce(`${action} cancelled because of an overlap.`);
+
+    const warnings = [...guardEvaluation.messages];
+    if (this.collisionPolicy.mode !== "allow") {
+      const queryStart = addDays(startOfDay(start, this.timeZone), -1, this.timeZone);
+      const queryEnd = addDays(startOfDay(end, this.timeZone), 2, this.timeZone);
+      const queryRange = boundProjectionRange({ start: queryStart.toISOString(), end: queryEnd.toISOString() }, this.navigationBounds, this.timeZone);
+      const allSources = new Set(this.sources.map(source => source.id));
+      const result = await this.engine.query(queryRange, { visibleSourceIds: allSources, timeZone: this.timeZone });
+      const collisions = placementCollisions(result.occurrences, start, end, allDay, this.collisionPolicy, occurrence?.occurrenceId);
+      if (collisions.length) {
+        const names = [...new Set(collisions.map(row => row.occurrence.title))];
+        const summary = names.slice(0, 3).join(", ") + (names.length > 3 ? ` and ${names.length - 3} more` : "");
+        if (this.collisionPolicy.mode === "prevent") {
+          this.announce(`${action} blocked because it overlaps ${summary}.`);
+          return false;
+        }
+        warnings.push(`It overlaps ${summary}.`);
+      }
+    }
+
+    if (!warnings.length) return true;
+    const allowed = await confirmCalendarAction(this.host, "Scheduling check", `${warnings.join(" ")} Continue?`, "Continue");
+    if (!allowed) this.announce(`${action} cancelled after a scheduling warning.`);
     return allowed;
   }
 
@@ -2439,6 +2462,20 @@ export class CalendarUi {
     return undefined;
   }
 
+  private placementValidationPort(): CalendarPlacementValidationPort {
+    const self = this;
+    return {
+      canPlaceDraft: async (draft, original, action = "create") => self.allowPlacement(
+        self.resolveDraftTime(draft.start, draft.temporal),
+        self.resolveDraftTime(draft.end, draft.temporal),
+        Boolean(draft.allDay),
+        original,
+        action,
+        draft.calendarId,
+      ),
+    };
+  }
+
   private addonContext(): CalendarUiAddonContext {
     const self = this;
     return {
@@ -2459,19 +2496,17 @@ export class CalendarUi {
       createSource: async source => { await self.engine.createSource(source); },
       createDraft: async (draft, purpose, original) => {
         const item = self.createCalendarItem(draft, purpose, original);
-        if (!await self.allowPlacement(self.resolveDraftTime(item.start, item.temporal), self.resolveDraftTime(item.end, item.temporal), Boolean(item.allDay), undefined, String(purpose))) return null;
+        if (!await self.allowPlacement(self.resolveDraftTime(item.start, item.temporal), self.resolveDraftTime(item.end, item.temporal), Boolean(item.allDay), undefined, String(purpose), item.calendarId)) return null;
         await self.dispatch({ type: "create", item });
         return item;
       },
-      canPlaceDraft: async (draft, original, action = "create") => self.allowPlacement(
-        self.resolveDraftTime(draft.start, draft.temporal), self.resolveDraftTime(draft.end, draft.temporal), Boolean(draft.allDay), original, action,
-      ),
+      ...self.placementValidationPort(),
       patchOccurrence: async (occurrence, patch, label = "Edit") => {
         const temporal = patch.temporal === null ? undefined : patch.temporal ?? occurrence.temporal;
         const start = self.resolveDraftTime(patch.start ?? occurrence.start, temporal);
         const end = self.resolveDraftTime(patch.end ?? occurrence.end, temporal);
         const targetAllDay = Boolean(patch.allDay ?? occurrence.allDay);
-        if (!await self.allowPlacement(start, end, targetAllDay, occurrence, label.toLocaleLowerCase())) return false;
+        if (!await self.allowPlacement(start, end, targetAllDay, occurrence, label.toLocaleLowerCase(), patch.calendarId ?? occurrence.calendarId)) return false;
         const status = await self.issueOccurrencePatch(occurrence, patch, label, self.occurrencePatchRequirements(occurrence, patch), "edit");
         return mutationCommitted(status);
       },
