@@ -619,6 +619,4 @@ function recurrenceIdentityEqual(item: CalendarItem, left: string, right: string
   if (/(?:Z|[+-]\d\d:\d\d)$/.test(left) && /(?:Z|[+-]\d\d:\d\d)$/.test(right)) return Date.parse(left) === Date.parse(right);
   return left.slice(0, 19) === right.slice(0, 19);
 }
-function withoutNullishEntries(patch: Record<string, unknown>): Record<string, unknown> { return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== null && value !== undefined)); }
-
 async function parseJson<T>(response: Response): Promise<T> { if (!response.ok) throw new GoogleCalendarHttpError(response.status, `Google Calendar API request failed (${response.status}).`, await response.text()); return await response.json() as T; }

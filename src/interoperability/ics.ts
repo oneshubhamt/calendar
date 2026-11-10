@@ -360,4 +360,3 @@ function parseDurationMinutes(value: string): number { const match = /^P(?:(\d+)
 function relativeTriggerMinutes(value: string): number | null { const negative = value.startsWith("-"); const clean = value.replace(/^[+-]/, ""); try { const minutes = parseDurationMinutes(clean); return negative ? minutes : 0; } catch { return null; } }
 function safeUid(value: string): string { return value.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 180) || stableHash(value); }
 function fingerprintCalendarItemPlaceholder(uid: string, sequence: number): string { return `${uid}:${sequence}`; }
-function withoutNullishEntries(patch: Record<string, unknown>): Record<string, unknown> { return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== null && value !== undefined)); }

@@ -514,7 +514,7 @@ export async function evaluateCalendarResourcePlacement(
 /**
  * Re-evaluate at execution time and perform one atomic host commit.
  * Hosts should compare assignmentVersion atomically inside commit() and reject an
- * obsolete version with CalendarCommandStaleError (or any error carrying code="stale").
+ * obsolete version with CalendarStaleError (or any error carrying code="stale").
  * Stale commits are never retried here.
  */
 export async function executeCalendarResourcePlacement(
