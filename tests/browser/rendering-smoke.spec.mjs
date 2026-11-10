@@ -9,6 +9,15 @@ test("week view renders interactive events and passive background layers in a re
   await expect(page.locator(".dc-day-background-range").first()).toBeVisible();
   await expect(page.getByText("Morning focus", { exact: true })).toBeVisible();
   await expect(page.getByText("Noon checkpoint", { exact: true })).toBeVisible();
+
+  const geometry = await page.evaluate(() => {
+    const gridTop = document.querySelector(".dc-time-grid")?.getBoundingClientRect().top;
+    const primaryTop = document.querySelector(".dc-time-axis:not(.dc-secondary-time-axis)")?.getBoundingClientRect().top;
+    const secondaryTop = document.querySelector(".dc-secondary-time-axis")?.getBoundingClientRect().top;
+    return { gridTop, primaryTop, secondaryTop };
+  });
+  expect(geometry.primaryTop).toBeCloseTo(geometry.gridTop, 3);
+  expect(geometry.secondaryTop).toBeCloseTo(geometry.gridTop, 3);
 });
 
 test("DST fall-back day exposes duplicated local hour geometry without browser-specific failure", async ({ page }) => {

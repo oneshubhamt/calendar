@@ -18,7 +18,7 @@ test("day narrow visual baseline", async ({ page }) => {
     initialDate: "2026-11-10",
     dayStartHour: 6,
     dayEndHour: 23,
-    scrollHour: 8,
+    scrollHour: 6,
   });
   await expect(page.locator(".dc-root")).toHaveScreenshot("day-narrow.png");
 });
