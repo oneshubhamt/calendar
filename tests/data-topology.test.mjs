@@ -38,3 +38,19 @@ test("D4 normalized writes retain CAS in the same IndexedDB transaction",async()
   assert.match(commit,/tx\.abort\(\)/);
   assert.match(commit,/store\.put\(meta\)/);
 });
+
+
+test("D4 storage open is failure-clean and custom store names upgrade dynamically",async()=>{
+  const source=await read("../src/storage/indexeddb-repository.ts");
+  const open=source.match(/public async open\(\): Promise<void> \{[\s\S]*?\n  }\n\n  public read/)?.[0] ?? "";
+  assert.match(open,/catch \(error\)/);
+  assert.match(open,/opened\?\.close\(\)/);
+  assert.match(open,/this\.snapshotValue = undefined/);
+  assert.match(open,/this\.loaded = false/);
+
+  const openDb=source.match(/private async openDatabase\(\): Promise<IDBDatabase> \{[\s\S]*?\n  }\n\n  private async openDatabaseRequest/)?.[0] ?? "";
+  assert.match(openDb,/existing\.objectStoreNames\.contains\(this\.storeName\)/);
+  assert.match(openDb,/Math\.max\(DATABASE_VERSION, existing\.version \+ 1\)/);
+  assert.match(openDb,/existing\.close\(\)/);
+  assert.match(source,/requireStore && !db\.objectStoreNames\.contains\(this\.storeName\)/);
+});

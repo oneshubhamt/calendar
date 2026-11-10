@@ -51,8 +51,6 @@ interface LegacyStoredEnvelope {
   readonly sources?: CalendarSource[];
 }
 
-type StoredCalendarRecord = StoredMetaRecord | StoredItemRecord | StoredSourceRecord | LegacyStoredEnvelope;
-
 interface PersistedCalendarState {
   readonly revision: number;
   readonly items: readonly CalendarItem[];
@@ -175,17 +173,30 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
 
   public async open(): Promise<void> {
     if (this.loaded) return;
-    this.db = await this.openDatabase();
-    this.db.onversionchange = () => this.close();
+    let opened: IDBDatabase | null = null;
+    try {
+      opened = await this.openDatabase();
+      this.db = opened;
+      opened.onversionchange = () => this.close();
 
-    await this.migrateLegacySnapshot();
-    const persisted = await this.readPersistedState();
-    this.snapshotValue = persisted
-      ? materializeCalendarSnapshot(undefined, persisted.sources, persisted.items, persisted.revision)
-      : materializeCalendarSnapshot(undefined, this.initialSources, [], 0);
+      await this.migrateLegacySnapshot();
+      const persisted = await this.readPersistedState();
+      this.snapshotValue = persisted
+        ? materializeCalendarSnapshot(undefined, persisted.sources, persisted.items, persisted.revision)
+        : materializeCalendarSnapshot(undefined, this.initialSources, [], 0);
 
-    this.loaded = true;
-    this.openInvalidationChannel();
+      this.loaded = true;
+      this.openInvalidationChannel();
+    } catch (error) {
+      this.channel?.close();
+      this.channel = null;
+      opened?.close();
+      if (this.db === opened) this.db = null;
+      this.snapshotValue = undefined;
+      this.loaded = false;
+      this.refreshPromise = null;
+      throw error;
+    }
   }
 
   public read(): CalendarSnapshot {
@@ -268,9 +279,18 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   }
 
   private async openDatabase(): Promise<IDBDatabase> {
+    const existing = await this.openDatabaseRequest();
+    if (existing.objectStoreNames.contains(this.storeName) && existing.version >= DATABASE_VERSION) return existing;
+
+    const upgradeVersion = Math.max(DATABASE_VERSION, existing.version + 1);
+    existing.close();
+    return await this.openDatabaseRequest(upgradeVersion, true);
+  }
+
+  private async openDatabaseRequest(version?: number, requireStore = false): Promise<IDBDatabase> {
     return await new Promise<IDBDatabase>((resolve, reject) => {
       let settled = false;
-      const request = indexedDB.open(this.dbName, DATABASE_VERSION);
+      const request = version === undefined ? indexedDB.open(this.dbName) : indexedDB.open(this.dbName, version);
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains(this.storeName)) db.createObjectStore(this.storeName, { keyPath: "key" });
@@ -286,12 +306,19 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
         reject(request.error ?? new Error("Could not open Calendar IndexedDB"));
       };
       request.onsuccess = () => {
+        const db = request.result;
         if (settled) {
-          request.result.close();
+          db.close();
+          return;
+        }
+        if (requireStore && !db.objectStoreNames.contains(this.storeName)) {
+          settled = true;
+          db.close();
+          reject(new Error(`Calendar IndexedDB store was not created: ${this.storeName}`));
           return;
         }
         settled = true;
-        resolve(request.result);
+        resolve(db);
       };
     });
   }
