@@ -11,7 +11,6 @@ import type {
   CalendarOccurrenceCommand,
   CalendarRange,
   CalendarSnapPolicy,
-  CalendarSnapStrategy,
   CalendarSource,
   CalendarView,
   ISODateTime,
@@ -27,9 +26,16 @@ import { instantToPlain } from "../core/temporal.js";
 import { civilMinuteOfInstant, civilMinuteResolution, instantAtCivilMinute, shiftCivilMinutes } from "../core/civil-timeline.js";
 import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from "./time-zone-scale.js";
 import { CalendarTemporalChrome } from "./temporal-chrome.js";
+import {
+  CalendarGestureController,
+  dragResizeEdge,
+  snapDragDeltaMinutes,
+  type CalendarDragMode,
+  type CalendarDragState,
+} from "./gesture-controller.js";
 import { groupAgendaByDay, groupAllDayBackgroundRangesByDay, groupByDay, layoutBackgroundDay, layoutTimedDay } from "../core/layout.js";
 import { sameRecurrence } from "../core/recurrence.js";
-import { evaluateCalendarPlacement, normalizeSnapPolicy, placementInNavigationBounds, placementTimePatch, resizeInterval, resizePreview, snapMinuteCoordinate, type CalendarResizeEdge } from "../core/interaction.js";
+import { evaluateCalendarPlacement, normalizeSnapPolicy, placementInNavigationBounds, placementTimePatch, resizeInterval, snapMinuteCoordinate } from "../core/interaction.js";
 import {
   calendarOccurrenceCommandContext, resolveOccurrenceCapabilities, temporalMutationCapabilityRequirements,
   type CalendarOccurrenceCapabilityKey, type ResolvedCalendarOccurrenceCapabilities,
@@ -53,23 +59,6 @@ function mutationCommitted(status: OccurrenceDispatchResult): boolean {
   return status === "completed" || status === "committed-refresh-failed";
 }
 
-interface DragState {
-  readonly occurrence: CalendarOccurrence;
-  readonly mode: "move" | "resize-start" | "resize-end";
-  readonly pointerId: number;
-  readonly pointerStartX: number;
-  readonly pointerStartY: number;
-  readonly originalStart: Date;
-  readonly originalEnd: Date;
-  readonly element: HTMLElement;
-  readonly originalHeightCss: string;
-  readonly grabOffsetMinutes: number;
-  readonly scrollStartTop: number;
-  readonly scrollStartLeft: number;
-  lastClientX: number;
-  lastClientY: number;
-}
-
 interface SelectionDragState {
   readonly pointerId: number;
   readonly day: Date;
@@ -79,18 +68,6 @@ interface SelectionDragState {
   readonly startClientY: number;
   currentMinute: number;
   moved: boolean;
-}
-
-interface TouchPressState {
-  readonly pointerId: number;
-  readonly startX: number;
-  readonly startY: number;
-  lastX: number;
-  lastY: number;
-  readonly timer: number;
-  readonly occurrence: CalendarOccurrence;
-  readonly element: HTMLElement;
-  readonly mode: "move" | "resize-start" | "resize-end";
 }
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -186,21 +163,15 @@ export class CalendarUi {
   private occurrences: readonly CalendarOccurrence[] = [];
   private backgroundRanges: readonly CalendarBackgroundRange[] = [];
   private destroyed = false;
-  private drag: DragState | null = null;
   private selectionDrag: SelectionDragState | null = null;
-  private touchPress: TouchPressState | null = null;
-  private autoScrollFrame: number | null = null;
   private renderGeneration = 0;
   private contextMenu: HTMLElement | null = null;
   private readonly unsubscribeRepository: () => void;
-  private dragListenerCleanup: (() => void) | null = null;
-  private pointerArmCleanup: (() => void) | null = null;
-  private touchListenerCleanup: (() => void) | null = null;
-  private suppressOccurrenceClickUntil = 0;
   private readonly commandLifecycle = new CalendarCommandLifecycle();
   private readonly pendingPreviews = new Map<string, PendingOccurrencePreview>();
   private readonly reportedHostHookErrors = new Set<string>();
   private readonly temporalChrome: CalendarTemporalChrome;
+  private readonly gestures: CalendarGestureController;
 
   public constructor(
     private readonly host: HTMLElement,
@@ -245,6 +216,17 @@ export class CalendarUi {
       dayEndHour: this.dayEndHour,
       showNowIndicator: this.options.showNowIndicator !== false,
       onTick: now => this.updateTodayNavigation(now),
+    });
+    this.gestures = new CalendarGestureController({
+      host: this.host,
+      slotMinutes: this.slotMinutes,
+      snapPolicy: this.snapPolicy,
+      longPressMs: this.longPressMs,
+      autoScrollEdgePx: this.autoScrollEdgePx,
+      autoScrollMaxPxPerFrame: this.autoScrollMaxPxPerFrame,
+      setDragging: active => this.setDraggingState(active),
+      announce: message => this.announce(message),
+      finishDrag: (pointer, drag) => this.finishDrag(pointer, drag),
     });
     this.mountShell();
     this.temporalChrome.start();
@@ -348,10 +330,7 @@ export class CalendarUi {
 
   public destroy(): void {
     this.destroyed = true;
-    this.cancelTouchPress();
-    this.cancelPointerArm();
-    this.cancelActiveDrag();
-    this.stopAutoScroll();
+    this.gestures.destroy();
     this.temporalChrome.stop();
     this.dismissContextMenu();
     for (const addon of this.options.addons ?? []) this.hostHook(`Calendar add-on ${addon.id} destroy`, () => addon.destroy?.(), undefined);
@@ -1051,7 +1030,7 @@ export class CalendarUi {
     if (shortcuts.length) node.setAttribute("aria-keyshortcuts", shortcuts.join(" "));
     node.addEventListener("click", event => {
       event.stopPropagation();
-      if (Date.now() <= this.suppressOccurrenceClickUntil || this.isOccurrencePending(occurrence) || !this.canOpenOccurrence(occurrence)) return;
+      if (this.gestures.shouldSuppressOccurrenceClick() || this.isOccurrencePending(occurrence) || !this.canOpenOccurrence(occurrence)) return;
       void this.openDetails(occurrence);
     });
     node.addEventListener("contextmenu", event => {
@@ -1088,266 +1067,11 @@ export class CalendarUi {
     return id ? this.occurrenceIndex.get(id) : undefined;
   }
 
-  private beginDrag(pointer: PointerEvent, occurrence: CalendarOccurrence, element: HTMLElement, mode: "move" | "resize-start" | "resize-end"): void {
-    if (pointer.button !== 0) return;
-    pointer.stopPropagation();
-    if (pointer.pointerType === "touch") {
-      this.armTouchDrag(pointer, occurrence, element, mode);
-      return;
-    }
-    this.armPointerDrag(pointer, occurrence, element, mode);
+  private beginDrag(pointer: PointerEvent, occurrence: CalendarOccurrence, element: HTMLElement, mode: CalendarDragMode): void {
+    this.gestures.beginDrag(pointer, occurrence, element, mode);
   }
 
-  private armPointerDrag(pointer: PointerEvent, occurrence: CalendarOccurrence, element: HTMLElement, mode: "move" | "resize-start" | "resize-end"): void {
-    this.cancelPointerArm();
-    const pointerId = pointer.pointerId;
-    const startX = pointer.clientX;
-    const startY = pointer.clientY;
-    const move = (event: PointerEvent) => {
-      if (event.pointerId !== pointerId) return;
-      if (Math.hypot(event.clientX - startX, event.clientY - startY) < 4) return;
-      event.preventDefault();
-      cleanup();
-      this.activateDrag(pointerId, startX, startY, occurrence, element, mode);
-      this.moveDrag(event);
-    };
-    const end = (event: PointerEvent) => {
-      if (event.pointerId !== pointerId) return;
-      cleanup();
-    };
-    const cleanup = () => {
-      window.removeEventListener("pointermove", move, true);
-      window.removeEventListener("pointerup", end, true);
-      window.removeEventListener("pointercancel", end, true);
-      if (this.pointerArmCleanup === cleanup) this.pointerArmCleanup = null;
-    };
-    this.pointerArmCleanup?.();
-    this.pointerArmCleanup = cleanup;
-    window.addEventListener("pointermove", move, true);
-    window.addEventListener("pointerup", end, true);
-    window.addEventListener("pointercancel", end, true);
-  }
-
-  private cancelPointerArm(): void {
-    this.pointerArmCleanup?.();
-  }
-
-  private armTouchDrag(pointer: PointerEvent, occurrence: CalendarOccurrence, element: HTMLElement, mode: "move" | "resize-start" | "resize-end"): void {
-    this.cancelTouchPress();
-    const pointerId = pointer.pointerId;
-    const startX = pointer.clientX;
-    const startY = pointer.clientY;
-    element.classList.add("is-touch-arming");
-    const timer = window.setTimeout(() => {
-      const press = this.touchPress;
-      if (!press || press.pointerId !== pointerId) return;
-      this.touchPress = null;
-      element.classList.remove("is-touch-arming");
-      this.touchListenerCleanup?.();
-      this.activateDrag(pointerId, press.lastX, press.lastY, occurrence, element, mode);
-      this.announce(`${mode === "move" ? "Moving" : "Resizing"} ${occurrence.title}. Drag, then release.`);
-    }, this.longPressMs);
-    this.touchPress = { pointerId, startX, startY, lastX: startX, lastY: startY, timer, occurrence, element, mode };
-
-    const move = (event: PointerEvent) => {
-      const press = this.touchPress;
-      if (!press || event.pointerId !== press.pointerId) return;
-      press.lastX = event.clientX;
-      press.lastY = event.clientY;
-      if (Math.hypot(event.clientX - press.startX, event.clientY - press.startY) > 10) this.cancelTouchPress();
-    };
-    const cleanup = () => {
-      window.removeEventListener("pointermove", move, true);
-      window.removeEventListener("pointerup", end, true);
-      window.removeEventListener("pointercancel", end, true);
-      if (this.touchListenerCleanup === cleanup) this.touchListenerCleanup = null;
-    };
-    const end = (event: PointerEvent) => {
-      if (event.pointerId !== pointerId) return;
-      this.cancelTouchPress();
-      cleanup();
-    };
-    this.touchListenerCleanup?.();
-    this.touchListenerCleanup = cleanup;
-    window.addEventListener("pointermove", move, true);
-    window.addEventListener("pointerup", end, true);
-    window.addEventListener("pointercancel", end, true);
-  }
-
-  private cancelTouchPress(): void {
-    if (this.touchPress) {
-      clearTimeout(this.touchPress.timer);
-      this.touchPress.element.classList.remove("is-touch-arming");
-      this.touchPress = null;
-    }
-    this.touchListenerCleanup?.();
-  }
-
-  private activateDrag(pointerId: number, clientX: number, clientY: number, occurrence: CalendarOccurrence, element: HTMLElement, mode: "move" | "resize-start" | "resize-end"): void {
-    this.cancelTouchPress();
-    const rect = element.getBoundingClientRect();
-    try { element.setPointerCapture(pointerId); } catch { /* pointer capture can be unavailable after synthetic/browser transitions */ }
-    element.classList.add("is-dragging");
-    this.setDraggingState(true);
-    const body = this.host.querySelector<HTMLElement>(".dc-body");
-    this.drag = {
-      occurrence,
-      mode,
-      pointerId,
-      pointerStartX: clientX,
-      pointerStartY: clientY,
-      originalStart: toDate(occurrence.start),
-      originalEnd: toDate(occurrence.end),
-      element,
-      originalHeightCss: element.style.height,
-      grabOffsetMinutes: Math.max(0, clientY - rect.top),
-      scrollStartTop: body?.scrollTop ?? 0,
-      scrollStartLeft: body?.scrollLeft ?? 0,
-      lastClientX: clientX,
-      lastClientY: clientY,
-    };
-    const cleanup = () => {
-      window.removeEventListener("pointermove", move, true);
-      window.removeEventListener("pointerup", end, true);
-      window.removeEventListener("pointercancel", cancel, true);
-      if (this.dragListenerCleanup === cleanup) this.dragListenerCleanup = null;
-    };
-    const move = (event: PointerEvent) => {
-      if (!this.drag || event.pointerId !== this.drag.pointerId) return;
-      event.preventDefault();
-      this.moveDrag(event);
-    };
-    const end = (event: PointerEvent) => {
-      if (!this.drag || event.pointerId !== this.drag.pointerId) return;
-      event.preventDefault();
-      cleanup();
-      void this.finishDrag(event);
-    };
-    const cancel = (event: PointerEvent) => {
-      if (!this.drag || event.pointerId !== this.drag.pointerId) return;
-      cleanup();
-      this.cancelActiveDrag();
-    };
-    this.dragListenerCleanup?.();
-    this.dragListenerCleanup = cleanup;
-    window.addEventListener("pointermove", move, true);
-    window.addEventListener("pointerup", end, true);
-    window.addEventListener("pointercancel", cancel, true);
-    this.startAutoScroll();
-  }
-
-  private cancelActiveDrag(): void {
-    this.dragListenerCleanup?.();
-    const drag = this.drag;
-    this.drag = null;
-    this.stopAutoScroll();
-    if (!drag) return;
-    this.suppressOccurrenceClickUntil = Date.now() + 350;
-    drag.element.classList.remove("is-dragging");
-    drag.element.style.transform = "";
-    drag.element.style.height = drag.originalHeightCss;
-    this.setDraggingState(false);
-    this.announce(`${drag.mode === "move" ? "Move" : "Resize"} cancelled for ${drag.occurrence.title}.`);
-  }
-
-  private moveDrag(pointer: PointerEvent): void {
-    if (!this.drag) return;
-    this.drag.lastClientX = pointer.clientX;
-    this.drag.lastClientY = pointer.clientY;
-    const body = this.host.querySelector<HTMLElement>(".dc-body");
-    const scrollDelta = (body?.scrollTop ?? 0) - this.drag.scrollStartTop;
-    const horizontalScrollDelta = (body?.scrollLeft ?? 0) - this.drag.scrollStartLeft;
-    const rawDelta = pointer.clientY - this.drag.pointerStartY + scrollDelta;
-    if (this.drag.mode !== "move") {
-      const delta = this.snappedDeltaMinutes(rawDelta, this.snapPolicy.resize);
-      const renderedHeight = Number.parseFloat(this.drag.originalHeightCss);
-      const duration = Number.isFinite(renderedHeight) ? Math.max(this.slotMinutes, renderedHeight) : this.slotMinutes;
-      const preview = resizePreview(duration, delta, this.resizeEdge(this.drag.mode), this.slotMinutes);
-      this.drag.element.style.transform = `translateY(${preview.offsetMinutes}px)`;
-      this.drag.element.style.height = `${preview.heightMinutes}px`;
-      return;
-    }
-    const snappedDelta = this.snappedDeltaMinutes(rawDelta, this.snapPolicy.move);
-    const deltaX = pointer.clientX - this.drag.pointerStartX + horizontalScrollDelta;
-    this.drag.element.style.transform = `translate(${deltaX}px,${snappedDelta}px)`;
-  }
-
-  private resizeEdge(mode: DragState["mode"]): CalendarResizeEdge {
-    return mode === "resize-start" ? "start" : "end";
-  }
-
-  private snappedDeltaMinutes(deltaPixels: number, strategy: CalendarSnapStrategy): number {
-    if (strategy === "none") return Math.round(deltaPixels);
-    return snapMinuteCoordinate(deltaPixels, this.slotMinutes, strategy);
-  }
-
-  private timeAtGridMinute(
-    day: Date,
-    minute: number,
-    strategy: CalendarSnapStrategy,
-    action: string,
-  ): Date | null {
-    const snapped = snapMinuteCoordinate(minute, this.slotMinutes, strategy);
-    const target = instantAtCivilMinute(day, snapped, this.timeZone, this.dstOverlapDisambiguation);
-    if (!target) this.announce(`${action} is unavailable because that local time does not exist during the time-zone transition.`);
-    return target;
-  }
-
-  private startAutoScroll(): void {
-    if (this.autoScrollFrame !== null) return;
-    const tick = () => {
-      this.autoScrollFrame = null;
-      const drag = this.drag;
-      const body = this.host.querySelector<HTMLElement>(".dc-body");
-      if (!drag || !body) return;
-      const rect = body.getBoundingClientRect();
-      let verticalVelocity = 0;
-      let horizontalVelocity = 0;
-      if (drag.lastClientY < rect.top + this.autoScrollEdgePx) {
-        const ratio = Math.min(1, (rect.top + this.autoScrollEdgePx - drag.lastClientY) / this.autoScrollEdgePx);
-        verticalVelocity = -Math.max(2, ratio * this.autoScrollMaxPxPerFrame);
-      } else if (drag.lastClientY > rect.bottom - this.autoScrollEdgePx) {
-        const ratio = Math.min(1, (drag.lastClientY - (rect.bottom - this.autoScrollEdgePx)) / this.autoScrollEdgePx);
-        verticalVelocity = Math.max(2, ratio * this.autoScrollMaxPxPerFrame);
-      }
-      if (drag.lastClientX < rect.left + this.autoScrollEdgePx) {
-        const ratio = Math.min(1, (rect.left + this.autoScrollEdgePx - drag.lastClientX) / this.autoScrollEdgePx);
-        horizontalVelocity = -Math.max(2, ratio * this.autoScrollMaxPxPerFrame);
-      } else if (drag.lastClientX > rect.right - this.autoScrollEdgePx) {
-        const ratio = Math.min(1, (drag.lastClientX - (rect.right - this.autoScrollEdgePx)) / this.autoScrollEdgePx);
-        horizontalVelocity = Math.max(2, ratio * this.autoScrollMaxPxPerFrame);
-      }
-      if (verticalVelocity || horizontalVelocity) {
-        body.scrollTop += verticalVelocity;
-        body.scrollLeft += horizontalVelocity;
-        this.moveDrag({ clientX: drag.lastClientX, clientY: drag.lastClientY } as PointerEvent);
-      }
-      this.autoScrollFrame = requestAnimationFrame(tick);
-    };
-    this.autoScrollFrame = requestAnimationFrame(tick);
-  }
-
-  private stopAutoScroll(): void {
-    if (this.autoScrollFrame === null) return;
-    cancelAnimationFrame(this.autoScrollFrame);
-    this.autoScrollFrame = null;
-  }
-
-  private restoreDragVisual(drag: DragState): void {
-    drag.element.classList.remove("is-dragging", "is-command-preview");
-    drag.element.style.transform = "";
-    drag.element.style.height = drag.originalHeightCss;
-  }
-
-  private async finishDrag(pointer: PointerEvent): Promise<void> {
-    const drag = this.drag;
-    this.drag = null;
-    this.stopAutoScroll();
-    if (!drag) return;
-    this.suppressOccurrenceClickUntil = Date.now() + 350;
-    drag.element.classList.remove("is-dragging");
-    drag.element.classList.add("is-command-preview");
-    this.setDraggingState(false);
+  private async finishDrag(pointer: PointerEvent, drag: CalendarDragState): Promise<void> {
     const body = this.host.querySelector<HTMLElement>(".dc-body");
     const scrollDelta = (body?.scrollTop ?? 0) - drag.scrollStartTop;
     const totalDelta = pointer.clientY - drag.pointerStartY + scrollDelta;
@@ -1355,78 +1079,76 @@ export class CalendarUi {
     drag.element.style.pointerEvents = "none";
     const under = document.elementFromPoint(pointer.clientX, pointer.clientY) as HTMLElement | null;
     drag.element.style.pointerEvents = "";
-    try {
-      if (drag.mode !== "move") {
-        const edge = this.resizeEdge(drag.mode);
-        const targetColumn = under?.closest<HTMLElement>(".dc-time-column");
-        let target: Date;
-        if (targetColumn?.dataset.date) {
-          const day = toDate(targetColumn.dataset.date);
-          const rect = targetColumn.getBoundingClientRect();
-          const minute = this.dayStartHour * 60 + (pointer.clientY - rect.top);
-          const resolved = this.timeAtGridMinute(day, minute, this.snapPolicy.resize, "Resize");
-          if (!resolved) return;
-          target = resolved;
-        } else {
-          const delta = this.snappedDeltaMinutes(totalDelta, this.snapPolicy.resize);
-          if (!delta) return;
-          const shifted = shiftCivilMinutes(edge === "start" ? drag.originalStart : drag.originalEnd, delta, this.timeZone, this.dstOverlapDisambiguation);
-          if (!shifted) { this.announce("Resize is unavailable because the target local time does not exist."); return; }
-          target = shifted;
-        }
-        const resized = resizeInterval(drag.originalStart, drag.originalEnd, target, edge, this.slotMinutes);
-        if (resized.start.getTime() === drag.originalStart.getTime() && resized.end.getTime() === drag.originalEnd.getTime()) return;
-        if (!await this.allowPlacement(resized.start, resized.end, false, drag.occurrence, "resize")) return;
-        await this.issueTimedCommand({ type: "resize-occurrence", occurrence: drag.occurrence, start: resized.start.toISOString(), end: resized.end.toISOString(), scope: "this" }, "Resize", [edge === "start" ? "canResizeStart" : "canResizeEnd"]);
-        return;
+
+    if (drag.mode !== "move") {
+      const edge = dragResizeEdge(drag.mode);
+      const targetColumn = under?.closest<HTMLElement>(".dc-time-column");
+      let target: Date;
+      if (targetColumn?.dataset.date) {
+        const day = toDate(targetColumn.dataset.date);
+        const rect = targetColumn.getBoundingClientRect();
+        const minute = this.dayStartHour * 60 + (pointer.clientY - rect.top);
+        const resolved = this.timeAtGridMinute(day, minute, this.snapPolicy.resize, "Resize");
+        if (!resolved) return;
+        target = resolved;
+      } else {
+        const delta = snapDragDeltaMinutes(totalDelta, this.slotMinutes, this.snapPolicy.resize);
+        if (!delta) return;
+        const shifted = shiftCivilMinutes(edge === "start" ? drag.originalStart : drag.originalEnd, delta, this.timeZone, this.dstOverlapDisambiguation);
+        if (!shifted) { this.announce("Resize is unavailable because the target local time does not exist."); return; }
+        target = shifted;
       }
-      const monthTarget = under?.closest<HTMLElement>(".dc-day-cell");
-      if (monthTarget?.dataset.date) {
-        await this.moveToDay(drag.occurrence, toDate(monthTarget.dataset.date), isDateLikeOccurrence(drag.occurrence));
-        return;
-      }
-      const allDayTarget = under?.closest<HTMLElement>(".dc-all-day-col");
-      if (allDayTarget?.dataset.date) {
-        if (!this.canMoveOccurrenceToPlacement(drag.occurrence, true)) {
-          this.announce(`${drag.occurrence.title}: this move is not allowed.`);
-          return;
-        }
-        const day = toDate(allDayTarget.dataset.date);
-        const start = startOfDay(day, this.timeZone);
-        const days = calendarDaySpan(toDate(drag.occurrence.start), toDate(drag.occurrence.end), this.timeZone);
-        const end = addDays(start, days, this.timeZone);
-        if (!await this.allowPlacement(start, end, true, drag.occurrence, "move")) return;
-        await this.issueOccurrencePatch(drag.occurrence, placementTimePatch(start, end, true, this.timeZone), "Move", this.moveRequirements(drag.occurrence, true), "move");
-        return;
-      }
-      const column = under?.closest<HTMLElement>(".dc-time-column");
-      if (column?.dataset.date) {
-        if (!this.canMoveOccurrenceToPlacement(drag.occurrence, false)) {
-          this.announce(`${drag.occurrence.title}: this move is not allowed.`);
-          return;
-        }
-        const day = toDate(column.dataset.date);
-        const rect = column.getBoundingClientRect();
-        const rawMinute = this.dayStartHour * 60 + (pointer.clientY - rect.top) - drag.grabOffsetMinutes;
-        const start = this.timeAtGridMinute(day, rawMinute, this.snapPolicy.move, "Move");
-        if (!start) return;
-        const dateLike = isDateLikeOccurrence(drag.occurrence);
-        const end = new Date(start.getTime() + (dateLike ? 60 * 60_000 : durationMs(drag.occurrence)));
-        if (!await this.allowPlacement(start, end, false, drag.occurrence, "move")) return;
-        if (dateLike) await this.issueOccurrencePatch(drag.occurrence, placementTimePatch(start, end, false, this.timeZone), "Move", this.moveRequirements(drag.occurrence, false), "move");
-        else await this.issueTimedCommand({ type: "move-occurrence", occurrence: drag.occurrence, start: start.toISOString(), end: end.toISOString(), scope: "this" }, "Move", ["canMove"]);
-        return;
-      }
-      const deltaMinutes = this.snappedDeltaMinutes(totalDelta, this.snapPolicy.move);
-      if (!deltaMinutes) return;
-      const start = shiftCivilMinutes(drag.originalStart, deltaMinutes, this.timeZone, this.dstOverlapDisambiguation);
-      const end = shiftCivilMinutes(drag.originalEnd, deltaMinutes, this.timeZone, this.dstOverlapDisambiguation);
-      if (!start || !end) { this.announce("Move is unavailable because the target local time does not exist."); return; }
-      if (!await this.allowPlacement(start, end, false, drag.occurrence, "move")) return;
-      await this.issueTimedCommand({ type: "move-occurrence", occurrence: drag.occurrence, start: start.toISOString(), end: end.toISOString(), scope: "this" }, "Move", ["canMove"]);
-    } finally {
-      this.restoreDragVisual(drag);
+      const resized = resizeInterval(drag.originalStart, drag.originalEnd, target, edge, this.slotMinutes);
+      if (resized.start.getTime() === drag.originalStart.getTime() && resized.end.getTime() === drag.originalEnd.getTime()) return;
+      if (!await this.allowPlacement(resized.start, resized.end, false, drag.occurrence, "resize")) return;
+      await this.issueTimedCommand({ type: "resize-occurrence", occurrence: drag.occurrence, start: resized.start.toISOString(), end: resized.end.toISOString(), scope: "this" }, "Resize", [edge === "start" ? "canResizeStart" : "canResizeEnd"]);
+      return;
     }
+
+    const monthTarget = under?.closest<HTMLElement>(".dc-day-cell");
+    if (monthTarget?.dataset.date) {
+      await this.moveToDay(drag.occurrence, toDate(monthTarget.dataset.date), isDateLikeOccurrence(drag.occurrence));
+      return;
+    }
+    const allDayTarget = under?.closest<HTMLElement>(".dc-all-day-col");
+    if (allDayTarget?.dataset.date) {
+      if (!this.canMoveOccurrenceToPlacement(drag.occurrence, true)) {
+        this.announce(`${drag.occurrence.title}: this move is not allowed.`);
+        return;
+      }
+      const day = toDate(allDayTarget.dataset.date);
+      const start = startOfDay(day, this.timeZone);
+      const days = calendarDaySpan(toDate(drag.occurrence.start), toDate(drag.occurrence.end), this.timeZone);
+      const end = addDays(start, days, this.timeZone);
+      if (!await this.allowPlacement(start, end, true, drag.occurrence, "move")) return;
+      await this.issueOccurrencePatch(drag.occurrence, placementTimePatch(start, end, true, this.timeZone), "Move", this.moveRequirements(drag.occurrence, true), "move");
+      return;
+    }
+    const column = under?.closest<HTMLElement>(".dc-time-column");
+    if (column?.dataset.date) {
+      if (!this.canMoveOccurrenceToPlacement(drag.occurrence, false)) {
+        this.announce(`${drag.occurrence.title}: this move is not allowed.`);
+        return;
+      }
+      const day = toDate(column.dataset.date);
+      const rect = column.getBoundingClientRect();
+      const rawMinute = this.dayStartHour * 60 + (pointer.clientY - rect.top) - drag.grabOffsetMinutes;
+      const start = this.timeAtGridMinute(day, rawMinute, this.snapPolicy.move, "Move");
+      if (!start) return;
+      const dateLike = isDateLikeOccurrence(drag.occurrence);
+      const end = new Date(start.getTime() + (dateLike ? 60 * 60_000 : durationMs(drag.occurrence)));
+      if (!await this.allowPlacement(start, end, false, drag.occurrence, "move")) return;
+      if (dateLike) await this.issueOccurrencePatch(drag.occurrence, placementTimePatch(start, end, false, this.timeZone), "Move", this.moveRequirements(drag.occurrence, false), "move");
+      else await this.issueTimedCommand({ type: "move-occurrence", occurrence: drag.occurrence, start: start.toISOString(), end: end.toISOString(), scope: "this" }, "Move", ["canMove"]);
+      return;
+    }
+    const deltaMinutes = snapDragDeltaMinutes(totalDelta, this.slotMinutes, this.snapPolicy.move);
+    if (!deltaMinutes) return;
+    const start = shiftCivilMinutes(drag.originalStart, deltaMinutes, this.timeZone, this.dstOverlapDisambiguation);
+    const end = shiftCivilMinutes(drag.originalEnd, deltaMinutes, this.timeZone, this.dstOverlapDisambiguation);
+    if (!start || !end) { this.announce("Move is unavailable because the target local time does not exist."); return; }
+    if (!await this.allowPlacement(start, end, false, drag.occurrence, "move")) return;
+    await this.issueTimedCommand({ type: "move-occurrence", occurrence: drag.occurrence, start: start.toISOString(), end: end.toISOString(), scope: "this" }, "Move", ["canMove"]);
   }
 
   private beginRangeSelection(pointer: PointerEvent, day: Date, column: HTMLElement): void {
