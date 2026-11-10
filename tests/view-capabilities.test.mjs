@@ -227,3 +227,30 @@ test('day and week render passive background ranges below every interactive time
   assert.match(sourceText,/el\("span", "dc-background-range-label", range\.label\)/);
   assert.doesNotMatch(sourceText,/background\.addEventListener/);
 });
+
+
+test('B4 renders only explicit all-day backgrounds in month cells and all-day lanes',async()=>{
+  const sourceText=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
+  const styles=await fs.readFile(new URL('../src/view/styles.ts',import.meta.url),'utf8');
+  const layout=await fs.readFile(new URL('../src/core/layout.ts',import.meta.url),'utf8');
+
+  assert.match(layout,/groupAllDayBackgroundRangesByDay/);
+  assert.match(layout,/if \(background\.allDay !== true\) continue/);
+  assert.match(sourceText,/const backgroundBuckets = groupAllDayBackgroundRangesByDay\(this\.backgroundRanges, this\.timeZone, this\.visibleRange\)/);
+  assert.match(sourceText,/if \(inBounds && dayBackgrounds\.length\) cell\.append\(this\.dayLevelBackgroundLayer\(dayBackgrounds\)\)/);
+  assert.match(sourceText,/if \(inBounds && dayBackgrounds\.length\) all\.append\(this\.dayLevelBackgroundLayer\(dayBackgrounds\)\)/);
+  assert.match(sourceText,/private dayLevelBackgroundLayer\(ranges: readonly CalendarBackgroundRange\[\]\)/);
+  assert.match(sourceText,/layer\.setAttribute\("aria-hidden", "true"\)/);
+  assert.match(sourceText,/this\.backgroundAriaSuffix\(dayBackgrounds\)/);
+  assert.match(sourceText,/\. Background: \$\{labels\.join\(", "\)\}/);
+  assert.doesNotMatch(sourceText,/renderYear[\s\S]{0,1000}groupAllDayBackgroundRangesByDay/);
+  assert.doesNotMatch(sourceText,/renderAgenda[\s\S]{0,1000}groupAllDayBackgroundRangesByDay/);
+
+  assert.match(styles,/\.dc-day-background-layer\{[^}]*pointer-events:none;z-index:0/);
+  assert.match(styles,/\.dc-day-background-range\{[^}]*pointer-events:none/);
+  assert.match(styles,/\.dc-day-number\{[^}]*position:relative;z-index:1/);
+  assert.match(styles,/\.dc-month-events\{[^}]*position:relative;z-index:1/);
+  assert.match(styles,/\.dc-all-day-col\{[^}]*position:relative;overflow:hidden/);
+  assert.match(styles,/\.dc-all-day-col>\.dc-event\{position:relative;z-index:1\}/);
+  assert.doesNotMatch(sourceText,/dayLevelBackgroundLayer[\s\S]*addEventListener/);
+});
