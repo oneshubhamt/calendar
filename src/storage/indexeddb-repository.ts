@@ -15,6 +15,9 @@ import {
   materializeCalendarSnapshot,
 } from "../core/store.js";
 
+// Fresh durable namespace: no Calendar application has ever been installed against an older
+// persistent schema, so there is intentionally no migration or compatibility path into this store.
+const DEFAULT_DATABASE_NAME = "director-calendar" as const;
 const STORE_NAME = "calendar" as const;
 const META_KEY = "meta" as const;
 const ITEM_PREFIX = "item:" as const;
@@ -82,8 +85,25 @@ function storedMeta(value: unknown): StoredMetaRecord | undefined {
 function itemKey(id: string): string { return `${ITEM_PREFIX}${id}`; }
 function sourceKey(id: string): string { return `${SOURCE_PREFIX}${id}`; }
 
+function sameStoredValue(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (left === null || right === null || typeof left !== "object" || typeof right !== "object") return false;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+    return left.every((value, index) => sameStoredValue(value, right[index]));
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every(key =>
+    Object.prototype.hasOwnProperty.call(rightRecord, key)
+    && sameStoredValue(leftRecord[key], rightRecord[key]));
+}
+
 function sameEntity(left: unknown, right: unknown): boolean {
-  return left === right || JSON.stringify(left) === JSON.stringify(right);
+  return left === right || sameStoredValue(left, right);
 }
 
 function changedEntities<T extends { readonly id: string }>(
@@ -140,12 +160,13 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   private loaded = false;
   private db: IDBDatabase | null = null;
   private channel: BroadcastChannel | null = null;
+  private storageInvalidation: { readonly key: string; readonly listener: (event: StorageEvent) => void } | null = null;
   private refreshPromise: Promise<void> | null = null;
   private requestedRefreshRevision = -1;
   private readonly listeners = new Set<(snapshot: CalendarSnapshot) => void>();
 
   public constructor(options: IndexedDbCalendarRepositoryOptions) {
-    this.dbName = options.databaseName ?? "calendar";
+    this.dbName = options.databaseName ?? DEFAULT_DATABASE_NAME;
     this.initialSources = materializeCalendarSnapshot(undefined, options.sources, [], 0).sources;
   }
 
@@ -165,8 +186,7 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
       this.loaded = true;
       this.openInvalidationChannel();
     } catch (error) {
-      this.channel?.close();
-      this.channel = null;
+      this.closeInvalidationChannel();
       opened?.close();
       if (this.db === opened) this.db = null;
       this.snapshotValue = undefined;
@@ -183,8 +203,7 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
 
   /** Release the browser database handle. The repository may be opened again later. */
   public close(): void {
-    this.channel?.close();
-    this.channel = null;
+    this.closeInvalidationChannel();
     this.db?.close();
     this.db = null;
     this.loaded = false;
@@ -306,6 +325,9 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
     }
 
     const current = this.read();
+    if (current.revision !== expectedRevision) {
+      throw new CalendarStaleRevisionError(expectedRevision, current.revision);
+    }
     const revision = expectedRevision + 1;
     const meta: StoredMetaRecord = {
       key: META_KEY,
@@ -367,19 +389,70 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
 
     this.snapshotValue = materializeCalendarSnapshot(current, sources, items, revision);
     notifyObservers(this.listeners, this.snapshotValue);
-    this.channel?.postMessage({ revision });
+    this.publishInvalidation(revision);
+  }
+
+  private requestReload(revision: number): void {
+    void this.reloadFromStorage(revision).catch(() => {
+      // Cross-context invalidation is advisory. Preserve the missed target so a later
+      // invalidation can retry; transactional revision CAS remains the write-safety boundary.
+      if (this.loaded) this.requestedRefreshRevision = Math.max(this.requestedRefreshRevision, revision);
+    });
   }
 
   private openInvalidationChannel(): void {
-    if (this.channel || typeof BroadcastChannel === "undefined") return;
-    const channel = new BroadcastChannel(`@director/calendar:${this.dbName}`);
-    channel.onmessage = event => {
-      const value = event.data as { readonly revision?: unknown } | null;
-      const revision = value && Number.isInteger(value.revision) ? Number(value.revision) : -1;
-      if (!this.loaded || revision <= this.read().revision) return;
-      void this.reloadFromStorage(revision);
-    };
-    this.channel = channel;
+    if (this.channel || this.storageInvalidation) return;
+    const key = `@director/calendar:${this.dbName}:revision`;
+    if (typeof BroadcastChannel !== "undefined") {
+      const channel = new BroadcastChannel(`@director/calendar:${this.dbName}`);
+      channel.onmessage = event => {
+        const value = event.data as { readonly revision?: unknown } | null;
+        const revision = value && Number.isInteger(value.revision) ? Number(value.revision) : -1;
+        if (!this.loaded || revision <= this.read().revision) return;
+        this.requestReload(revision);
+      };
+      this.channel = channel;
+      return;
+    }
+
+    if (typeof window === "undefined") return;
+    try {
+      const storage = window.localStorage;
+      const listener = (event: StorageEvent): void => {
+        if (event.storageArea !== storage || event.key !== key || event.newValue === null || !this.loaded) return;
+        const revision = Number(event.newValue);
+        if (!Number.isInteger(revision) || revision <= this.read().revision) return;
+        this.requestReload(revision);
+      };
+      window.addEventListener("storage", listener);
+      this.storageInvalidation = { key, listener };
+    } catch {
+      // Storage-event invalidation is optional; IndexedDB revision CAS still protects writes.
+    }
+  }
+
+  private closeInvalidationChannel(): void {
+    this.channel?.close();
+    this.channel = null;
+    if (!this.storageInvalidation || typeof window === "undefined") {
+      this.storageInvalidation = null;
+      return;
+    }
+    window.removeEventListener("storage", this.storageInvalidation.listener);
+    this.storageInvalidation = null;
+  }
+
+  private publishInvalidation(revision: number): void {
+    if (this.channel) {
+      try { this.channel.postMessage({ revision }); } catch { /* advisory invalidation only */ }
+      return;
+    }
+    if (!this.storageInvalidation || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(this.storageInvalidation.key, String(revision));
+    } catch {
+      // Advisory invalidation failure cannot weaken transactional write correctness.
+    }
   }
 
   private async reloadFromStorage(minimumRevision = -1): Promise<void> {
