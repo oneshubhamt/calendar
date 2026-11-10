@@ -160,7 +160,7 @@ test('v1.1 keyboard success announcements require a completed authoritative life
 });
 
 test('v1.1 recurrence equality has one canonical source implementation',async()=>{
-  const files=['../src/core/recurrence.ts','../src/core/commands.ts','../src/view/calendar-ui.ts'];
+  const files=['../src/core/recurrence.ts','../src/core/event-series.ts','../src/core/commands.ts','../src/view/calendar-ui.ts'];
   const text=(await Promise.all(files.map(file=>fs.readFile(new URL(file,import.meta.url),'utf8')))).join('\n');
   assert.equal((text.match(/function sameRecurrence\s*\(/gu)??[]).length,1);
 });
