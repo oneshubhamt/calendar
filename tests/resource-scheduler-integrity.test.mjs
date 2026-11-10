@@ -83,3 +83,22 @@ test("R2 stable multi-resource associations preserve all assignments independent
   assert.equal(pairs.some(x=>x.occurrenceId==="unassigned"),false);
   assert.deepEqual(assignments[0].resourceIds,["doctor","roomB","roomA"],"must not mutate host state");
 });
+
+
+test("R2 flattening remains stack-safe and deterministic for a very deep valid hierarchy",()=>{
+  const depth=12000;
+  const deep=Array.from({length:depth},(_,index)=>({
+    id:`r${index}`,title:`Resource ${index}`,
+    ...(index===0?{}:{parentId:`r${index-1}`}),
+    ...(index===depth-1?{acceptsAssignments:true}:{}),
+  }));
+  const rows=flattenCalendarResources(deep);
+  assert.equal(rows.length,depth);
+  assert.equal(rows[0].depth,0);
+  assert.equal(rows.at(-1).depth,depth-1);
+  assert.equal(rows.at(-1).resource.id,`r${depth-1}`);
+  const normalized=validateCalendarResourceAssignments(deep,[occ("deep")],[
+    {occurrenceId:"deep",resourceIds:[`r${depth-1}`]},
+  ]);
+  assert.deepEqual(normalized[0].resourceIds,[`r${depth-1}`]);
+});

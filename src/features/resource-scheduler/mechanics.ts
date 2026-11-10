@@ -130,16 +130,27 @@ export function flattenCalendarResources(
     collapsed.add(id);
   }
   const rows: CalendarResourceRow[] = [];
-  const visit = (resource: CalendarResource, depth: number): void => {
+  const roots = children.get(undefined) ?? [];
+  const stack: Array<{ readonly resource: CalendarResource; readonly depth: number }> = [];
+  for (let index = roots.length - 1; index >= 0; index -= 1) {
+    stack.push({ resource: roots[index]!, depth: 0 });
+  }
+  while (stack.length) {
+    const current = stack.pop()!;
+    const descendants = children.get(current.resource.id) ?? [];
     rows.push({
-      resource, parentId: resource.parentId, depth, index: rows.length,
-      acceptsAssignments: resource.acceptsAssignments === true,
-      hasChildren: (children.get(resource.id)?.length ?? 0) > 0,
+      resource: current.resource,
+      parentId: current.resource.parentId,
+      depth: current.depth,
+      index: rows.length,
+      acceptsAssignments: current.resource.acceptsAssignments === true,
+      hasChildren: descendants.length > 0,
     });
-    if (collapsed.has(resource.id)) return;
-    for (const child of children.get(resource.id) ?? []) visit(child, depth + 1);
-  };
-  for (const root of children.get(undefined) ?? []) visit(root, 0);
+    if (collapsed.has(current.resource.id)) continue;
+    for (let index = descendants.length - 1; index >= 0; index -= 1) {
+      stack.push({ resource: descendants[index]!, depth: current.depth + 1 });
+    }
+  }
   return rows;
 }
 
@@ -170,6 +181,7 @@ export function validateCalendarResourceAssignments(
     knownOccurrences.add(id);
   }
   const knownResources = new Map(rows.map(row => [row.resource.id, row.index]));
+  const resourcesById = new Map(resources.map(resource => [resource.id, resource]));
   const seen = new Set<string>();
   const result: CalendarResourceAssignment[] = [];
   for (const assignment of assignments) {
@@ -184,7 +196,7 @@ export function validateCalendarResourceAssignments(
       text(resourceId, `Assignment ${id} resource id`);
       if (!knownResources.has(resourceId)) throw new Error(`Unknown resource in assignment ${id}: ${resourceId}`);
       if (ids.has(resourceId)) throw new Error(`Duplicate resource in assignment ${id}: ${resourceId}`);
-      const resource = resources.find(entry => entry.id === resourceId);
+      const resource = resourcesById.get(resourceId);
       if (resource?.acceptsAssignments !== true) throw new Error(`Resource ${resourceId} does not accept assignments`);
       ids.add(resourceId);
     }
