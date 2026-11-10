@@ -7,6 +7,8 @@ import {
   disableBroadcastChannel,
   event,
   installSilentBroadcastChannel,
+  inspectDatabase,
+  createDatabase,
   observedRevisions,
   openRepository,
   rawRecords,
@@ -17,6 +19,91 @@ import {
   uniqueDatabaseName,
   updateItem,
 } from "./helpers.mjs";
+
+async function repositoryOpenError(page, databaseName) {
+  try {
+    await openRepository(page, databaseName);
+    return null;
+  } catch (error) {
+    return String(error);
+  }
+}
+
+async function interopReadError(page, databaseName) {
+  return await page.evaluate(async databaseName => {
+    const { IndexedDbSyncStateStore } = await import("/dist/interoperability/storage.js");
+    try {
+      await new IndexedDbSyncStateStore(databaseName).read("missing");
+      return null;
+    } catch (error) {
+      return String(error);
+    }
+  }, databaseName);
+}
+
+test("canonical primary IndexedDB is exactly version 1 with one keyed store and no indexes", async ({ page }, testInfo) => {
+  const databaseName = uniqueDatabaseName(testInfo, "canonical-primary");
+  await openRepository(page, databaseName);
+  expect(await inspectDatabase(page, databaseName)).toEqual({
+    version: 1,
+    stores: [{
+      name: "calendar",
+      keyPath: "key",
+      autoIncrement: false,
+      indexes: [],
+    }],
+  });
+  await closeRepository(page);
+  await deleteDatabase(page, databaseName);
+});
+
+test("primary IndexedDB rejects wrong physical topology, extra stores and later versions", async ({ page }, testInfo) => {
+  const cases = [
+    { suffix: "wrong-key", version: 1, stores: [{ name: "calendar" }] },
+    { suffix: "extra-store", version: 1, stores: [{ name: "calendar", keyPath: "key" }, { name: "extra" }] },
+    { suffix: "later-version", version: 2, stores: [{ name: "calendar", keyPath: "key" }] },
+  ];
+  for (const row of cases) {
+    const databaseName = uniqueDatabaseName(testInfo, row.suffix);
+    await createDatabase(page, databaseName, row.version, row.stores);
+    const error = await repositoryOpenError(page, databaseName);
+    expect(error).not.toBeNull();
+    expect(error).toMatch(/canonical schema|VersionError/i);
+    await deleteDatabase(page, databaseName);
+  }
+});
+
+test("interoperability IndexedDB is exact version 1 and rejects alternate physical topology", async ({ page }, testInfo) => {
+  const canonical = uniqueDatabaseName(testInfo, "canonical-interop");
+  await page.goto("/tests/browser/harness.html");
+  await page.evaluate(async databaseName => {
+    const { IndexedDbSyncStateStore, IndexedDbReminderReceiptStore } = await import("/dist/interoperability/storage.js");
+    await new IndexedDbSyncStateStore(databaseName).read("missing");
+    await new IndexedDbReminderReceiptStore(databaseName).has("missing");
+  }, canonical);
+  expect(await inspectDatabase(page, canonical)).toEqual({
+    version: 1,
+    stores: [
+      { name: "reminderReceipts", keyPath: null, autoIncrement: false, indexes: [] },
+      { name: "syncStates", keyPath: null, autoIncrement: false, indexes: [] },
+    ],
+  });
+  await deleteDatabase(page, canonical);
+
+  const cases = [
+    { suffix: "wrong-key", version: 1, stores: [{ name: "syncStates", keyPath: "key" }, { name: "reminderReceipts" }] },
+    { suffix: "extra-store", version: 1, stores: [{ name: "syncStates" }, { name: "reminderReceipts" }, { name: "extra" }] },
+    { suffix: "later-version", version: 2, stores: [{ name: "syncStates" }, { name: "reminderReceipts" }] },
+  ];
+  for (const row of cases) {
+    const databaseName = uniqueDatabaseName(testInfo, row.suffix);
+    await createDatabase(page, databaseName, row.version, row.stores);
+    const error = await interopReadError(page, databaseName);
+    expect(error).not.toBeNull();
+    expect(error).toMatch(/canonical schema|VersionError/i);
+    await deleteDatabase(page, databaseName);
+  }
+});
 
 test("native IndexedDB persists normalized create, update and delete state across reopen", async ({ page }, testInfo) => {
   const databaseName = uniqueDatabaseName(testInfo, "persistence");

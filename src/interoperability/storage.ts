@@ -2,7 +2,8 @@ import type { CalendarSyncConnectionState, SyncStateStore } from "./sync.js";
 import type { ReminderReceiptStore } from "./reminders.js";
 import type { ISODateTime } from "../core/types.js";
 
-const DB_NAME = "calendar.interop";
+const DB_NAME = "director-calendar.interop";
+const DATABASE_VERSION = 1 as const;
 const SYNC_STORE = "syncStates";
 const REMINDER_STORE = "reminderReceipts";
 
@@ -38,25 +39,60 @@ export class IndexedDbReminderReceiptStore implements ReminderReceiptStore {
   }
 }
 
+function exactNames(names: DOMStringList, expected: readonly string[]): boolean {
+  return names.length === expected.length && expected.every(name => names.contains(name));
+}
+
+function assertCanonicalDatabase(db: IDBDatabase): void {
+  if (db.version !== DATABASE_VERSION || !exactNames(db.objectStoreNames, [SYNC_STORE, REMINDER_STORE])) {
+    throw new Error("Interoperability IndexedDB does not match the canonical schema");
+  }
+  const tx = db.transaction([SYNC_STORE, REMINDER_STORE], "readonly");
+  for (const name of [SYNC_STORE, REMINDER_STORE]) {
+    const store = tx.objectStore(name);
+    if (store.keyPath !== null || store.autoIncrement || store.indexNames.length !== 0) {
+      throw new Error("Interoperability IndexedDB does not match the canonical schema");
+    }
+  }
+}
+
 async function openDb(dbName: string): Promise<IDBDatabase> {
   if (typeof indexedDB === "undefined") throw new Error("IndexedDB is unavailable; provide a different interoperability state store.");
   return await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(dbName);
+    let settled = false;
+    const request = indexedDB.open(dbName, DATABASE_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains(SYNC_STORE)) db.createObjectStore(SYNC_STORE);
-      if (!db.objectStoreNames.contains(REMINDER_STORE)) db.createObjectStore(REMINDER_STORE);
+      db.createObjectStore(SYNC_STORE);
+      db.createObjectStore(REMINDER_STORE);
+    };
+    request.onblocked = () => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("Interoperability IndexedDB open is blocked by another tab"));
     };
     request.onsuccess = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains(SYNC_STORE) || !db.objectStoreNames.contains(REMINDER_STORE)) {
+      if (settled) {
         db.close();
-        reject(new Error("Interoperability IndexedDB does not match the current schema."));
         return;
       }
+      try {
+        assertCanonicalDatabase(db);
+      } catch (error) {
+        settled = true;
+        db.close();
+        reject(error);
+        return;
+      }
+      settled = true;
       resolve(db);
     };
-    request.onerror = () => reject(request.error ?? new Error("Could not open interoperability IndexedDB."));
+    request.onerror = () => {
+      if (settled) return;
+      settled = true;
+      reject(request.error ?? new Error("Could not open interoperability IndexedDB."));
+    };
   });
 }
 

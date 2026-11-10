@@ -15,9 +15,10 @@ import {
   materializeCalendarSnapshot,
 } from "../core/store.js";
 
-// Fresh durable namespace: no Calendar application has ever been installed against an older
-// persistent schema, so there is intentionally no migration or compatibility path into this store.
+// Fresh durable namespace: no Calendar application has ever been installed against another
+// persistent schema. IndexedDB version 1 is the sole accepted durable topology.
 const DEFAULT_DATABASE_NAME = "director-calendar" as const;
+const DATABASE_VERSION = 1 as const;
 const STORE_NAME = "calendar" as const;
 const META_KEY = "meta" as const;
 const ITEM_PREFIX = "item:" as const;
@@ -141,6 +142,20 @@ function openTransaction(db: IDBDatabase, storeName: string, mode: IDBTransactio
     return db.transaction(storeName, mode, { durability: "strict" });
   } catch {
     return db.transaction(storeName, mode);
+  }
+}
+
+function exactNames(names: DOMStringList, expected: readonly string[]): boolean {
+  return names.length === expected.length && expected.every(name => names.contains(name));
+}
+
+function assertCanonicalDatabase(db: IDBDatabase): void {
+  if (db.version !== DATABASE_VERSION || !exactNames(db.objectStoreNames, [STORE_NAME])) {
+    throw new Error("Calendar IndexedDB does not match the canonical schema");
+  }
+  const store = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME);
+  if (store.keyPath !== "key" || store.autoIncrement || store.indexNames.length !== 0) {
+    throw new Error("Calendar IndexedDB does not match the canonical schema");
   }
 }
 
@@ -278,12 +293,9 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   private async openDatabase(): Promise<IDBDatabase> {
     return await new Promise<IDBDatabase>((resolve, reject) => {
       let settled = false;
-      const request = indexedDB.open(this.dbName);
+      const request = indexedDB.open(this.dbName, DATABASE_VERSION);
       request.onupgradeneeded = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          db.createObjectStore(STORE_NAME, { keyPath: "key" });
-        }
+        request.result.createObjectStore(STORE_NAME, { keyPath: "key" });
       };
       request.onblocked = () => {
         if (settled) return;
@@ -301,10 +313,12 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
           db.close();
           return;
         }
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
+        try {
+          assertCanonicalDatabase(db);
+        } catch (error) {
           settled = true;
           db.close();
-          reject(new Error(`Calendar IndexedDB store is missing: ${STORE_NAME}`));
+          reject(error);
           return;
         }
         settled = true;

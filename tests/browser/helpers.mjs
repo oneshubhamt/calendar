@@ -131,6 +131,66 @@ export async function deleteDatabase(page, databaseName) {
   }, databaseName);
 }
 
+export async function inspectDatabase(page, databaseName) {
+  if (!page.url().includes("/tests/browser/harness.html")) {
+    await page.goto("/tests/browser/harness.html");
+  }
+  return await page.evaluate(async databaseName => {
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open(databaseName);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      const names = Array.from(db.objectStoreNames);
+      const tx = names.length ? db.transaction(names, "readonly") : null;
+      return {
+        version: db.version,
+        stores: names.map(name => {
+          const store = tx.objectStore(name);
+          return {
+            name,
+            keyPath: store.keyPath,
+            autoIncrement: store.autoIncrement,
+            indexes: Array.from(store.indexNames),
+          };
+        }),
+      };
+    } finally {
+      db.close();
+    }
+  }, databaseName);
+}
+
+export async function createDatabase(page, databaseName, version, stores) {
+  if (!page.url().includes("/tests/browser/harness.html")) {
+    await page.goto("/tests/browser/harness.html");
+  }
+  await deleteDatabase(page, databaseName);
+  await page.evaluate(async ({ databaseName, version, stores }) => {
+    await new Promise((resolve, reject) => {
+      const request = indexedDB.open(databaseName, version);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        for (const spec of stores) {
+          const options = {};
+          if (Object.prototype.hasOwnProperty.call(spec, "keyPath")) options.keyPath = spec.keyPath;
+          if (Object.prototype.hasOwnProperty.call(spec, "autoIncrement")) options.autoIncrement = spec.autoIncrement;
+          const store = Object.keys(options).length
+            ? db.createObjectStore(spec.name, options)
+            : db.createObjectStore(spec.name);
+          for (const index of spec.indexes ?? []) store.createIndex(index, index);
+        }
+      };
+      request.onsuccess = () => {
+        request.result.close();
+        resolve();
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }, { databaseName, version, stores });
+}
+
 export async function disableBroadcastChannel(pageOrContext) {
   await pageOrContext.addInitScript(() => {
     Object.defineProperty(globalThis, "BroadcastChannel", {

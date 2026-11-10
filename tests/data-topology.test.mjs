@@ -17,11 +17,12 @@ test("D4 IndexedDB uses one normalized scalable durable topology rather than thr
   assert.doesNotMatch(source,/threshold|largeData|smallData|storageMode/i);
 });
 
-test("D4 IndexedDB has one current normalized schema and no migration path",async()=>{
+test("D4 IndexedDB accepts one literal version-1 schema and contains no conversion path",async()=>{
   const source=await read("../src/storage/indexeddb-repository.ts");
-  assert.doesNotMatch(source,/DATABASE_VERSION|FORMAT_VERSION|readonly format:|format: FORMAT_VERSION/);
-  assert.doesNotMatch(source,/LEGACY_KEY|LegacyStoredEnvelope|legacyEnvelope|migrateLegacySnapshot/);
-  assert.doesNotMatch(source,/upgradeVersion|openDatabaseRequest/);
+  assert.match(source,/const DATABASE_VERSION = 1 as const/);
+  assert.match(source,/indexedDB\.open\(this\.dbName, DATABASE_VERSION\)/);
+  assert.doesNotMatch(source,/LEGACY_KEY|LegacyStoredEnvelope|legacyEnvelope|migrateLegacySnapshot|upgradeVersion|openDatabaseRequest/);
+  assert.doesNotMatch(source,/oldVersion|newVersion|case\s+\d+\s*:/);
 });
 
 test("D4 normalized writes retain CAS in the same IndexedDB transaction",async()=>{
@@ -44,10 +45,10 @@ test("D4 storage open is failure-clean and creates only the fixed current store"
   assert.match(open,/this\.loaded = false/);
 
   const openDb=source.match(/private async openDatabase\(\): Promise<IDBDatabase> \{[\s\S]*?\n  }\n\n  private async commit/)?.[0] ?? "";
-  assert.match(openDb,/indexedDB\.open\(this\.dbName\)/);
+  assert.match(openDb,/indexedDB\.open\(this\.dbName, DATABASE_VERSION\)/);
   assert.match(openDb,/request\.onupgradeneeded/);
-  assert.match(openDb,/db\.createObjectStore\(STORE_NAME/);
-  assert.match(openDb,/Calendar IndexedDB store is missing/);
+  assert.match(openDb,/createObjectStore\(STORE_NAME, \{ keyPath: "key" \}\)/);
+  assert.match(openDb,/assertCanonicalDatabase\(db\)/);
   assert.doesNotMatch(source,/openDatabaseRequest|upgradeVersion/);
 });
 
@@ -130,16 +131,18 @@ test("mutable Calendar repositories require atomic revision-guarded replacement 
 });
 
 
-test("current IndexedDB stores carry no application-level schema-version scaffolding",async()=>{
+test("primary and interoperability IndexedDB stores expose one canonical version and namespace",async()=>{
   const [calendarStorage,interopStorage]=await Promise.all([
     read("../src/storage/indexeddb-repository.ts"),
     read("../src/interoperability/storage.ts"),
   ]);
-  assert.doesNotMatch(calendarStorage,/DATABASE_VERSION|FORMAT_VERSION|readonly format:|format:\s*FORMAT_VERSION/);
-  assert.match(calendarStorage,/indexedDB\.open\(this\.dbName\)/);
-  assert.doesNotMatch(interopStorage,/DB_VERSION|calendar\.interop\.v\d+/);
-  assert.match(interopStorage,/const DB_NAME = "calendar\.interop"/);
-  assert.match(interopStorage,/indexedDB\.open\(dbName\)/);
+  assert.match(calendarStorage,/const DEFAULT_DATABASE_NAME = "director-calendar"/);
+  assert.match(calendarStorage,/const DATABASE_VERSION = 1 as const/);
+  assert.match(calendarStorage,/indexedDB\.open\(this\.dbName, DATABASE_VERSION\)/);
+  assert.match(interopStorage,/const DB_NAME = "director-calendar\.interop"/);
+  assert.match(interopStorage,/const DATABASE_VERSION = 1 as const/);
+  assert.match(interopStorage,/indexedDB\.open\(dbName, DATABASE_VERSION\)/);
+  assert.doesNotMatch(calendarStorage + interopStorage,/LEGACY_KEY|LegacyStoredEnvelope|migrateLegacySnapshot|oldVersion|newVersion/);
 });
 
 
@@ -166,12 +169,15 @@ test("repository and engine observer delivery is isolated from committed state",
 });
 
 
-test("interoperability storage fails closed on an incomplete current schema instead of repairing it",async()=>{
+test("interoperability storage creates and validates only its exact canonical physical schema",async()=>{
   const source=await read("../src/interoperability/storage.ts");
-  assert.match(source,/!db\.objectStoreNames\.contains\(SYNC_STORE\)/);
-  assert.match(source,/!db\.objectStoreNames\.contains\(REMINDER_STORE\)/);
-  assert.match(source,/Interoperability IndexedDB does not match the current schema/);
-  assert.doesNotMatch(source,/createObjectStore[\s\S]*onsuccess[\s\S]*createObjectStore/);
+  assert.match(source,/db\.createObjectStore\(SYNC_STORE\)/);
+  assert.match(source,/db\.createObjectStore\(REMINDER_STORE\)/);
+  assert.match(source,/exactNames\(db\.objectStoreNames, \[SYNC_STORE, REMINDER_STORE\]\)/);
+  assert.match(source,/store\.keyPath !== null/);
+  assert.match(source,/store\.autoIncrement/);
+  assert.match(source,/store\.indexNames\.length !== 0/);
+  assert.match(source,/Interoperability IndexedDB does not match the canonical schema/);
 });
 
 
