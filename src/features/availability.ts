@@ -3,21 +3,35 @@ import type {
   CalendarBackgroundProjectionProvider,
   CalendarBackgroundRange,
   CalendarId,
-  CalendarItem,
   CalendarMetadata,
   CalendarPlacementGuard,
   CalendarRange,
-  CalendarRecurrence,
   CalendarTemporalSpec,
   ISODateTime,
+  RecurrenceRule,
 } from "../core/types.js";
-import { expandItem } from "../core/recurrence.js";
-import { assertCalendarStateIntegrity } from "../core/store.js";
-
-const INTERNAL_SOURCE_ID = "__calendar-availability__";
-const INTERNAL_SOURCE = { id: INTERNAL_SOURCE_ID, title: "Availability", visible: true } as const;
+import {
+  expandTemporalSeries,
+  type CalendarTemporalSeriesException,
+  type CalendarTemporalSeriesPatch,
+  type CalendarTemporalSeriesRecurrence,
+} from "../core/recurrence.js";
+import { assertCalendarMetadataIntegrity } from "../core/store.js";
 
 export type CalendarAvailabilityState = "available" | "unavailable";
+
+export interface CalendarAvailabilityExceptionReplacement extends CalendarTemporalSeriesPatch {
+  readonly state?: CalendarAvailabilityState | undefined;
+  readonly calendarId?: CalendarId | undefined;
+  readonly label?: string | undefined;
+  readonly display?: CalendarBackgroundDisplay | undefined;
+  readonly metadata?: CalendarMetadata | undefined;
+}
+
+export interface CalendarAvailabilityRecurrence extends CalendarTemporalSeriesRecurrence<CalendarAvailabilityExceptionReplacement> {
+  readonly rule: RecurrenceRule;
+  readonly exceptions?: readonly CalendarTemporalSeriesException<CalendarAvailabilityExceptionReplacement>[] | undefined;
+}
 
 export interface CalendarAvailabilityDefinition {
   readonly id: string;
@@ -26,7 +40,7 @@ export interface CalendarAvailabilityDefinition {
   readonly end: ISODateTime;
   readonly allDay?: boolean | undefined;
   readonly temporal?: CalendarTemporalSpec | undefined;
-  readonly recurrence?: CalendarRecurrence | undefined;
+  readonly recurrence?: CalendarAvailabilityRecurrence | undefined;
   /** Optional association with a real Calendar source; the feature itself owns no source or persistence. */
   readonly calendarId?: CalendarId | undefined;
   readonly label?: string | undefined;
@@ -46,7 +60,6 @@ export interface CalendarAvailabilityProviderOptions extends CalendarAvailabilit
   readonly subscribe?: ((listener: () => void) => () => void) | undefined;
 }
 
-
 export type CalendarAvailabilityPlacementPolicy = "exclude-unavailable" | "require-available";
 
 export interface CalendarAvailabilityPlacementGuardOptions extends CalendarAvailabilityExpansionOptions {
@@ -63,65 +76,74 @@ function requiredText(value: unknown, label: string): string {
   return value;
 }
 
-function definitionItem(definition: CalendarAvailabilityDefinition): CalendarItem {
+function validateDisplay(display: CalendarBackgroundDisplay | undefined, label: string): void {
+  if (display === undefined) return;
+  if (!display || typeof display !== "object" || Array.isArray(display)) throw new Error(`${label} display is invalid`);
+  for (const key of ["color", "textColor", "className"] as const) {
+    const value = display[key];
+    if (value !== undefined && (typeof value !== "string" || !value.trim() || value.length > 2_048)) {
+      throw new Error(`${label} display ${key} is invalid`);
+    }
+  }
+}
+
+function validateSemanticFields(
+  value: Pick<CalendarAvailabilityDefinition, "state" | "calendarId" | "label" | "display" | "metadata">,
+  label: string,
+): void {
+  if (value.state !== "available" && value.state !== "unavailable") throw new Error(`${label} state is invalid`);
+  if (value.calendarId !== undefined) requiredText(value.calendarId, `${label} calendar id`);
+  if (value.label !== undefined) {
+    const text = requiredText(value.label, `${label} label`);
+    if (text.length > 2_048) throw new Error(`${label} label is invalid`);
+  }
+  validateDisplay(value.display, label);
+  if (value.metadata !== undefined) assertCalendarMetadataIntegrity(value.metadata, `${label} metadata`);
+}
+
+function validateDefinition(definition: CalendarAvailabilityDefinition): void {
   const id = requiredText(definition.id, "Availability definition id");
-  if (definition.state !== "available" && definition.state !== "unavailable") throw new Error(`Availability definition ${id} state is invalid`);
-  requiredText(definition.start, `Availability definition ${id} start`);
-  requiredText(definition.end, `Availability definition ${id} end`);
-  if (definition.calendarId !== undefined) requiredText(definition.calendarId, `Availability definition ${id} calendar id`);
-  if (definition.label !== undefined) requiredText(definition.label, `Availability definition ${id} label`);
+  const label = `Availability definition ${id}`;
+  requiredText(definition.start, `${label} start`);
+  requiredText(definition.end, `${label} end`);
+  validateSemanticFields(definition, label);
 
   const dateOnly = /^\d{4}-\d{2}-\d{2}$/u;
   if (definition.allDay === true) {
     if (!dateOnly.test(definition.start) || !dateOnly.test(definition.end)) {
-      throw new Error(`Availability definition ${id} all-day boundaries must be ISO dates`);
+      throw new Error(`${label} all-day boundaries must be ISO dates`);
     }
     if (definition.temporal && definition.temporal.kind !== "date") {
-      throw new Error(`Availability definition ${id} all-day temporal kind must be date`);
+      throw new Error(`${label} all-day temporal kind must be date`);
     }
   } else if (dateOnly.test(definition.start) || dateOnly.test(definition.end) || definition.temporal?.kind === "date") {
-    throw new Error(`Availability definition ${id} date-only boundaries require allDay: true`);
+    throw new Error(`${label} date-only boundaries require allDay: true`);
   }
 
-  return {
-    id,
-    calendarId: INTERNAL_SOURCE_ID,
-    title: definition.label ?? (definition.state === "available" ? "Available" : "Unavailable"),
-    start: definition.start,
-    end: definition.end,
-    ...(definition.allDay === true ? { allDay: true, precision: "date" as const, temporal: { kind: "date" as const } } : definition.temporal ? { temporal: definition.temporal } : {}),
-    kind: `availability-${definition.state}`,
-    ownership: "calendar-availability",
-    editPolicy: "generated",
-    ...(definition.recurrence ? { recurrence: definition.recurrence } : {}),
-    ...(definition.display ? { display: definition.display } : {}),
-    ...(definition.metadata ? { metadata: definition.metadata } : {}),
-  };
+  for (const exception of definition.recurrence?.exceptions ?? []) {
+    requiredText(exception.originalStart, `${label} recurrence exception originalStart`);
+    if (exception.cancelled && exception.replacement) throw new Error(`${label} recurrence exception cannot be cancelled and replaced`);
+    if (exception.replacement) {
+      validateSemanticFields({
+        state: exception.replacement.state ?? definition.state,
+        calendarId: exception.replacement.calendarId ?? definition.calendarId,
+        label: exception.replacement.label ?? definition.label,
+        display: exception.replacement.display ?? definition.display,
+        metadata: exception.replacement.metadata ?? definition.metadata,
+      }, `${label} recurrence replacement`);
+    }
+  }
 }
 
-function backgroundMetadata(definition: CalendarAvailabilityDefinition, occurrence: ReturnType<typeof expandItem>[number]): CalendarMetadata {
+function backgroundMetadata(metadata: CalendarMetadata | undefined, definitionId: string, state: CalendarAvailabilityState): CalendarMetadata {
   return {
-    ...(occurrence.metadata ?? {}),
-    calendarAvailability: {
-      definitionId: definition.id,
-      state: definition.state,
-    },
+    ...(metadata ?? {}),
+    calendarAvailability: { definitionId, state },
   };
 }
 
 function occurrenceBackgroundId(definition: CalendarAvailabilityDefinition, originalStart: ISODateTime): string {
   return definition.recurrence ? `${definition.id}@${originalStart}` : definition.id;
-}
-
-function backgroundDisplay(occurrence: ReturnType<typeof expandItem>[number]): CalendarBackgroundDisplay | undefined {
-  const display = occurrence.display;
-  if (!display) return undefined;
-  const background = {
-    ...(display.color ? { color: display.color } : {}),
-    ...(display.textColor ? { textColor: display.textColor } : {}),
-    ...(display.className ? { className: display.className } : {}),
-  };
-  return Object.keys(background).length ? background : undefined;
 }
 
 export function expandAvailabilityDefinitions(
@@ -132,24 +154,28 @@ export function expandAvailabilityDefinitions(
   if (!Array.isArray(definitions)) throw new Error("Availability definitions must be an array");
   requiredText(options.timeZone, "Availability expansion time zone");
 
-  const items = definitions.map(definitionItem);
-  assertCalendarStateIntegrity([INTERNAL_SOURCE], items);
+  const ids = new Set<string>();
+  return definitions.flatMap(definition => {
+    validateDefinition(definition);
+    if (ids.has(definition.id)) throw new Error(`Duplicate availability definition: ${definition.id}`);
+    ids.add(definition.id);
 
-  return definitions.flatMap((definition, index) => {
-    const item = items[index]!;
-    const fallbackTitle = definition.label ?? (definition.state === "available" ? "Available" : "Unavailable");
-    return expandItem(item, range, { timeZone: options.timeZone }).map(occurrence => {
-      const label = definition.label !== undefined || occurrence.title !== fallbackTitle ? occurrence.title : undefined;
-      const display = backgroundDisplay(occurrence);
+    return expandTemporalSeries(definition, definition.recurrence, range, { timeZone: options.timeZone }).map(resolved => {
+      const replacement = resolved.exception?.replacement;
+      const state = replacement?.state ?? definition.state;
+      const calendarId = replacement?.calendarId ?? definition.calendarId;
+      const label = replacement?.label ?? definition.label;
+      const display = replacement?.display ?? definition.display;
+      const metadata = replacement?.metadata ?? definition.metadata;
       return {
-        id: occurrenceBackgroundId(definition, occurrence.originalStart),
-        start: occurrence.start,
-        end: occurrence.end,
-        ...(occurrence.allDay ? { allDay: true } : {}),
-        ...(definition.calendarId ? { calendarId: definition.calendarId } : {}),
+        id: occurrenceBackgroundId(definition, resolved.originalStart),
+        start: resolved.start,
+        end: resolved.end,
+        ...(definition.allDay === true ? { allDay: true } : {}),
+        ...(calendarId ? { calendarId } : {}),
         ...(label ? { label } : {}),
         ...(display ? { display } : {}),
-        metadata: backgroundMetadata(definition, occurrence),
+        metadata: backgroundMetadata(metadata, definition.id, state),
       };
     });
   });
@@ -166,7 +192,6 @@ export function createAvailabilityBackgroundProvider(options: CalendarAvailabili
     ...(options.subscribe ? { subscribe: options.subscribe } : {}),
   };
 }
-
 
 function availabilityState(range: CalendarBackgroundRange): CalendarAvailabilityState | undefined {
   const value = range.metadata?.calendarAvailability;
