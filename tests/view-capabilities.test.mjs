@@ -293,3 +293,11 @@ test('B6 centralizes optional placement guards across built-in, add-on and host-
 
   assert.doesNotMatch(sourceText,/features\/availability/);
 });
+
+
+test('collision validation explicitly omits passive background projection',async()=>{
+  const sourceText=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
+  const gate=sourceText.match(/private async allowPlacement\([\s\S]*?\n  }\n\n  private async keyboardTransformOccurrence/)?.[0] ?? '';
+  assert.match(gate,/includeBackgroundRanges: false/);
+  assert.match(gate,/placementCollisions\(result\.occurrences/);
+});
