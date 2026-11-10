@@ -83,7 +83,13 @@ test("interoperability IndexedDB is exact version 1 and rejects alternate physic
   await page.evaluate(async databaseName => {
     const { IndexedDbSyncStateStore, IndexedDbReminderReceiptStore } = await import("/dist/interoperability/storage.js");
     await new IndexedDbSyncStateStore(databaseName).read("missing");
-    await new IndexedDbReminderReceiptStore(databaseName).has("missing");
+    const receipts = new IndexedDbReminderReceiptStore(databaseName);
+    await receipts.claim("schema-probe", {
+      token: "schema-probe",
+      claimedAt: "2026-11-10T10:00:00.000Z",
+      expiresAt: "2026-11-10T10:15:00.000Z",
+    });
+    await receipts.release("schema-probe", "schema-probe");
   }, canonical);
   expect(await inspectDatabase(page, canonical)).toEqual({
     version: 1,

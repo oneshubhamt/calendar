@@ -44,17 +44,27 @@ export class IndexedDbReminderReceiptStore implements ReminderReceiptStore {
         const tx = openTransaction(db, REMINDER_STORE, "readwrite");
         const store = tx.objectStore(REMINDER_STORE);
         let claimed = false;
+        let failure: unknown = null;
         tx.oncomplete = () => resolve(claimed);
-        tx.onabort = () => reject(tx.error ?? new Error("Reminder claim transaction aborted."));
-        tx.onerror = () => reject(tx.error ?? new Error("Reminder claim transaction failed."));
+        tx.onabort = () => reject(failure ?? tx.error ?? new Error("Reminder claim transaction aborted."));
+        tx.onerror = () => {
+          if (!failure) failure = tx.error ?? new Error("Reminder claim transaction failed.");
+        };
         const request = store.get(key);
-        request.onerror = () => reject(request.error ?? new Error("Reminder receipt read failed."));
+        request.onerror = () => {
+          failure = request.error ?? new Error("Reminder receipt read failed.");
+        };
         request.onsuccess = () => {
-          const existing = request.result === undefined ? null : validatedReminderReceipt(request.result, key);
-          if (existing?.state === "delivered") return;
-          if (existing?.state === "claimed" && Date.parse(existing.claim.expiresAt) > Date.parse(claim.claimedAt)) return;
-          store.put({ key, state: "claimed", claim: structuredClone(claim) } satisfies StoredReminderReceipt, key);
-          claimed = true;
+          try {
+            const existing = request.result === undefined ? null : validatedReminderReceipt(request.result, key);
+            if (existing?.state === "delivered") return;
+            if (existing?.state === "claimed" && Date.parse(existing.claim.expiresAt) > Date.parse(claim.claimedAt)) return;
+            store.put({ key, state: "claimed", claim: structuredClone(claim) } satisfies StoredReminderReceipt, key);
+            claimed = true;
+          } catch (error) {
+            failure = error;
+            tx.abort();
+          }
         };
       });
     } finally { db.close(); }
