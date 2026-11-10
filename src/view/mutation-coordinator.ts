@@ -14,7 +14,6 @@ import type {
 } from "../core/types.js";
 import type { CalendarClock } from "../core/time.js";
 import type {
-  CalendarCreateDraft,
   CalendarPlacementValidationPort,
   CalendarSourceActionPort,
 } from "./types.js";
