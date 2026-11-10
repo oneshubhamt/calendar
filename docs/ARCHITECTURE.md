@@ -16,11 +16,12 @@ core ───────────────┬─ view
 features/personal ── pure optional service
 features/personal-ui ── optional DOM add-on built on that service
 features/planning ── optional presentation/semantics extension
+features/availability ── optional temporal context + placement-policy adapter
 
 integration/* + adapters/* ── optional host-specific modules
 ```
 
-Generic layers never import Director integrations/adapters/fixtures. `view/` also does not import `features/personal`, `features/personal-ui` or `features/planning`. The package root exports only **core + view**. IndexedDB storage, interoperability, personal/planning features and host integrations require explicit subpath imports.
+Generic layers never import Director integrations/adapters/fixtures. `view/` also does not import `features/personal`, `features/personal-ui`, `features/planning` or `features/availability`. The package root exports only **core + view**. IndexedDB storage, interoperability, personal/planning/availability features and host integrations require explicit subpath imports.
 
 ## Core contracts
 
