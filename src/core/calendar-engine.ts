@@ -8,7 +8,7 @@ import type {
   CalendarEngineRepository,
   CalendarSnapshot, CalendarSource, CalendarSourcePatch,
 } from "./types.js";
-import { expandItems } from "./recurrence.js";
+import { expandItems } from "./event-series.js";
 import { sortOccurrences } from "./layout.js";
 import { assertCalendarBackgroundRangeIntegrity, assertCalendarOccurrenceIntegrity, assertCalendarStateIntegrity } from "./store.js";
 import { hasExplicitOffset, intersectsRange, toDate } from "./time.js";
