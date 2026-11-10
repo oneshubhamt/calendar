@@ -139,10 +139,10 @@ test('host projection invalidations participate in engine subscriptions without 
   let unsubscribed=false;
   const projection={id:'host-projection',project(){return [];},subscribe(listener){invalidate=listener;return ()=>{unsubscribed=true;};}};
   const engine=new C.CalendarEngine(provider,[projection]);
-  const revisions=[];
-  const unsubscribe=engine.subscribe(snapshot=>revisions.push(snapshot.revision));
+  const invalidations=[];
+  const unsubscribe=engine.subscribe(invalidation=>invalidations.push(invalidation));
   invalidate();
-  assert.deepEqual(revisions,[4]);
+  assert.deepEqual(invalidations,[{repositoryRevision:4,generation:1}]);
   unsubscribe();
   assert.equal(unsubscribed,true);
 });
