@@ -86,12 +86,10 @@ npm run check
 
 The normal quality gate is strict TypeScript typechecking, the complete non-visual test suite, and package-content validation. Screenshot/browser-gallery QA is intentionally separate from routine QA.
 
-The permanent suite covers recurrence/DST, series edits, view-range/list grouping, resize geometry and recurring resize commands, source and item authority, fail-closed undo/redo under concurrent changes, persistence invariants, generic host semantics, optional-feature boundaries, temporal-preserving edits, interoperability/reminders and the optional Director integrations. Screenshot/browser-gallery QA is intentionally separate from routine QA and can be run explicitly for visual release checks.
+The permanent suite covers recurrence/DST, series edits, view-range/list grouping, resize geometry and recurring resize commands, source and item authority, fail-closed undo/redo under concurrent changes, persistence invariants, generic host semantics, optional-feature boundaries, temporal-preserving edits, interoperability/reminders and the optional Director integrations. Native browser QA is a separate release gate covering storage/cross-tab behavior, real DOM interactions and visual baselines.
 
 See:
 
 - `docs/ARCHITECTURE.md` — canonical generic architecture contract;
 - `docs/AYANA_INTEGRATION.md` — Ayana-as-host integration architecture and target calendar experience;
-- `docs/AYANA_IMPLEMENTATION_PROGRAMME.md` — staged Calendar + Ayana implementation programme and acceptance gates.
-- `docs/BACKGROUND_RANGES_PROGRAMME.md` — generic passive background-range architecture and staged availability programme.
-- `docs/RESOURCE_SCHEDULER_PROGRAMME.md` — optional Resource Scheduler architecture and staged implementation programme.
+- `docs/AYANA_IMPLEMENTATION_PROGRAMME.md` — remaining Ayana-side implementation programme and acceptance gates.
