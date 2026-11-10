@@ -23,7 +23,7 @@ import {
   type CalendarStateCollections,
 } from "../core/state-transitions.js";
 import {
-  CALENDAR_CALENDAR_STORE_NAME,
+  CALENDAR_STORE_NAME,
   DEFAULT_CALENDAR_DATABASE_NAME,
   openCalendarDatabase,
   openCalendarTransaction,
