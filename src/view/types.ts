@@ -11,6 +11,7 @@ import type {
   CalendarOccurrence,
   CalendarOccurrenceCapabilityProvider,
   CalendarOverlapDisambiguation,
+  CalendarPlacementGuard,
   CalendarOwnership,
   CalendarRange,
   CalendarRecurrence,
@@ -247,6 +248,8 @@ export interface CalendarUiOptions {
   readonly slotMinutes?: 5 | 10 | 15 | 20 | 30 | 60;
   readonly snapPolicy?: import("../core/types.js").CalendarSnapPolicy;
   readonly collisionPolicy?: import("../core/types.js").CalendarCollisionPolicy;
+  /** Optional generic scheduling policies. Background visualization remains non-enforcing unless a guard is supplied. */
+  readonly placementGuards?: readonly CalendarPlacementGuard[];
   readonly longPressMs?: number;
   readonly autoScrollEdgePx?: number;
   readonly autoScrollMaxPxPerFrame?: number;
