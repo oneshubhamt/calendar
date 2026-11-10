@@ -127,3 +127,6 @@ export interface CalendarResourceMutationPort {
 
 export { validateCalendarResources, flattenCalendarResources, validateCalendarResourceAssignments, associateCalendarResources } from "./mechanics.js";
 export type { CalendarResourceRow, CalendarResourceAssociation } from "./mechanics.js";
+
+export { layoutResourceTimeline } from "./timeline-layout.js";
+export type { CalendarResourceTimelineLayoutItem, CalendarResourceTimelineLayoutOptions } from "./timeline-layout.js";

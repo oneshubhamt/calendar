@@ -79,6 +79,14 @@ These routines do not fetch host providers, interpret recurrence, mutate assignm
 
 Add dedicated `layoutResourceTimeline()`. Reuse existing time/civil/DST semantics; do not alter `layoutTimedDay()`. Produce deterministic horizontal time geometry, resource rows, overlap lanes and occurrence-resource render identity.
 
+### R3 implementation notes
+
+`layoutResourceTimeline(resources, occurrences, assignments, range, options)` is a dedicated optional horizontal geometry function. It accepts already-expanded `CalendarOccurrence` values and validated host-owned assignments, clips intervals against the requested absolute range, maps x/width through the existing `civilMinuteOfInstant()` basis when a time zone is supplied, and uses elapsed minutes otherwise. True point occurrences retain zero width.
+
+Each visible assignment produces an occurrence/resource render instance with a collision-safe stable `renderId`, deterministic resource row, x/width and visual lane. Multi-resource occurrences therefore render independently in each assigned row. Lane packing is presentation-only; it does not call placement policy, collision policy, capability providers or mutation ports. Caller-supplied collapsed resource IDs may hide descendant rows without changing the underlying assignment projection.
+
+R3 does not invoke recurrence or create a second time engine. It does not alter `layoutTimedDay()`.
+
 ## R4 — Read-only Resource Timeline UI
 
 Add the separate optional `features/resource-scheduler-ui` subpath with nested headers, expand/collapse, time axis, resource rows, event rendering, scrolling and keyboard/accessibility foundations. Do not add a Calendar view enum member or use `CalendarUiAddon`.
@@ -97,6 +105,6 @@ Add horizontal time drag, vertical resource reassignment, diagonal combined drag
 
 Verify hierarchy integrity, collapse/order, multi-resource behavior, unassigned events, resource-scoped policy, recurrence scopes, DST/cross-midnight/point occurrences, temporal/resource authority, trusted host projections, stale versions, atomic failure behavior, accessibility and negative dependency/persistence leakage. Then run the complete repository quality gate.
 
-## Current architecture after R2
+## Current architecture after R3
 
-The headless contract lives only under `src/features/resource-scheduler/` and is exported only from `@director/calendar/features/resource-scheduler`. It imports core types only. Base root/core/view remain unchanged and resource-free. R2 adds only pure headless validation/projection mechanics. No Resource Scheduler runtime module is loaded unless its explicit subpath is imported.
+The headless contract lives only under `src/features/resource-scheduler/` and is exported only from `@director/calendar/features/resource-scheduler`. It imports core types only. Base root/core/view remain unchanged and resource-free. R2 provides pure validation/projection mechanics and R3 adds only optional headless timeline geometry. No Resource Scheduler runtime module is loaded unless its explicit subpath is imported.
