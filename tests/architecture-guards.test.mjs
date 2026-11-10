@@ -130,7 +130,8 @@ test("durable browser storage has one canonical physical database substrate", as
   assert.match(repository, /from "\.\/browser-database\.js"/);
   assert.match(interoperability, /from "\.\.\/storage\/browser-database\.js"/);
   assert.doesNotMatch(repository + interoperability, /indexedDB\.open|director-calendar\.interop/);
-  assert.match(database, /indexedDB\.open\(databaseName, CALENDAR_DATABASE_VERSION\)/);
+  assert.match(database, /indexedDB\.open\(DEFAULT_CALENDAR_DATABASE_NAME, CALENDAR_DATABASE_VERSION\)/);
+  assert.doesNotMatch(repository + interoperability, /\bdatabaseName\b|\bdbName\b/);
 });
 
 test("production source contains no migration or compatibility implementation path", async () => {

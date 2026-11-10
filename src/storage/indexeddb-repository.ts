@@ -125,7 +125,6 @@ function orderedValues<T extends { readonly id: string }>(
 }
 
 export interface IndexedDbCalendarRepositoryOptions {
-  readonly databaseName?: string;
   readonly sources: readonly CalendarSource[];
 }
 
@@ -134,7 +133,6 @@ export interface IndexedDbCalendarRepositoryOptions {
  * The public repository remains snapshot-oriented while IndexedDB writes only changed entities.
  */
 export class IndexedDbCalendarRepository implements CalendarRepository {
-  private readonly dbName: string;
   private snapshotValue: CalendarSnapshot | undefined;
   private readonly initialSources: readonly CalendarSource[];
   private loaded = false;
@@ -146,7 +144,6 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   private readonly listeners = new Set<(snapshot: CalendarSnapshot) => void>();
 
   public constructor(options: IndexedDbCalendarRepositoryOptions) {
-    this.dbName = options.databaseName ?? DEFAULT_CALENDAR_DATABASE_NAME;
     this.initialSources = materializeCalendarSnapshot(undefined, options.sources, [], 0).sources;
   }
 
@@ -154,7 +151,7 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
     if (this.loaded) return;
     let opened: IDBDatabase | null = null;
     try {
-      opened = await openCalendarDatabase(this.dbName);
+      opened = await openCalendarDatabase();
       this.db = opened;
       opened.onversionchange = () => this.close();
 
@@ -337,9 +334,9 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
 
   private openInvalidationChannel(): void {
     if (this.channel || this.storageInvalidation) return;
-    const key = `@director/calendar:${this.dbName}:revision`;
+    const key = `@director/calendar:${DEFAULT_CALENDAR_DATABASE_NAME}:revision`;
     if (typeof BroadcastChannel !== "undefined") {
-      const channel = new BroadcastChannel(`@director/calendar:${this.dbName}`);
+      const channel = new BroadcastChannel(`@director/calendar:${DEFAULT_CALENDAR_DATABASE_NAME}`);
       channel.onmessage = event => {
         const value = event.data as { readonly revision?: unknown } | null;
         const revision = value && Number.isInteger(value.revision) ? Number(value.revision) : -1;

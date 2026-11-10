@@ -9,7 +9,6 @@ import type { CalendarItem, ISODateTime } from "../core/types.js";
 import { assertCalendarStateIntegrity } from "../core/store.js";
 import { parseAbsoluteDateTime } from "../core/time.js";
 import {
-  DEFAULT_CALENDAR_DATABASE_NAME,
   REMINDER_RECEIPT_STORE_NAME,
   SYNC_STATE_STORE_NAME,
   openCalendarDatabase,
@@ -17,19 +16,17 @@ import {
 } from "../storage/browser-database.js";
 
 export class IndexedDbSyncStateStore implements SyncStateStore {
-  public constructor(private readonly dbName = DEFAULT_CALENDAR_DATABASE_NAME) {}
-
   public async read(connectionId: string): Promise<CalendarSyncConnectionState | null> {
-    const value = await getRecord<unknown>(this.dbName, SYNC_STATE_STORE_NAME, connectionId);
+    const value = await getRecord<unknown>(SYNC_STATE_STORE_NAME, connectionId);
     return value === null ? null : validatedSyncState(value, connectionId);
   }
 
   public async write(state: CalendarSyncConnectionState): Promise<void> {
     const valid = validatedSyncState(state, state.connectionId);
-    await putRecord(this.dbName, SYNC_STATE_STORE_NAME, valid, valid.connectionId);
+    await putRecord(SYNC_STATE_STORE_NAME, valid, valid.connectionId);
   }
 
-  public async remove(connectionId: string): Promise<void> { await deleteRecord(this.dbName, SYNC_STATE_STORE_NAME, connectionId); }
+  public async remove(connectionId: string): Promise<void> { await deleteRecord(SYNC_STATE_STORE_NAME, connectionId); }
 }
 
 type StoredReminderReceipt =
@@ -37,11 +34,9 @@ type StoredReminderReceipt =
   | { readonly key: string; readonly state: "delivered"; readonly deliveredAt: ISODateTime };
 
 export class IndexedDbReminderReceiptStore implements ReminderReceiptStore {
-  public constructor(private readonly dbName = DEFAULT_CALENDAR_DATABASE_NAME) {}
-
   public async claim(key: string, claim: ReminderReceiptClaim): Promise<boolean> {
     const validClaim = validatedClaim(claim);
-    const db = await openCalendarDatabase(this.dbName);
+    const db = await openCalendarDatabase();
     try {
       return await new Promise<boolean>((resolve, reject) => {
         const tx = openCalendarTransaction(db, REMINDER_RECEIPT_STORE_NAME, "readwrite");
@@ -75,7 +70,7 @@ export class IndexedDbReminderReceiptStore implements ReminderReceiptStore {
 
   public async complete(key: string, token: string, deliveredAt: ISODateTime): Promise<void> {
     const validDeliveredAt = absoluteTimestamp(deliveredAt, "Reminder deliveredAt");
-    await mutateReceipt(this.dbName, key, existing => {
+    await mutateReceipt(key, existing => {
       if (existing?.state !== "claimed" || existing.claim.token !== token) {
         throw new Error("Reminder receipt claim is no longer owned by this delivery");
       }
@@ -84,13 +79,13 @@ export class IndexedDbReminderReceiptStore implements ReminderReceiptStore {
   }
 
   public async release(key: string, token: string): Promise<void> {
-    await mutateReceipt(this.dbName, key, existing =>
+    await mutateReceipt(key, existing =>
       existing?.state === "claimed" && existing.claim.token === token ? null : existing);
   }
 
   public async prune(before: ISODateTime): Promise<void> {
     const cutoff = Date.parse(absoluteTimestamp(before, "Reminder receipt prune cutoff"));
-    const db = await openCalendarDatabase(this.dbName);
+    const db = await openCalendarDatabase();
     try {
       await transactionDone(db, REMINDER_RECEIPT_STORE_NAME, "readwrite", store => {
         const cursor = store.openCursor();
@@ -261,11 +256,10 @@ function validatedReminderReceipt(value: unknown, expectedKey: string): StoredRe
 }
 
 async function mutateReceipt(
-  dbName: string,
   key: string,
   mutation: (existing: StoredReminderReceipt | null) => StoredReminderReceipt | null,
 ): Promise<void> {
-  const db = await openCalendarDatabase(dbName);
+  const db = await openCalendarDatabase();
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = openCalendarTransaction(db, REMINDER_RECEIPT_STORE_NAME, "readwrite");
@@ -290,8 +284,8 @@ async function mutateReceipt(
   } finally { db.close(); }
 }
 
-async function getRecord<T>(dbName: string, storeName: string, key: IDBValidKey): Promise<T | null> {
-  const db = await openCalendarDatabase(dbName);
+async function getRecord<T>(storeName: string, key: IDBValidKey): Promise<T | null> {
+  const db = await openCalendarDatabase();
   try {
     return await new Promise<T | null>((resolve, reject) => {
       const tx = openCalendarTransaction(db, storeName, "readonly");
@@ -302,14 +296,14 @@ async function getRecord<T>(dbName: string, storeName: string, key: IDBValidKey)
   } finally { db.close(); }
 }
 
-async function putRecord<T>(dbName: string, storeName: string, value: T, key: IDBValidKey): Promise<void> {
-  const db = await openCalendarDatabase(dbName);
+async function putRecord<T>(storeName: string, value: T, key: IDBValidKey): Promise<void> {
+  const db = await openCalendarDatabase();
   try { await transactionDone(db, storeName, "readwrite", store => { store.put(value, key); }); }
   finally { db.close(); }
 }
 
-async function deleteRecord(dbName: string, storeName: string, key: IDBValidKey): Promise<void> {
-  const db = await openCalendarDatabase(dbName);
+async function deleteRecord(storeName: string, key: IDBValidKey): Promise<void> {
+  const db = await openCalendarDatabase();
   try { await transactionDone(db, storeName, "readwrite", store => { store.delete(key); }); }
   finally { db.close(); }
 }

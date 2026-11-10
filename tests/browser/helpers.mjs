@@ -1,3 +1,5 @@
+export const DATABASE_NAME = "director-calendar";
+
 export const SOURCE = Object.freeze({
   id: "personal",
   title: "Personal",
@@ -19,29 +21,17 @@ export const event = (id, overrides = {}) => ({
   ...overrides,
 });
 
-export function uniqueDatabaseName(testInfo, prefix) {
-  return [
-    "calendar-browser",
-    prefix,
-    testInfo.project.name,
-    testInfo.workerIndex,
-    testInfo.retry,
-    Date.now(),
-    Math.random().toString(36).slice(2),
-  ].join("-");
-}
-
-export async function openRepository(page, databaseName, sources = [SOURCE]) {
+export async function openRepository(page, sources = [SOURCE]) {
   if (!page.url().includes("/tests/browser/harness.html")) {
     await page.goto("/tests/browser/harness.html");
   }
-  await page.evaluate(async ({ databaseName, sources }) => {
+  await page.evaluate(async sources => {
     const { IndexedDbCalendarRepository } = await import("/dist/storage/indexeddb-repository.js");
     globalThis.__calendarRepo?.close?.();
-    const repository = new IndexedDbCalendarRepository({ databaseName, sources });
+    const repository = new IndexedDbCalendarRepository({ sources });
     await repository.open();
     globalThis.__calendarRepo = repository;
-  }, { databaseName, sources });
+  }, sources);
 }
 
 export async function closeRepository(page) {
@@ -127,7 +117,7 @@ export async function observedRevisions(page) {
   return await page.evaluate(() => [...(globalThis.__calendarRevisions ?? [])]);
 }
 
-export async function rawRecords(page, databaseName) {
+export async function rawRecords(page) {
   return await page.evaluate(async databaseName => {
     const db = await new Promise((resolve, reject) => {
       const request = indexedDB.open(databaseName);
@@ -143,10 +133,10 @@ export async function rawRecords(page, databaseName) {
     } finally {
       db.close();
     }
-  }, databaseName);
+  }, DATABASE_NAME);
 }
 
-export async function deleteDatabase(page, databaseName) {
+export async function deleteDatabase(page) {
   await page.evaluate(async databaseName => {
     await new Promise((resolve, reject) => {
       const request = indexedDB.deleteDatabase(databaseName);
@@ -154,10 +144,10 @@ export async function deleteDatabase(page, databaseName) {
       request.onerror = () => reject(request.error);
       request.onblocked = () => reject(new Error(`IndexedDB deletion blocked: ${databaseName}`));
     });
-  }, databaseName);
+  }, DATABASE_NAME);
 }
 
-export async function inspectDatabase(page, databaseName) {
+export async function inspectDatabase(page) {
   if (!page.url().includes("/tests/browser/harness.html")) {
     await page.goto("/tests/browser/harness.html");
   }
@@ -185,14 +175,14 @@ export async function inspectDatabase(page, databaseName) {
     } finally {
       db.close();
     }
-  }, databaseName);
+  }, DATABASE_NAME);
 }
 
-export async function createDatabase(page, databaseName, version, stores) {
+export async function createDatabase(page, version, stores) {
   if (!page.url().includes("/tests/browser/harness.html")) {
     await page.goto("/tests/browser/harness.html");
   }
-  await deleteDatabase(page, databaseName);
+  await deleteDatabase(page);
   await page.evaluate(async ({ databaseName, version, stores }) => {
     await new Promise((resolve, reject) => {
       const request = indexedDB.open(databaseName, version);
@@ -214,7 +204,7 @@ export async function createDatabase(page, databaseName, version, stores) {
       };
       request.onerror = () => reject(request.error);
     });
-  }, { databaseName, version, stores });
+  }, { databaseName: DATABASE_NAME, version, stores });
 }
 
 export async function disableBroadcastChannel(pageOrContext) {

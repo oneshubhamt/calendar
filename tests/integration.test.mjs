@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as C from '../dist/index.js';
 import {createDirectorFixtureEnvironment,DIRECTOR_FIXTURE_TIME_ZONE} from '../dist/fixtures/director.js';
 import {DIRECTOR_ECOSYSTEM_SOURCES} from '../dist/integration/ecosystem.js';
+import {StudyDirectorPlanCommandHandler} from '../dist/integration/study-director.js';
 
 test('realistic fixtures project all three Director domains', async()=>{
   const fixture=createDirectorFixtureEnvironment();
@@ -51,4 +52,34 @@ test('source actions open, start revision and launch Practice Desk without rewri
   const mock=await fixture.ecosystem.practiceScheduler.schedule({examId:'pfrda',paperId:'mock-4',title:'PFRDA Mock 4',start:'2026-11-09T08:30:00.000Z',durationMinutes:40});
   await fixture.ecosystem.sourceActions.execute('practice:launch',C.occurrenceFromItem(mock));
   assert.deepEqual(fixture.practiceDesk.launched,[{paperId:'mock-4',examId:'pfrda'}]);
+});
+
+
+test('Study Director write-back uses one canonical apply reconcile flush protocol with the mutation source',async()=>{
+  let rows=[{id:'existing',start:'06:00',dur:30,name:'Existing',kind:'work',area:'General'}];
+  const calls=[];
+  const host={
+    timeZone:'Asia/Kolkata',
+    studyDayBoundaryHour:4,
+    scheduleGateway:{
+      read:()=>({tasks:rows.map(row=>({...row}))}),
+      apply:async(next,options)=>{calls.push(['apply',options.source]);rows=next.map(row=>({...row}));},
+      reconcile:async source=>{calls.push(['reconcile',source]);},
+      flush:async()=>{calls.push(['flush']);},
+    },
+    studyDay:()=> '2026-11-08',
+    readDailyRecords:()=>[],
+    canMutate:()=>true,
+  };
+  const handler=new StudyDirectorPlanCommandHandler(host);
+  await handler.execute({type:'create',item:{
+    id:'calendar:protocol',calendarId:'study-director:plan',title:'Protocol check',
+    start:'2026-11-08T03:30:00.000Z',end:'2026-11-08T04:00:00.000Z',
+    kind:'study-block',ownership:'calendar',editPolicy:'full',metadata:{category:'General'},
+  }},{now:'2026-11-08T00:00:00.000Z',timeZone:'Asia/Kolkata'});
+  assert.deepEqual(calls,[
+    ['apply','director-calendar-create'],
+    ['reconcile','director-calendar-create'],
+    ['flush'],
+  ]);
 });

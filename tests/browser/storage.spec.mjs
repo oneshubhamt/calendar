@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
+  DATABASE_NAME,
   SOURCE,
   closeRepository,
   createItem,
@@ -19,39 +20,38 @@ import {
   repositoryOperationError,
   repositoryState,
   subscribeRevisions,
-  uniqueDatabaseName,
   updateItem,
   updateSource,
 } from "./helpers.mjs";
 
-async function repositoryOpenError(page, databaseName) {
+async function repositoryOpenError(page) {
   try {
-    await openRepository(page, databaseName);
+    await openRepository(page);
     return null;
   } catch (error) {
     return String(error);
   }
 }
 
-async function interopReadError(page, databaseName) {
+async function interopReadError(page) {
   return await page.evaluate(async databaseName => {
     const { IndexedDbSyncStateStore } = await import("/dist/interoperability/storage.js");
     try {
-      await new IndexedDbSyncStateStore(databaseName).read("missing");
+      await new IndexedDbSyncStateStore().read("missing");
       return null;
     } catch (error) {
       return String(error);
     }
-  }, databaseName);
+  });
 }
 
-test("calendar repository and interoperability share one exact version-1 IndexedDB topology", async ({ page }, testInfo) => {
-  const databaseName = uniqueDatabaseName(testInfo, "canonical");
-  await openRepository(page, databaseName);
+test("calendar repository and interoperability share one exact version-1 IndexedDB topology", async ({ page }) => {
+  const databaseName = DATABASE_NAME;
+  await openRepository(page);
   await page.evaluate(async databaseName => {
     const { IndexedDbSyncStateStore, IndexedDbReminderReceiptStore } = await import("/dist/interoperability/storage.js");
-    await new IndexedDbSyncStateStore(databaseName).read("missing");
-    const receipts = new IndexedDbReminderReceiptStore(databaseName);
+    await new IndexedDbSyncStateStore().read("missing");
+    const receipts = new IndexedDbReminderReceiptStore();
     await receipts.claim("schema-probe", {
       token: "schema-probe",
       claimedAt: "2026-11-10T10:00:00.000Z",
@@ -60,7 +60,7 @@ test("calendar repository and interoperability share one exact version-1 Indexed
     await receipts.release("schema-probe", "schema-probe");
   }, databaseName);
 
-  expect(await inspectDatabase(page, databaseName)).toEqual({
+  expect(await inspectDatabase(page)).toEqual({
     version: 1,
     stores: [
       { name: "calendar", keyPath: "key", autoIncrement: false, indexes: [] },
@@ -70,10 +70,10 @@ test("calendar repository and interoperability share one exact version-1 Indexed
   });
 
   await closeRepository(page);
-  await deleteDatabase(page, databaseName);
+  await deleteDatabase(page);
 });
 
-test("all IndexedDB entry points reject any non-canonical physical topology", async ({ page }, testInfo) => {
+test("all IndexedDB entry points reject any non-canonical physical topology", async ({ page }) => {
   const canonicalStores = [
     { name: "calendar", keyPath: "key" },
     { name: "syncStates" },
@@ -113,28 +113,28 @@ test("all IndexedDB entry points reject any non-canonical physical topology", as
   ];
 
   for (const row of cases) {
-    const databaseName = uniqueDatabaseName(testInfo, row.suffix);
-    await createDatabase(page, databaseName, row.version, row.stores);
+    const databaseName = DATABASE_NAME;
+    await createDatabase(page, row.version, row.stores);
 
-    const repositoryError = await repositoryOpenError(page, databaseName);
+    const repositoryError = await repositoryOpenError(page);
     expect(repositoryError).not.toBeNull();
     expect(repositoryError).toMatch(row.expected);
 
-    const interoperabilityError = await interopReadError(page, databaseName);
+    const interoperabilityError = await interopReadError(page);
     expect(interoperabilityError).not.toBeNull();
     expect(interoperabilityError).toMatch(row.expected);
 
-    await deleteDatabase(page, databaseName);
+    await deleteDatabase(page);
   }
 });
 
-test("interop persistence rejects malformed sync state and reminder records", async ({ page }, testInfo) => {
-  const databaseName = uniqueDatabaseName(testInfo, "interop-validation");
+test("interop persistence rejects malformed sync state and reminder records", async ({ page }) => {
+  const databaseName = DATABASE_NAME;
   await page.goto("/tests/browser/harness.html");
 
   const errors = await page.evaluate(async databaseName => {
     const { IndexedDbSyncStateStore, IndexedDbReminderReceiptStore } = await import("/dist/interoperability/storage.js");
-    const sync = new IndexedDbSyncStateStore(databaseName);
+    const sync = new IndexedDbSyncStateStore();
     await sync.write({
       provider: "google",
       connectionId: "conn",
@@ -169,7 +169,7 @@ test("interop persistence rejects malformed sync state and reminder records", as
     const result = {};
     try { await sync.read("conn"); } catch (error) { result.sync = String(error); }
     try {
-      await new IndexedDbReminderReceiptStore(databaseName).claim("bad-reminder", {
+      await new IndexedDbReminderReceiptStore().claim("bad-reminder", {
         token: "new",
         claimedAt: "2026-11-10T10:00:00.000Z",
         expiresAt: "2026-11-10T10:15:00.000Z",
@@ -180,16 +180,16 @@ test("interop persistence rejects malformed sync state and reminder records", as
 
   expect(errors.sync).toMatch(/mode is invalid/i);
   expect(errors.reminder).toMatch(/claimedAt.*absolute ISO date-time/i);
-  await deleteDatabase(page, databaseName);
+  await deleteDatabase(page);
 });
 
-test("interop persistence canonicalizes absolute timestamps and rejects enclosing identity mismatches", async ({ page }, testInfo) => {
-  const databaseName = uniqueDatabaseName(testInfo, "interop-strict-invariants");
+test("interop persistence canonicalizes absolute timestamps and rejects enclosing identity mismatches", async ({ page }) => {
+  const databaseName = DATABASE_NAME;
   await page.goto("/tests/browser/harness.html");
 
   const result = await page.evaluate(async databaseName => {
     const { IndexedDbSyncStateStore, IndexedDbReminderReceiptStore } = await import("/dist/interoperability/storage.js");
-    const sync = new IndexedDbSyncStateStore(databaseName);
+    const sync = new IndexedDbSyncStateStore();
     const baseItem = {
       id: "remote-base", calendarId: "personal", title: "Remote base",
       start: "2026-11-10T09:00:00.000Z", end: "2026-11-10T10:00:00.000Z",
@@ -228,7 +228,7 @@ test("interop persistence canonicalizes absolute timestamps and rejects enclosin
       });
     } catch (error) { errors.remoteCalendar = String(error); }
 
-    const receipts = new IndexedDbReminderReceiptStore(databaseName);
+    const receipts = new IndexedDbReminderReceiptStore();
     try {
       await receipts.claim("floating-claim", {
         token: "t", claimedAt: "2026-11-10T10:00:00", expiresAt: "2026-11-10T10:15:00Z",
@@ -247,17 +247,17 @@ test("interop persistence canonicalizes absolute timestamps and rejects enclosin
   expect(result.state.lastIncrementalSyncAt).toBe("2026-11-10T11:00:00.000Z");
   expect(result.state.links[0].lastSyncedAt).toBe("2026-11-10T10:00:00.000Z");
 
-  await deleteDatabase(page, databaseName);
+  await deleteDatabase(page);
 });
 
-test("two tabs atomically claim one reminder receipt and completed delivery stays deduplicated", async ({ page, context }, testInfo) => {
-  const databaseName = uniqueDatabaseName(testInfo, "reminder-claim");
+test("two tabs atomically claim one reminder receipt and completed delivery stays deduplicated", async ({ page, context }) => {
+  const databaseName = DATABASE_NAME;
   const second = await context.newPage();
   await Promise.all([page.goto("/tests/browser/harness.html"), second.goto("/tests/browser/harness.html")]);
 
   const claim = async (target, token) => await target.evaluate(async ({ databaseName, token }) => {
     const { IndexedDbReminderReceiptStore } = await import("/dist/interoperability/storage.js");
-    return await new IndexedDbReminderReceiptStore(databaseName).claim("same-reminder", {
+    return await new IndexedDbReminderReceiptStore().claim("same-reminder", {
       token,
       claimedAt: "2026-11-10T10:00:00.000Z",
       expiresAt: "2026-11-10T10:15:00.000Z",
@@ -270,16 +270,16 @@ test("two tabs atomically claim one reminder receipt and completed delivery stay
 
   await winner.target.evaluate(async ({ databaseName, token }) => {
     const { IndexedDbReminderReceiptStore } = await import("/dist/interoperability/storage.js");
-    await new IndexedDbReminderReceiptStore(databaseName).complete("same-reminder", token, "2026-11-10T10:00:01.000Z");
+    await new IndexedDbReminderReceiptStore().complete("same-reminder", token, "2026-11-10T10:00:01.000Z");
   }, { databaseName, token: winner.token });
 
   expect(await claim(first ? second : page, "third")).toBe(false);
   await second.close();
-  await deleteDatabase(page, databaseName);
+  await deleteDatabase(page);
 });
 
-test("two tabs serialize one Google connection before remote publish and shared state write", async ({ page, context }, testInfo) => {
-  const databaseName = uniqueDatabaseName(testInfo, "google-lock");
+test("two tabs serialize one Google connection before remote publish and shared state write", async ({ page, context }) => {
+  const databaseName = DATABASE_NAME;
   const second = await context.newPage();
   await Promise.all([page.goto("/tests/browser/harness.html"), second.goto("/tests/browser/harness.html")]);
   await page.evaluate(() => {
@@ -322,7 +322,7 @@ test("two tabs serialize one Google connection before remote publish and shared 
       async deleteEvent() { throw new Error("unused"); },
     };
     const adapter = new Google.GoogleCalendarSyncAdapter(
-      transport, repo, new IndexedDbSyncStateStore(databaseName),
+      transport, repo, new IndexedDbSyncStateStore(),
       { id: "shared-connection", googleCalendarId: "remote", localCalendarId: "personal", mode: "publish" },
     );
     return await adapter.sync();
@@ -337,52 +337,52 @@ test("two tabs serialize one Google connection before remote publish and shared 
 
   const state = await page.evaluate(async databaseName => {
     const { IndexedDbSyncStateStore } = await import("/dist/interoperability/storage.js");
-    return await new IndexedDbSyncStateStore(databaseName).read("shared-connection");
+    return await new IndexedDbSyncStateStore().read("shared-connection");
   }, databaseName);
   expect(state.links).toHaveLength(1);
   expect(state.links[0].identity.eventId).toMatch(/^dcal[0-9a-v]{28}$/);
 
   await second.close();
-  await deleteDatabase(page, databaseName);
+  await deleteDatabase(page);
 });
 
-test("native IndexedDB persists normalized create, update and delete state across reopen", async ({ page }, testInfo) => {
-  const databaseName = uniqueDatabaseName(testInfo, "persistence");
-  await openRepository(page, databaseName);
+test("native IndexedDB persists normalized create, update and delete state across reopen", async ({ page }) => {
+  const databaseName = DATABASE_NAME;
+  await openRepository(page);
   await createItem(page, event("persisted", { title: "Persisted event" }));
   await closeRepository(page);
 
-  await openRepository(page, databaseName);
+  await openRepository(page);
   let state = await repositoryState(page);
   expect(state.revision).toBe(1);
   expect(state.items.map(item => item.title)).toEqual(["Persisted event"]);
 
   await updateItem(page, "persisted", { title: "Updated event" });
   await closeRepository(page);
-  await openRepository(page, databaseName);
+  await openRepository(page);
   state = await repositoryState(page);
   expect(state.revision).toBe(2);
   expect(state.items[0]?.title).toBe("Updated event");
 
   await removeItem(page, "persisted");
   await closeRepository(page);
-  const records = await rawRecords(page, databaseName);
+  const records = await rawRecords(page);
   expect(records.map(record => record.key).sort()).toEqual(["meta", "source:personal"]);
   const meta = records.find(record => record.key === "meta");
   expect(meta).toMatchObject({ revision: 3, itemOrder: [], sourceOrder: ["personal"] });
 
-  await openRepository(page, databaseName);
+  await openRepository(page);
   state = await repositoryState(page);
   expect(state).toMatchObject({ revision: 3, items: [] });
   expect(state.sources).toEqual([SOURCE]);
 
   await closeRepository(page);
-  await deleteDatabase(page, databaseName);
+  await deleteDatabase(page);
 });
 
-test("native IndexedDB item and source CRUD preserve the canonical transition semantics", async ({ page }, testInfo) => {
-  const databaseName = uniqueDatabaseName(testInfo, "canonical-transitions");
-  await openRepository(page, databaseName);
+test("native IndexedDB item and source CRUD preserve the canonical transition semantics", async ({ page }) => {
+  const databaseName = DATABASE_NAME;
+  await openRepository(page);
 
   const work = { id: "work", title: "Work", visible: true, removable: true };
   await createSource(page, work);
@@ -415,16 +415,16 @@ test("native IndexedDB item and source CRUD preserve the canonical transition se
   expect(state.revision).toBe(5);
 
   await closeRepository(page);
-  await deleteDatabase(page, databaseName);
+  await deleteDatabase(page);
 });
 
-test("two-tab guarded replacement rejects a durable revision that was not the local delta basis", async ({ page, context }, testInfo) => {
-  const databaseName = uniqueDatabaseName(testInfo, "cas");
+test("two-tab guarded replacement rejects a durable revision that was not the local delta basis", async ({ page, context }) => {
+  const databaseName = DATABASE_NAME;
   const stalePage = await context.newPage();
   await installSilentBroadcastChannel(stalePage);
 
-  await openRepository(page, databaseName);
-  await openRepository(stalePage, databaseName);
+  await openRepository(page);
+  await openRepository(stalePage);
   expect((await repositoryState(stalePage)).revision).toBe(0);
 
   await createItem(page, event("authoritative", { title: "Authoritative" }));
@@ -444,25 +444,25 @@ test("two-tab guarded replacement rejects a durable revision that was not the lo
     actualRevision: 0,
   });
 
-  const records = await rawRecords(page, databaseName);
+  const records = await rawRecords(page);
   expect(records.map(record => record.key).sort()).toEqual(["item:authoritative", "meta", "source:personal"]);
 
   await closeRepository(stalePage);
   await stalePage.close();
   await closeRepository(page);
-  await openRepository(page, databaseName);
+  await openRepository(page);
   expect((await repositoryState(page)).items.map(item => item.id)).toEqual(["authoritative"]);
 
   await closeRepository(page);
-  await deleteDatabase(page, databaseName);
+  await deleteDatabase(page);
 });
 
-test("BroadcastChannel invalidation converges a passive tab through a burst of commits", async ({ page, context }, testInfo) => {
-  const databaseName = uniqueDatabaseName(testInfo, "broadcast");
+test("BroadcastChannel invalidation converges a passive tab through a burst of commits", async ({ page, context }) => {
+  const databaseName = DATABASE_NAME;
   const observer = await context.newPage();
 
-  await openRepository(page, databaseName);
-  await openRepository(observer, databaseName);
+  await openRepository(page);
+  await openRepository(observer);
   await subscribeRevisions(observer);
 
   for (let index = 1; index <= 8; index += 1) {
@@ -482,16 +482,16 @@ test("BroadcastChannel invalidation converges a passive tab through a burst of c
   await closeRepository(observer);
   await observer.close();
   await closeRepository(page);
-  await deleteDatabase(page, databaseName);
+  await deleteDatabase(page);
 });
 
-test("no-BroadcastChannel fallback refreshes when a passive tab returns to the foreground", async ({ page, context }, testInfo) => {
-  const databaseName = uniqueDatabaseName(testInfo, "storage-event");
+test("no-BroadcastChannel fallback refreshes when a passive tab returns to the foreground", async ({ page, context }) => {
+  const databaseName = DATABASE_NAME;
   await disableBroadcastChannel(context);
   const observer = await context.newPage();
 
-  await openRepository(page, databaseName);
-  await openRepository(observer, databaseName);
+  await openRepository(page);
+  await openRepository(observer);
   expect(await page.evaluate(() => typeof BroadcastChannel)).toBe("undefined");
   expect(await observer.evaluate(() => typeof BroadcastChannel)).toBe("undefined");
 
@@ -504,5 +504,5 @@ test("no-BroadcastChannel fallback refreshes when a passive tab returns to the f
   await closeRepository(observer);
   await observer.close();
   await closeRepository(page);
-  await deleteDatabase(page, databaseName);
+  await deleteDatabase(page);
 });
