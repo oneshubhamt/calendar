@@ -219,15 +219,18 @@ export function layoutResourceTimeline(
     const rawEnd = coordinate(clippedEnd);
     const civilWidth = rawEnd - rawX;
     const elapsedWidth = (clippedEnd - clippedStart) / MINUTE_MS;
-    const rawWidth = prepared.point ? 0 : Math.max(1, civilWidth > 0 ? civilWidth : elapsedWidth);
-    const xMinutes = Math.min(rangeWidth, Math.max(0, rawX));
+    const rawWidth = prepared.point ? 0 : (civilWidth > 0 ? civilWidth : elapsedWidth);
+    let xMinutes = Math.min(rangeWidth, Math.max(0, rawX));
     let widthMinutes = 0;
     if (!prepared.point) {
-      const visibleRight = Math.min(rangeWidth, rawX + rawWidth);
+      const visibleRight = Math.min(rangeWidth, Math.max(0, rawX + rawWidth));
       const visibleWidth = visibleRight - xMinutes;
-      widthMinutes = visibleWidth > 0
-        ? visibleWidth
-        : Math.min(Math.max(1, elapsedWidth), Math.max(1, rangeWidth - xMinutes));
+      if (visibleWidth > 0) {
+        widthMinutes = visibleWidth;
+      } else {
+        widthMinutes = Math.min(elapsedWidth, rangeWidth);
+        xMinutes = rawX < 0 ? 0 : Math.max(0, rangeWidth - widthMinutes);
+      }
     }
 
     for (const resourceId of assignment.resourceIds) {
