@@ -89,16 +89,22 @@ test("view decomposition keeps coordinators out of renderer and gesture leaves",
   assert.doesNotMatch(gestures, /CalendarCommand|commandHandler|executeCalendarPlacement/);
 });
 
-test("durable browser storage has a fixed canonical topology", async () => {
-  const [primary, interoperability] = await Promise.all([
+test("durable browser storage has one canonical physical database substrate", async () => {
+  const [database, repository, interoperability] = await Promise.all([
+    read("../src/storage/browser-database.ts"),
     read("../src/storage/indexeddb-repository.ts"),
     read("../src/interoperability/storage.ts"),
   ]);
-  assert.match(primary, /DEFAULT_DATABASE_NAME = "director-calendar"/);
-  assert.match(primary, /DATABASE_VERSION = 1 as const/);
-  assert.match(primary, /STORE_NAME = "calendar"/);
-  assert.match(interoperability, /DB_NAME = "director-calendar\.interop"/);
-  assert.match(interoperability, /DATABASE_VERSION = 1 as const/);
+
+  assert.match(database, /DEFAULT_CALENDAR_DATABASE_NAME = "director-calendar"/);
+  assert.match(database, /CALENDAR_DATABASE_VERSION = 1 as const/);
+  for (const store of ["calendar", "syncStates", "reminderReceipts"]) {
+    assert.match(database, new RegExp(`= "${store}" as const`));
+  }
+  assert.match(repository, /from "\.\/browser-database\.js"/);
+  assert.match(interoperability, /from "\.\.\/storage\/browser-database\.js"/);
+  assert.doesNotMatch(repository + interoperability, /indexedDB\.open|director-calendar\.interop/);
+  assert.match(database, /indexedDB\.open\(databaseName, CALENDAR_DATABASE_VERSION\)/);
 });
 
 test("production source contains no migration or compatibility implementation path", async () => {

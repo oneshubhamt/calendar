@@ -22,12 +22,13 @@ import {
   updateCalendarSourceInState,
   type CalendarStateCollections,
 } from "../core/state-transitions.js";
+import {
+  CALENDAR_CALENDAR_STORE_NAME,
+  DEFAULT_CALENDAR_DATABASE_NAME,
+  openCalendarDatabase,
+  openCalendarTransaction,
+} from "./browser-database.js";
 
-// Fresh durable namespace: no Calendar application has ever been installed against another
-// persistent schema. IndexedDB version 1 is the sole accepted durable topology.
-const DEFAULT_DATABASE_NAME = "director-calendar" as const;
-const DATABASE_VERSION = 1 as const;
-const STORE_NAME = "calendar" as const;
 const META_KEY = "meta" as const;
 const ITEM_PREFIX = "item:" as const;
 const SOURCE_PREFIX = "source:" as const;
@@ -123,29 +124,6 @@ function orderedValues<T extends { readonly id: string }>(
   });
 }
 
-function openTransaction(db: IDBDatabase, storeName: string, mode: IDBTransactionMode): IDBTransaction {
-  if (mode !== "readwrite") return db.transaction(storeName, mode);
-  try {
-    return db.transaction(storeName, mode, { durability: "strict" });
-  } catch {
-    return db.transaction(storeName, mode);
-  }
-}
-
-function exactNames(names: DOMStringList, expected: readonly string[]): boolean {
-  return names.length === expected.length && expected.every(name => names.contains(name));
-}
-
-function assertCanonicalDatabase(db: IDBDatabase): void {
-  if (db.version !== DATABASE_VERSION || !exactNames(db.objectStoreNames, [STORE_NAME])) {
-    throw new Error("Calendar IndexedDB does not match the canonical schema");
-  }
-  const store = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME);
-  if (store.keyPath !== "key" || store.autoIncrement || store.indexNames.length !== 0) {
-    throw new Error("Calendar IndexedDB does not match the canonical schema");
-  }
-}
-
 export interface IndexedDbCalendarRepositoryOptions {
   readonly databaseName?: string;
   readonly sources: readonly CalendarSource[];
@@ -168,7 +146,7 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   private readonly listeners = new Set<(snapshot: CalendarSnapshot) => void>();
 
   public constructor(options: IndexedDbCalendarRepositoryOptions) {
-    this.dbName = options.databaseName ?? DEFAULT_DATABASE_NAME;
+    this.dbName = options.databaseName ?? DEFAULT_CALENDAR_DATABASE_NAME;
     this.initialSources = materializeCalendarSnapshot(undefined, options.sources, [], 0).sources;
   }
 
@@ -176,7 +154,7 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
     if (this.loaded) return;
     let opened: IDBDatabase | null = null;
     try {
-      opened = await this.openDatabase();
+      opened = await openCalendarDatabase(this.dbName);
       this.db = opened;
       opened.onversionchange = () => this.close();
 
@@ -259,43 +237,6 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
     return () => this.listeners.delete(listener);
   }
 
-  private async openDatabase(): Promise<IDBDatabase> {
-    return await new Promise<IDBDatabase>((resolve, reject) => {
-      let settled = false;
-      const request = indexedDB.open(this.dbName, DATABASE_VERSION);
-      request.onupgradeneeded = () => {
-        request.result.createObjectStore(STORE_NAME, { keyPath: "key" });
-      };
-      request.onblocked = () => {
-        if (settled) return;
-        settled = true;
-        reject(new Error("Calendar storage open is blocked by another tab"));
-      };
-      request.onerror = () => {
-        if (settled) return;
-        settled = true;
-        reject(request.error ?? new Error("Could not open Calendar IndexedDB"));
-      };
-      request.onsuccess = () => {
-        const db = request.result;
-        if (settled) {
-          db.close();
-          return;
-        }
-        try {
-          assertCanonicalDatabase(db);
-        } catch (error) {
-          settled = true;
-          db.close();
-          reject(error);
-          return;
-        }
-        settled = true;
-        resolve(db);
-      };
-    });
-  }
-
   private async commit(
     state: CalendarStateCollections,
     expectedRevision: number,
@@ -328,8 +269,8 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
 
     try {
       await new Promise<void>((resolve, reject) => {
-        const tx = openTransaction(this.db!, STORE_NAME, "readwrite");
-        const store = tx.objectStore(STORE_NAME);
+        const tx = openCalendarTransaction(this.db!, CALENDAR_STORE_NAME, "readwrite");
+        const store = tx.objectStore(CALENDAR_STORE_NAME);
         const metaRequest = store.get(META_KEY);
         metaRequest.onsuccess = () => {
           try {
@@ -500,8 +441,8 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   private async readPersistedRevision(): Promise<number> {
     if (!this.db) throw new Error("Calendar IndexedDB is not open");
     const value = await new Promise<unknown>((resolve, reject) => {
-      const tx = openTransaction(this.db!, STORE_NAME, "readonly");
-      const request = tx.objectStore(STORE_NAME).get(META_KEY);
+      const tx = openCalendarTransaction(this.db!, CALENDAR_STORE_NAME, "readonly");
+      const request = tx.objectStore(CALENDAR_STORE_NAME).get(META_KEY);
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error ?? new Error("Could not read Calendar revision"));
     });
@@ -511,8 +452,8 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   private async readPersistedState(): Promise<PersistedCalendarState | undefined> {
     if (!this.db) throw new Error("Calendar IndexedDB is not open");
     const records = await new Promise<unknown[]>((resolve, reject) => {
-      const tx = openTransaction(this.db!, STORE_NAME, "readonly");
-      const request = tx.objectStore(STORE_NAME).getAll();
+      const tx = openCalendarTransaction(this.db!, CALENDAR_STORE_NAME, "readonly");
+      const request = tx.objectStore(CALENDAR_STORE_NAME).getAll();
       request.onsuccess = () => resolve(request.result as unknown[]);
       request.onerror = () => reject(request.error ?? new Error("Could not read Calendar storage"));
     });

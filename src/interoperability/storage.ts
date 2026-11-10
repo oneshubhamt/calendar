@@ -8,26 +8,28 @@ import type { ReminderReceiptClaim, ReminderReceiptStore } from "./reminders.js"
 import type { CalendarItem, ISODateTime } from "../core/types.js";
 import { assertCalendarStateIntegrity } from "../core/store.js";
 import { parseAbsoluteDateTime } from "../core/time.js";
-
-const DB_NAME = "director-calendar.interop";
-const DATABASE_VERSION = 1 as const;
-const SYNC_STORE = "syncStates";
-const REMINDER_STORE = "reminderReceipts";
+import {
+  DEFAULT_CALENDAR_DATABASE_NAME,
+  REMINDER_RECEIPT_STORE_NAME,
+  SYNC_STATE_STORE_NAME,
+  openCalendarDatabase,
+  openCalendarTransaction,
+} from "../storage/browser-database.js";
 
 export class IndexedDbSyncStateStore implements SyncStateStore {
-  public constructor(private readonly dbName = DB_NAME) {}
+  public constructor(private readonly dbName = DEFAULT_CALENDAR_DATABASE_NAME) {}
 
   public async read(connectionId: string): Promise<CalendarSyncConnectionState | null> {
-    const value = await getRecord<unknown>(this.dbName, SYNC_STORE, connectionId);
+    const value = await getRecord<unknown>(this.dbName, SYNC_STATE_STORE_NAME, connectionId);
     return value === null ? null : validatedSyncState(value, connectionId);
   }
 
   public async write(state: CalendarSyncConnectionState): Promise<void> {
     const valid = validatedSyncState(state, state.connectionId);
-    await putRecord(this.dbName, SYNC_STORE, valid, valid.connectionId);
+    await putRecord(this.dbName, SYNC_STATE_STORE_NAME, valid, valid.connectionId);
   }
 
-  public async remove(connectionId: string): Promise<void> { await deleteRecord(this.dbName, SYNC_STORE, connectionId); }
+  public async remove(connectionId: string): Promise<void> { await deleteRecord(this.dbName, SYNC_STATE_STORE_NAME, connectionId); }
 }
 
 type StoredReminderReceipt =
@@ -35,15 +37,15 @@ type StoredReminderReceipt =
   | { readonly key: string; readonly state: "delivered"; readonly deliveredAt: ISODateTime };
 
 export class IndexedDbReminderReceiptStore implements ReminderReceiptStore {
-  public constructor(private readonly dbName = DB_NAME) {}
+  public constructor(private readonly dbName = DEFAULT_CALENDAR_DATABASE_NAME) {}
 
   public async claim(key: string, claim: ReminderReceiptClaim): Promise<boolean> {
     const validClaim = validatedClaim(claim);
-    const db = await openDb(this.dbName);
+    const db = await openCalendarDatabase(this.dbName);
     try {
       return await new Promise<boolean>((resolve, reject) => {
-        const tx = openTransaction(db, REMINDER_STORE, "readwrite");
-        const store = tx.objectStore(REMINDER_STORE);
+        const tx = openCalendarTransaction(db, REMINDER_RECEIPT_STORE_NAME, "readwrite");
+        const store = tx.objectStore(REMINDER_RECEIPT_STORE_NAME);
         let claimed = false;
         let failure: unknown = null;
         tx.oncomplete = () => resolve(claimed);
@@ -88,9 +90,9 @@ export class IndexedDbReminderReceiptStore implements ReminderReceiptStore {
 
   public async prune(before: ISODateTime): Promise<void> {
     const cutoff = Date.parse(absoluteTimestamp(before, "Reminder receipt prune cutoff"));
-    const db = await openDb(this.dbName);
+    const db = await openCalendarDatabase(this.dbName);
     try {
-      await transactionDone(db, REMINDER_STORE, "readwrite", store => {
+      await transactionDone(db, REMINDER_RECEIPT_STORE_NAME, "readwrite", store => {
         const cursor = store.openCursor();
         cursor.onerror = () => { throw cursor.error ?? new Error("Reminder receipt cursor failed."); };
         cursor.onsuccess = () => {
@@ -263,11 +265,11 @@ async function mutateReceipt(
   key: string,
   mutation: (existing: StoredReminderReceipt | null) => StoredReminderReceipt | null,
 ): Promise<void> {
-  const db = await openDb(dbName);
+  const db = await openCalendarDatabase(dbName);
   try {
     await new Promise<void>((resolve, reject) => {
-      const tx = openTransaction(db, REMINDER_STORE, "readwrite");
-      const store = tx.objectStore(REMINDER_STORE);
+      const tx = openCalendarTransaction(db, REMINDER_RECEIPT_STORE_NAME, "readwrite");
+      const store = tx.objectStore(REMINDER_RECEIPT_STORE_NAME);
       tx.oncomplete = () => resolve();
       tx.onabort = () => reject(tx.error ?? new Error("Reminder receipt transaction aborted."));
       tx.onerror = () => reject(tx.error ?? new Error("Reminder receipt transaction failed."));
@@ -288,68 +290,11 @@ async function mutateReceipt(
   } finally { db.close(); }
 }
 
-function exactNames(names: DOMStringList, expected: readonly string[]): boolean {
-  return names.length === expected.length && expected.every(name => names.contains(name));
-}
-
-function assertCanonicalDatabase(db: IDBDatabase): void {
-  if (db.version !== DATABASE_VERSION || !exactNames(db.objectStoreNames, [SYNC_STORE, REMINDER_STORE])) {
-    throw new Error("Interoperability IndexedDB does not match the canonical schema");
-  }
-  const tx = db.transaction([SYNC_STORE, REMINDER_STORE], "readonly");
-  for (const name of [SYNC_STORE, REMINDER_STORE]) {
-    const store = tx.objectStore(name);
-    if (store.keyPath !== null || store.autoIncrement || store.indexNames.length !== 0) {
-      throw new Error("Interoperability IndexedDB does not match the canonical schema");
-    }
-  }
-}
-
-async function openDb(dbName: string): Promise<IDBDatabase> {
-  if (typeof indexedDB === "undefined") throw new Error("IndexedDB is unavailable; provide a different interoperability state store.");
-  return await new Promise<IDBDatabase>((resolve, reject) => {
-    let settled = false;
-    const request = indexedDB.open(dbName, DATABASE_VERSION);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      db.createObjectStore(SYNC_STORE);
-      db.createObjectStore(REMINDER_STORE);
-    };
-    request.onblocked = () => {
-      if (settled) return;
-      settled = true;
-      reject(new Error("Interoperability IndexedDB open is blocked by another tab"));
-    };
-    request.onsuccess = () => {
-      const db = request.result;
-      if (settled) {
-        db.close();
-        return;
-      }
-      try {
-        assertCanonicalDatabase(db);
-      } catch (error) {
-        settled = true;
-        db.close();
-        reject(error);
-        return;
-      }
-      settled = true;
-      resolve(db);
-    };
-    request.onerror = () => {
-      if (settled) return;
-      settled = true;
-      reject(request.error ?? new Error("Could not open interoperability IndexedDB."));
-    };
-  });
-}
-
 async function getRecord<T>(dbName: string, storeName: string, key: IDBValidKey): Promise<T | null> {
-  const db = await openDb(dbName);
+  const db = await openCalendarDatabase(dbName);
   try {
     return await new Promise<T | null>((resolve, reject) => {
-      const tx = openTransaction(db, storeName, "readonly");
+      const tx = openCalendarTransaction(db, storeName, "readonly");
       const request = tx.objectStore(storeName).get(key);
       request.onsuccess = () => resolve((request.result as T | undefined) ?? null);
       request.onerror = () => reject(request.error ?? new Error("IndexedDB read failed."));
@@ -358,25 +303,20 @@ async function getRecord<T>(dbName: string, storeName: string, key: IDBValidKey)
 }
 
 async function putRecord<T>(dbName: string, storeName: string, value: T, key: IDBValidKey): Promise<void> {
-  const db = await openDb(dbName);
+  const db = await openCalendarDatabase(dbName);
   try { await transactionDone(db, storeName, "readwrite", store => { store.put(value, key); }); }
   finally { db.close(); }
 }
 
 async function deleteRecord(dbName: string, storeName: string, key: IDBValidKey): Promise<void> {
-  const db = await openDb(dbName);
+  const db = await openCalendarDatabase(dbName);
   try { await transactionDone(db, storeName, "readwrite", store => { store.delete(key); }); }
   finally { db.close(); }
 }
 
-function openTransaction(db: IDBDatabase, storeName: string, mode: IDBTransactionMode): IDBTransaction {
-  try { return db.transaction(storeName, mode, mode === "readwrite" ? { durability: "strict" } : undefined); }
-  catch { return db.transaction(storeName, mode); }
-}
-
 async function transactionDone(db: IDBDatabase, storeName: string, mode: IDBTransactionMode, action: (store: IDBObjectStore) => void): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const tx = openTransaction(db, storeName, mode);
+    const tx = openCalendarTransaction(db, storeName, mode);
     tx.oncomplete = () => resolve();
     tx.onabort = () => reject(tx.error ?? new Error("IndexedDB transaction aborted."));
     tx.onerror = () => reject(tx.error ?? new Error("IndexedDB transaction failed."));
