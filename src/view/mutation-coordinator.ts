@@ -14,6 +14,7 @@ import type {
 } from "../core/types.js";
 import type { CalendarClock } from "../core/time.js";
 import type {
+  CalendarCreateDraft,
   CalendarPlacementValidationPort,
   CalendarSourceActionPort,
 } from "./types.js";
@@ -241,16 +242,41 @@ export class CalendarMutationCoordinator {
     return allowed;
   }
 
+  public async allowDraftPlacement(
+    draft: Pick<CalendarCreateDraft, "start" | "end" | "temporal" | "allDay" | "calendarId">,
+    original: CalendarOccurrence | undefined,
+    action: string,
+  ): Promise<boolean> {
+    return await this.allowPlacement(
+      this.resolveDraftTime(draft.start, draft.temporal),
+      this.resolveDraftTime(draft.end, draft.temporal),
+      Boolean(draft.allDay),
+      original,
+      action,
+      draft.calendarId,
+    );
+  }
+
+  public async allowPatchPlacement(
+    occurrence: CalendarOccurrence,
+    patch: CalendarItemPatch,
+    action: string,
+  ): Promise<boolean> {
+    const temporal = patch.temporal === null ? undefined : patch.temporal ?? occurrence.temporal;
+    return await this.allowPlacement(
+      this.resolveDraftTime(patch.start ?? occurrence.start, temporal),
+      this.resolveDraftTime(patch.end ?? occurrence.end, temporal),
+      Boolean(patch.allDay ?? occurrence.allDay),
+      occurrence,
+      action,
+      patch.calendarId ?? occurrence.calendarId,
+    );
+  }
+
   public placementValidationPort(): CalendarPlacementValidationPort {
     return {
-      canPlaceDraft: async (draft, original, action = "create") => this.allowPlacement(
-        this.resolveDraftTime(draft.start, draft.temporal),
-        this.resolveDraftTime(draft.end, draft.temporal),
-        Boolean(draft.allDay),
-        original,
-        action,
-        draft.calendarId,
-      ),
+      canPlaceDraft: async (draft, original, action = "create") =>
+        this.allowDraftPlacement(draft, original, action),
     };
   }
 

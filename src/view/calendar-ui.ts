@@ -1149,13 +1149,6 @@ export class CalendarUi {
     };
   }
 
-  private resolveDraftTime(value: string, temporal: CalendarCreateDraft["temporal"]): Date {
-    if (temporal?.kind === "date") return toDate(value, this.timeZone);
-    if (temporal?.kind === "zoned") return toDate(value, temporal.timeZone ?? this.timeZone);
-    if (temporal?.kind === "floating") return toDate(value, this.timeZone);
-    return toDate(value);
-  }
-
   private occurrencePatchRequirements(
     occurrence: CalendarOccurrence,
     patch: CalendarItemPatch,
@@ -1218,7 +1211,7 @@ export class CalendarUi {
       ...(result.reminders ? { reminders: result.reminders } : {}),
     }, "create");
     const withSeries = result.recurrence ? { ...item, seriesId: item.id } : item;
-    if (!await this.allowPlacement(this.resolveDraftTime(withSeries.start, withSeries.temporal), this.resolveDraftTime(withSeries.end, withSeries.temporal), Boolean(withSeries.allDay), undefined, "create", withSeries.calendarId)) return;
+    if (!await this.mutations.allowDraftPlacement(withSeries, undefined, "create")) return;
     await this.dispatch({ type: "create", item: withSeries });
   }
 
@@ -1357,7 +1350,7 @@ export class CalendarUi {
       if (!selected) return;
       scope = selected;
     }
-    if (!await this.allowPlacement(this.resolveDraftTime(result.start, result.temporal), this.resolveDraftTime(result.end, result.temporal), result.allDay, occurrence, "edit", result.calendarId)) return;
+    if (!await this.mutations.allowDraftPlacement(result, occurrence, "edit")) return;
     await this.dispatchOccurrence(
       { type: "update-occurrence", occurrence, patch, scope },
       this.occurrencePatchRequirements(occurrence, patch),
@@ -1380,7 +1373,7 @@ export class CalendarUi {
       ...(result.reminders ? { reminders: result.reminders } : {}),
     }, "duplicate", occurrence);
     const withSeries = result.recurrence ? { ...item, seriesId: item.id } : item;
-    if (!await this.allowPlacement(this.resolveDraftTime(withSeries.start, withSeries.temporal), this.resolveDraftTime(withSeries.end, withSeries.temporal), Boolean(withSeries.allDay), undefined, "create", withSeries.calendarId)) return;
+    if (!await this.mutations.allowDraftPlacement(withSeries, undefined, "create")) return;
     await this.dispatch({ type: "create", item: withSeries });
   }
 
@@ -1953,17 +1946,13 @@ export class CalendarUi {
       createSource: async source => { await self.engine.createSource(source); },
       createDraft: async (draft, purpose, original) => {
         const item = self.createCalendarItem(draft, purpose, original);
-        if (!await self.allowPlacement(self.resolveDraftTime(item.start, item.temporal), self.resolveDraftTime(item.end, item.temporal), Boolean(item.allDay), undefined, String(purpose), item.calendarId)) return null;
+        if (!await self.mutations.allowDraftPlacement(item, original, String(purpose))) return null;
         await self.dispatch({ type: "create", item });
         return item;
       },
       ...self.placementValidationPort(),
       patchOccurrence: async (occurrence, patch, label = "Edit") => {
-        const temporal = patch.temporal === null ? undefined : patch.temporal ?? occurrence.temporal;
-        const start = self.resolveDraftTime(patch.start ?? occurrence.start, temporal);
-        const end = self.resolveDraftTime(patch.end ?? occurrence.end, temporal);
-        const targetAllDay = Boolean(patch.allDay ?? occurrence.allDay);
-        if (!await self.allowPlacement(start, end, targetAllDay, occurrence, label.toLocaleLowerCase(), patch.calendarId ?? occurrence.calendarId)) return false;
+        if (!await self.mutations.allowPatchPlacement(occurrence, patch, label.toLocaleLowerCase())) return false;
         const status = await self.issueOccurrencePatch(occurrence, patch, label, self.occurrencePatchRequirements(occurrence, patch), "edit");
         return mutationCommitted(status);
       },
