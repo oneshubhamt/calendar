@@ -14,6 +14,7 @@ import {
   materializeCalendarSnapshot,
 } from "../core/store.js";
 
+const STORE_NAME = "calendar" as const;
 const META_KEY = "meta" as const;
 const ITEM_PREFIX = "item:" as const;
 const SOURCE_PREFIX = "source:" as const;
@@ -124,7 +125,6 @@ function openTransaction(db: IDBDatabase, storeName: string, mode: IDBTransactio
 
 export interface IndexedDbCalendarRepositoryOptions {
   readonly databaseName?: string;
-  readonly storeName?: string;
   readonly sources: readonly CalendarSource[];
 }
 
@@ -134,7 +134,6 @@ export interface IndexedDbCalendarRepositoryOptions {
  */
 export class IndexedDbCalendarRepository implements CalendarRepository {
   private readonly dbName: string;
-  private readonly storeName: string;
   private snapshotValue: CalendarSnapshot | undefined;
   private readonly initialSources: readonly CalendarSource[];
   private loaded = false;
@@ -146,7 +145,6 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
 
   public constructor(options: IndexedDbCalendarRepositoryOptions) {
     this.dbName = options.databaseName ?? "calendar";
-    this.storeName = options.storeName ?? "calendar";
     this.initialSources = materializeCalendarSnapshot(undefined, options.sources, [], 0).sources;
   }
 
@@ -263,8 +261,8 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
       const request = indexedDB.open(this.dbName);
       request.onupgradeneeded = () => {
         const db = request.result;
-        if (!db.objectStoreNames.contains(this.storeName)) {
-          db.createObjectStore(this.storeName, { keyPath: "key" });
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME, { keyPath: "key" });
         }
       };
       request.onblocked = () => {
@@ -283,10 +281,10 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
           db.close();
           return;
         }
-        if (!db.objectStoreNames.contains(this.storeName)) {
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
           settled = true;
           db.close();
-          reject(new Error(`Calendar IndexedDB store is missing: ${this.storeName}`));
+          reject(new Error(`Calendar IndexedDB store is missing: ${STORE_NAME}`));
           return;
         }
         settled = true;
@@ -324,8 +322,8 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
 
     try {
       await new Promise<void>((resolve, reject) => {
-        const tx = openTransaction(this.db!, this.storeName, "readwrite");
-        const store = tx.objectStore(this.storeName);
+        const tx = openTransaction(this.db!, STORE_NAME, "readwrite");
+        const store = tx.objectStore(STORE_NAME);
         const metaRequest = store.get(META_KEY);
         metaRequest.onsuccess = () => {
           try {
@@ -373,7 +371,7 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
 
   private openInvalidationChannel(): void {
     if (this.channel || typeof BroadcastChannel === "undefined") return;
-    const channel = new BroadcastChannel(`@director/calendar:${this.dbName}:${this.storeName}`);
+    const channel = new BroadcastChannel(`@director/calendar:${this.dbName}`);
     channel.onmessage = event => {
       const value = event.data as { readonly revision?: unknown } | null;
       const revision = value && Number.isInteger(value.revision) ? Number(value.revision) : -1;
@@ -424,8 +422,8 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   private async readPersistedState(): Promise<PersistedCalendarState | undefined> {
     if (!this.db) throw new Error("Calendar IndexedDB is not open");
     const records = await new Promise<unknown[]>((resolve, reject) => {
-      const tx = openTransaction(this.db!, this.storeName, "readonly");
-      const request = tx.objectStore(this.storeName).getAll();
+      const tx = openTransaction(this.db!, STORE_NAME, "readonly");
+      const request = tx.objectStore(STORE_NAME).getAll();
       request.onsuccess = () => resolve(request.result as unknown[]);
       request.onerror = () => reject(request.error ?? new Error("Could not read Calendar storage"));
     });

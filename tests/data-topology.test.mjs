@@ -35,7 +35,7 @@ test("D4 normalized writes retain CAS in the same IndexedDB transaction",async()
 });
 
 
-test("D4 storage open is failure-clean and creates only the configured current store",async()=>{
+test("D4 storage open is failure-clean and creates only the fixed current store",async()=>{
   const source=await read("../src/storage/indexeddb-repository.ts");
   const open=source.match(/public async open\(\): Promise<void> \{[\s\S]*?\n  }\n\n  public read/)?.[0] ?? "";
   assert.match(open,/catch \(error\)/);
@@ -46,7 +46,7 @@ test("D4 storage open is failure-clean and creates only the configured current s
   const openDb=source.match(/private async openDatabase\(\): Promise<IDBDatabase> \{[\s\S]*?\n  }\n\n  private async commit/)?.[0] ?? "";
   assert.match(openDb,/indexedDB\.open\(this\.dbName\)/);
   assert.match(openDb,/request\.onupgradeneeded/);
-  assert.match(openDb,/db\.createObjectStore\(this\.storeName/);
+  assert.match(openDb,/db\.createObjectStore\(STORE_NAME/);
   assert.match(openDb,/Calendar IndexedDB store is missing/);
   assert.doesNotMatch(source,/openDatabaseRequest|upgradeVersion/);
 });
@@ -140,4 +140,12 @@ test("current IndexedDB stores carry no application-level schema-version scaffol
   assert.doesNotMatch(interopStorage,/DB_VERSION|calendar\.interop\.v\d+/);
   assert.match(interopStorage,/const DB_NAME = "calendar\.interop"/);
   assert.match(interopStorage,/indexedDB\.open\(dbName\)/);
+});
+
+
+test("primary IndexedDB repository exposes one fixed object-store topology",async()=>{
+  const source=await read("../src/storage/indexeddb-repository.ts");
+  assert.match(source,/const STORE_NAME = "calendar"/);
+  assert.doesNotMatch(source,/readonly storeName\?:|private readonly storeName|options\.storeName/);
+  assert.match(source,/db\.createObjectStore\(STORE_NAME/);
 });
