@@ -17,7 +17,15 @@ export interface CalendarQueryResult {
   readonly range: CalendarRange;
   readonly occurrences: readonly CalendarOccurrence[];
   readonly backgroundRanges: readonly CalendarBackgroundRange[];
-  readonly revision: number;
+  /** Durable repository concurrency token captured when the query began. */
+  readonly repositoryRevision: number;
+  /** Combined engine invalidation generation captured when the query began. */
+  readonly generation: number;
+}
+
+export interface CalendarEngineInvalidation {
+  readonly repositoryRevision: number;
+  readonly generation: number;
 }
 
 export interface CalendarQueryOptions {
@@ -57,6 +65,10 @@ function assertRange(range: CalendarRange): void {
 }
 
 export class CalendarEngine {
+  private generationValue = 0;
+  private readonly invalidationListeners = new Set<(invalidation: CalendarEngineInvalidation) => void>();
+  private inputUnsubscribers: Array<() => void> = [];
+
   public constructor(
     private readonly repository: CalendarEngineRepository,
     private readonly projections: readonly CalendarProjectionProvider[] = [],
@@ -65,15 +77,50 @@ export class CalendarEngine {
   ) {}
 
   public snapshot(): CalendarSnapshot { return this.repository.read(); }
+  public generation(): number { return this.generationValue; }
 
-  /** Observe repository changes and invalidations from all configured projection boundaries. */
-  public subscribe(listener: (snapshot: CalendarSnapshot) => void): () => void {
+  /**
+   * Observe the combined repository/projection invalidation stream. Upstream inputs are
+   * subscribed once per engine and fanned out, so one source invalidation advances one generation.
+   */
+  public subscribe(listener: (invalidation: CalendarEngineInvalidation) => void): () => void {
+    this.invalidationListeners.add(listener);
+    if (this.invalidationListeners.size === 1) this.attachInputs();
+    return () => {
+      this.invalidationListeners.delete(listener);
+      if (this.invalidationListeners.size === 0) this.detachInputs();
+    };
+  }
+
+  private attachInputs(): void {
     const unsubscribers: Array<() => void> = [];
-    if (this.repository.subscribe) unsubscribers.push(this.repository.subscribe(listener));
-    for (const projection of [...this.projections, ...this.occurrenceProjections, ...this.backgroundProjections]) {
-      if (projection.subscribe) unsubscribers.push(projection.subscribe(() => listener(this.repository.read())));
+    try {
+      if (this.repository.subscribe) {
+        unsubscribers.push(this.repository.subscribe(snapshot => this.publishInvalidation(snapshot.revision)));
+      }
+      for (const projection of [...this.projections, ...this.occurrenceProjections, ...this.backgroundProjections]) {
+        if (projection.subscribe) {
+          unsubscribers.push(projection.subscribe(() => this.publishInvalidation(this.repository.read().revision)));
+        }
+      }
+      this.inputUnsubscribers = unsubscribers;
+    } catch (error) {
+      for (const unsubscribe of unsubscribers.splice(0)) unsubscribe();
+      throw error;
     }
-    return () => { for (const unsubscribe of unsubscribers.splice(0)) unsubscribe(); };
+  }
+
+  private detachInputs(): void {
+    for (const unsubscribe of this.inputUnsubscribers.splice(0)) unsubscribe();
+  }
+
+  private publishInvalidation(repositoryRevision: number): void {
+    this.generationValue += 1;
+    const invalidation: CalendarEngineInvalidation = Object.freeze({
+      repositoryRevision,
+      generation: this.generationValue,
+    });
+    for (const listener of this.invalidationListeners) listener(invalidation);
   }
 
   public canManageSources(): boolean {
@@ -97,6 +144,7 @@ export class CalendarEngine {
 
   public async query(range: CalendarRange, options: CalendarQueryOptions = {}): Promise<CalendarQueryResult> {
     assertRange(range);
+    const generation = this.generationValue;
     const snapshot = this.repository.read();
     assertCalendarStateIntegrity(snapshot.sources, snapshot.items);
     const visible = options.visibleSourceIds ?? new Set(snapshot.sources.filter(source => source.visible).map(source => source.id));
@@ -142,7 +190,8 @@ export class CalendarEngine {
       range,
       occurrences: options.predicate ? occurrences.filter(options.predicate) : occurrences,
       backgroundRanges,
-      revision: snapshot.revision,
+      repositoryRevision: snapshot.revision,
+      generation,
     };
   }
 }

@@ -179,7 +179,7 @@ test('background range projections stay passive, canonical and fail closed', asy
   };
   const engine=new C.CalendarEngine(repo,[],[],[provider]);
   const notifications=[];
-  const unsubscribe=engine.subscribe(snapshot=>notifications.push(snapshot.revision));
+  const unsubscribe=engine.subscribe(invalidation=>notifications.push(invalidation));
   assert.equal(typeof invalidate,'function');
 
   const result=await engine.query({start:'2026-11-10T00:00:00Z',end:'2026-11-11T00:00:00Z'});
@@ -195,7 +195,7 @@ test('background range projections stay passive, canonical and fail closed', asy
   assert.deepEqual(withHidden.backgroundRanges.map(range=>range.id),['work-window','hidden-window','global-window']);
 
   invalidate();
-  assert.deepEqual(notifications,[0]);
+  assert.deepEqual(notifications,[{repositoryRevision:0,generation:1}]);
   unsubscribe();
   assert.equal(invalidate,undefined);
 
@@ -579,4 +579,54 @@ test('RepositoryCommandHandler prefers the strong revision-guarded commit capabi
   assert.equal(guardedCalls,1);
   assert.equal(plainReplaceCalls,0);
   assert.equal(snapshot.items[0].title,'After');
+});
+
+
+test('CalendarEngine separates durable repository revision from combined invalidation generation',async()=>{
+  const source={id:'generation-source',title:'Generation',visible:true};
+  const item={
+    id:'generation-item',calendarId:'generation-source',title:'Event',
+    start:'2026-11-10T09:00:00.000Z',end:'2026-11-10T10:00:00.000Z',
+    kind:'event',ownership:'calendar',editPolicy:'full',
+  };
+  const repo=new C.MemoryCalendarRepository([source],[item]);
+  let invalidateProjection;
+  let providerSubscriptions=0, providerUnsubscriptions=0;
+  const provider={
+    id:'generation-projection',
+    project:()=>[],
+    subscribe(listener){
+      providerSubscriptions+=1;
+      invalidateProjection=listener;
+      return ()=>{providerUnsubscriptions+=1;};
+    },
+  };
+  const engine=new C.CalendarEngine(repo,[provider]);
+  const firstSignals=[], secondSignals=[];
+  const unsubscribeFirst=engine.subscribe(value=>firstSignals.push(value));
+  const unsubscribeSecond=engine.subscribe(value=>secondSignals.push(value));
+  assert.equal(providerSubscriptions,1,'multiple consumers share one upstream subscription');
+
+  const firstQuery=await engine.query({start:'2026-11-10T00:00:00.000Z',end:'2026-11-11T00:00:00.000Z'});
+  assert.equal(firstQuery.repositoryRevision,0);
+  assert.equal(firstQuery.generation,0);
+  assert.equal('revision' in firstQuery,false);
+
+  repo.update('generation-item',{title:'Changed'});
+  assert.deepEqual(firstSignals[0],{repositoryRevision:1,generation:1});
+  assert.deepEqual(secondSignals[0],{repositoryRevision:1,generation:1});
+
+  invalidateProjection();
+  assert.deepEqual(firstSignals[1],{repositoryRevision:1,generation:2});
+  assert.deepEqual(secondSignals[1],{repositoryRevision:1,generation:2});
+  assert.equal(engine.generation(),2);
+
+  const secondQuery=await engine.query({start:'2026-11-10T00:00:00.000Z',end:'2026-11-11T00:00:00.000Z'});
+  assert.equal(secondQuery.repositoryRevision,1);
+  assert.equal(secondQuery.generation,2);
+
+  unsubscribeFirst();
+  assert.equal(providerUnsubscriptions,0);
+  unsubscribeSecond();
+  assert.equal(providerUnsubscriptions,1,'upstream subscription is released after the final consumer');
 });
