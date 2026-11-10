@@ -7,13 +7,12 @@ import type {
   CalendarOccurrence,
   CalendarRecurrence,
   CalendarRepository,
-  CalendarRevisionGuardedRepository,
   CalendarSource,
   RecurrenceException,
 } from "./types.js";
 import { projectTemporalPatchToSeries, rebaseTemporalSeriesExceptions, sameRecurrence, temporalSeriesIdentityAtOrdinal, temporalSeriesOrdinal } from "./recurrence.js";
 import { applyCalendarItemPatch, assertCalendarStateIntegrity } from "./store.js";
-import { CalendarStaleError, CalendarStaleRevisionError } from "./revision.js";
+import { CalendarStaleError } from "./revision.js";
 
 /** Host command rejection caused by obsolete authoritative state. */
 export class CalendarCommandStaleError extends CalendarStaleError {
@@ -21,26 +20,6 @@ export class CalendarCommandStaleError extends CalendarStaleError {
     super(message);
     this.name = "CalendarCommandStaleError";
   }
-}
-
-function revisionGuarded(
-  repository: CalendarRepository,
-): repository is CalendarRevisionGuardedRepository {
-  return typeof (repository as Partial<CalendarRevisionGuardedRepository>).replaceAtRevision === "function";
-}
-
-async function replaceAtExpectedRevision(
-  repository: CalendarRepository,
-  items: readonly CalendarItem[],
-  expectedRevision: number,
-): Promise<void> {
-  if (revisionGuarded(repository)) {
-    await repository.replaceAtRevision(items, expectedRevision);
-    return;
-  }
-  const actual = repository.read().revision;
-  if (actual !== expectedRevision) throw new CalendarStaleRevisionError(expectedRevision, actual);
-  await repository.replace(items);
 }
 
 function assertEditablePolicy(id: string, editPolicy: CalendarItem["editPolicy"]): void {
@@ -462,7 +441,7 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
       }
       const next = applyHistoryEntry(current.items, entry, "undo");
       assertCalendarStateIntegrity(current.sources, next);
-      await replaceAtExpectedRevision(this.repository, next, current.revision);
+      await this.repository.replaceAtRevision(next, current.revision);
       this.redoStack.push(entry);
       return true;
     } catch (error) {
@@ -481,7 +460,7 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
       }
       const next = applyHistoryEntry(current.items, entry, "redo");
       assertCalendarStateIntegrity(current.sources, next);
-      await replaceAtExpectedRevision(this.repository, next, current.revision);
+      await this.repository.replaceAtRevision(next, current.revision);
       this.undoStack.push(entry);
       return true;
     } catch (error) {
@@ -499,7 +478,7 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
 
     // One authoritative repository mutation per logical Calendar command. This makes
     // multi-record operations such as recurrence splitting durable atomically.
-    await replaceAtExpectedRevision(this.repository, stagedItems, beforeSnapshot.revision);
+    await this.repository.replaceAtRevision(stagedItems, beforeSnapshot.revision);
 
     const afterSnapshot = this.repository.read();
     if (sourceSignature(beforeSnapshot.sources) !== sourceSignature(afterSnapshot.sources)) return;

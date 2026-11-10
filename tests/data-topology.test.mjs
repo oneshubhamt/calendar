@@ -116,3 +116,17 @@ test("current public contracts contain no retained compatibility aliases",async(
   assert.doesNotMatch(ics,/readonly readOnly\?:|options\.readOnly/);
   assert.doesNotMatch(google,/publishOwnerships/);
 });
+
+
+test("mutable Calendar repositories require atomic revision-guarded replacement with no weak fallback",async()=>{
+  const [types,commands]=await Promise.all([
+    read("../src/core/types.ts"),
+    read("../src/core/commands.ts"),
+  ]);
+  const repository=types.match(/export interface CalendarRepository[\s\S]*?\n}/)?.[0] ?? "";
+  assert.match(repository,/replaceAtRevision\(/);
+  assert.doesNotMatch(types,/CalendarRevisionGuardedRepository/);
+  assert.doesNotMatch(commands,/revisionGuarded|replaceAtExpectedRevision|Partial<CalendarRevisionGuardedRepository>/);
+  assert.match(commands,/this\.repository\.replaceAtRevision\(stagedItems, beforeSnapshot\.revision\)/);
+  assert.match(commands,/this\.repository\.replaceAtRevision\(next, current\.revision\)/);
+});

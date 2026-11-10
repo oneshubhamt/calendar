@@ -241,20 +241,11 @@ export interface CalendarRepository extends CalendarSnapshotProvider {
   update(id: CalendarItemId, patch: CalendarItemPatch): Promise<void> | void;
   remove(id: CalendarItemId): Promise<void> | void;
   replace(items: readonly CalendarItem[]): Promise<void> | void;
+  /** Atomically replace items only when the authoritative revision still matches. */
+  replaceAtRevision(items: readonly CalendarItem[], expectedRevision: number): Promise<void> | void;
   createSource?(source: CalendarSource): Promise<void> | void;
   updateSource?(id: CalendarId, patch: CalendarSourcePatch): Promise<void> | void;
   removeSource?(id: CalendarId): Promise<void> | void;
-}
-
-/**
- * Optional strong optimistic-concurrency capability. Implementations compare the expected
- * revision and publish the replacement atomically; stale writes must not partially commit.
- */
-export interface CalendarRevisionGuardedRepository extends CalendarRepository {
-  replaceAtRevision(
-    items: readonly CalendarItem[],
-    expectedRevision: number,
-  ): Promise<void> | void;
 }
 
 export type CalendarEngineRepository = CalendarSnapshotProvider & Partial<CalendarSourceManager>;

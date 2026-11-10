@@ -490,7 +490,7 @@ test('repository snapshots are runtime-immutable, isolated at ingress and copy-o
   assert.equal(second.revision,1);
 });
 
-test('RepositoryCommandHandler commits each logical command through one authoritative replace',async()=>{
+test('RepositoryCommandHandler commits each logical command through one revision-guarded authoritative replacement',async()=>{
   const source={id:'atomic-source',title:'Atomic',visible:true};
   const series={
     id:'atomic-series',calendarId:'atomic-source',title:'Series',
@@ -510,8 +510,10 @@ test('RepositoryCommandHandler commits each logical command through one authorit
     create(){directMutations+=1;throw new Error('authoritative create must not be called');},
     update(){directMutations+=1;throw new Error('authoritative update must not be called');},
     remove(){directMutations+=1;throw new Error('authoritative remove must not be called');},
-    replace(items){
+    replace(){throw new Error('unguarded replace must not be called');},
+    replaceAtRevision(items,expectedRevision){
       replaces+=1;
+      assert.equal(expectedRevision,snapshot.revision);
       const next=new C.MemoryCalendarRepository(snapshot.sources,items);
       snapshot=Object.freeze({...next.read(),revision:snapshot.revision+1});
     },
@@ -550,37 +552,6 @@ test('revision-guarded repositories reject stale replacement without partial mut
   assert.equal(repo.read().items[0].title,'B');
   assert.equal(repo.read().revision,1);
 });
-
-test('RepositoryCommandHandler prefers the strong revision-guarded commit capability',async()=>{
-  const source={id:'guard-source',title:'Guard',visible:true};
-  const item={
-    id:'guard-item',calendarId:'guard-source',title:'Before',
-    start:'2026-11-10T09:00:00.000Z',end:'2026-11-10T10:00:00.000Z',
-    kind:'event',ownership:'calendar',editPolicy:'full',
-  };
-  const base=new C.MemoryCalendarRepository([source],[item]);
-  let snapshot=base.read();
-  let guardedCalls=0, plainReplaceCalls=0;
-  const repository={
-    read:()=>snapshot,
-    create(){throw new Error('not used');},
-    update(){throw new Error('not used');},
-    remove(){throw new Error('not used');},
-    replace(){plainReplaceCalls+=1;throw new Error('plain replace must not be used');},
-    replaceAtRevision(items,expectedRevision){
-      guardedCalls+=1;
-      assert.equal(expectedRevision,snapshot.revision);
-      const next=new C.MemoryCalendarRepository(snapshot.sources,items);
-      snapshot=Object.freeze({...next.read(),revision:snapshot.revision+1});
-    },
-  };
-  const handler=new C.RepositoryCommandHandler(repository);
-  await handler.execute({type:'update',id:'guard-item',patch:{title:'After'}},{now:'2026-11-01T00:00:00.000Z'});
-  assert.equal(guardedCalls,1);
-  assert.equal(plainReplaceCalls,0);
-  assert.equal(snapshot.items[0].title,'After');
-});
-
 
 test('CalendarEngine separates durable repository revision from combined invalidation generation',async()=>{
   const source={id:'generation-source',title:'Generation',visible:true};
