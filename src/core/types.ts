@@ -64,6 +64,27 @@ export interface CalendarMetadata {
   readonly [key: string]: CalendarMetadataValue | undefined;
 }
 
+/**
+ * Passive, already-resolved temporal context rendered behind ordinary calendar events.
+ * Background ranges are not events and carry no scheduling/availability semantics by themselves.
+ */
+export interface CalendarBackgroundRange {
+  /** Stable identity within the Calendar query result. */
+  readonly id: string;
+  /** Absolute ISO date-time at the resolved projection boundary. */
+  readonly start: ISODateTime;
+  /** Absolute ISO date-time; must be strictly after start. */
+  readonly end: ISODateTime;
+  /** Explicit day-level semantics for views that can truthfully represent full-day backgrounds. */
+  readonly allDay?: boolean | undefined;
+  /** Optional Calendar source association. Associated ranges follow that source's visibility. */
+  readonly calendarId?: CalendarId | undefined;
+  /** Optional generic text for later presentation/accessibility; Calendar assigns no domain meaning. */
+  readonly label?: string | undefined;
+  /** Opaque bounded JSON-like host data. */
+  readonly metadata?: CalendarMetadata | undefined;
+}
+
 export interface RecurrenceByDay {
   readonly weekday: Weekday;
   readonly ordinal?: number | undefined;
@@ -223,6 +244,17 @@ export interface CalendarOccurrenceProjectionProvider {
   readonly id: string;
   projectOccurrences(range: CalendarRange): Promise<readonly CalendarOccurrence[]> | readonly CalendarOccurrence[];
   /** Optional invalidation signal for authoritative host occurrence data. */
+  subscribe?(listener: () => void): () => void;
+}
+
+/**
+ * Host/feature projection boundary for passive, already-expanded temporal background ranges.
+ * Calendar does not recurrence-expand these values or infer availability/constraint semantics from them.
+ */
+export interface CalendarBackgroundProjectionProvider {
+  readonly id: string;
+  projectBackgroundRanges(range: CalendarRange): Promise<readonly CalendarBackgroundRange[]> | readonly CalendarBackgroundRange[];
+  /** Optional invalidation signal for authoritative background data. */
   subscribe?(listener: () => void): () => void;
 }
 
