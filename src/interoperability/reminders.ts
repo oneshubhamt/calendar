@@ -8,17 +8,56 @@ export interface DueCalendarReminder {
   readonly triggerAt: ISODateTime;
 }
 
+export interface ReminderReceiptClaim {
+  readonly token: string;
+  readonly claimedAt: ISODateTime;
+  readonly expiresAt: ISODateTime;
+}
+
 export interface ReminderReceiptStore {
-  has(key: string): Promise<boolean> | boolean;
-  record(key: string, deliveredAt: ISODateTime): Promise<void> | void;
+  /** Atomically reserve a reminder key. False means another live claim or a completed receipt already owns it. */
+  claim(key: string, claim: ReminderReceiptClaim): Promise<boolean> | boolean;
+  /** Mark a successfully delivered claim complete. Implementations must verify claim ownership. */
+  complete(key: string, token: string, deliveredAt: ISODateTime): Promise<void> | void;
+  /** Release a failed claim without disturbing a newer claimant or completed receipt. */
+  release(key: string, token: string): Promise<void> | void;
   prune?(before: ISODateTime): Promise<void> | void;
 }
 
+type MemoryReminderReceipt =
+  | { readonly state: "claimed"; readonly claim: ReminderReceiptClaim }
+  | { readonly state: "delivered"; readonly deliveredAt: ISODateTime };
+
 export class MemoryReminderReceiptStore implements ReminderReceiptStore {
-  private readonly delivered = new Map<string, ISODateTime>();
-  public has(key: string): boolean { return this.delivered.has(key); }
-  public record(key: string, deliveredAt: ISODateTime): void { this.delivered.set(key, deliveredAt); }
-  public prune(before: ISODateTime): void { const cutoff = Date.parse(before); for (const [key, at] of this.delivered) if (Date.parse(at) < cutoff) this.delivered.delete(key); }
+  private readonly receipts = new Map<string, MemoryReminderReceipt>();
+
+  public claim(key: string, claim: ReminderReceiptClaim): boolean {
+    const existing = this.receipts.get(key);
+    if (existing?.state === "delivered") return false;
+    if (existing?.state === "claimed" && Date.parse(existing.claim.expiresAt) > Date.parse(claim.claimedAt)) return false;
+    this.receipts.set(key, { state: "claimed", claim: structuredClone(claim) });
+    return true;
+  }
+
+  public complete(key: string, token: string, deliveredAt: ISODateTime): void {
+    const existing = this.receipts.get(key);
+    if (existing?.state !== "claimed" || existing.claim.token !== token) {
+      throw new Error("Reminder receipt claim is no longer owned by this delivery");
+    }
+    this.receipts.set(key, { state: "delivered", deliveredAt });
+  }
+
+  public release(key: string, token: string): void {
+    const existing = this.receipts.get(key);
+    if (existing?.state === "claimed" && existing.claim.token === token) this.receipts.delete(key);
+  }
+
+  public prune(before: ISODateTime): void {
+    const cutoff = Date.parse(before);
+    for (const [key, receipt] of this.receipts) {
+      if (receipt.state === "delivered" && Date.parse(receipt.deliveredAt) < cutoff) this.receipts.delete(key);
+    }
+  }
 }
 
 export interface ReminderDeliveryPort {
@@ -93,6 +132,8 @@ export interface ReminderCoordinatorOptions {
   readonly lookBackMinutes?: number | undefined;
   /** Future event-start horizon needed to discover reminders that fire before the event. Default 28 days. */
   readonly lookAheadDays?: number | undefined;
+  /** Crash-recovery lease for an in-flight delivery claim. Default 15 minutes. */
+  readonly claimLeaseMinutes?: number | undefined;
 }
 
 export class ReminderCoordinator {
@@ -114,17 +155,23 @@ export class ReminderCoordinator {
     let earliestFailedTrigger: number | null = null;
     let firstError: unknown = null;
     for (const reminder of due) {
-      if (await this.options.receipts.has(reminder.key)) continue;
       const delivery = this.options.deliveries.find(candidate => candidate.channel === reminder.reminder.channel);
       if (!delivery) { earliestFailedTrigger = minTime(earliestFailedTrigger, Date.parse(reminder.triggerAt)); continue; }
+
+      const claim = reminderClaim(now, Math.max(1, this.options.claimLeaseMinutes ?? 15));
+      if (!await this.options.receipts.claim(reminder.key, claim)) continue;
+      let completed = false;
       try {
         if (await delivery.deliver(reminder)) {
-          await this.options.receipts.record(reminder.key, now.toISOString());
+          await this.options.receipts.complete(reminder.key, claim.token, now.toISOString());
+          completed = true;
           delivered.push(reminder);
         } else earliestFailedTrigger = minTime(earliestFailedTrigger, Date.parse(reminder.triggerAt));
       } catch (error) {
         earliestFailedTrigger = minTime(earliestFailedTrigger, Date.parse(reminder.triggerAt));
         firstError ??= error;
+      } finally {
+        if (!completed) await this.options.receipts.release(reminder.key, claim.token);
       }
     }
     this.lastCheckAt = nowMs;
@@ -132,6 +179,17 @@ export class ReminderCoordinator {
     if (firstError) throw firstError;
     return delivered;
   }
+}
+
+function reminderClaim(now: Date, leaseMinutes: number): ReminderReceiptClaim {
+  const token = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${now.getTime()}-${Math.random().toString(36).slice(2)}`;
+  return {
+    token,
+    claimedAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + leaseMinutes * 60_000).toISOString(),
+  };
 }
 
 function minTime(current: number | null, candidate: number): number {

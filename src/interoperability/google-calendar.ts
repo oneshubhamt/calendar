@@ -224,6 +224,40 @@ async function preconditionConflict(
   };
 }
 
+type BrowserLockManager = {
+  request<T>(
+    name: string,
+    options: { readonly mode: "exclusive" },
+    callback: () => Promise<T>,
+  ): Promise<T>;
+};
+
+const localSyncTails = new Map<string, Promise<void>>();
+
+async function withLocalSyncLock<T>(name: string, operation: () => Promise<T>): Promise<T> {
+  const previous = localSyncTails.get(name) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const tail = previous.catch(() => undefined).then(() => gate);
+  localSyncTails.set(name, tail);
+  await previous.catch(() => undefined);
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (localSyncTails.get(name) === tail) localSyncTails.delete(name);
+  }
+}
+
+async function withGoogleSyncLock<T>(connectionId: string, operation: () => Promise<T>): Promise<T> {
+  const name = `director-calendar:google-sync:${connectionId}`;
+  const manager = typeof navigator === "undefined"
+    ? undefined
+    : (navigator as Navigator & { readonly locks?: BrowserLockManager }).locks;
+  if (manager?.request) return await manager.request(name, { mode: "exclusive" }, operation);
+  return await withLocalSyncLock(name, operation);
+}
+
 export class GoogleCalendarSyncAdapter {
   public constructor(
     private readonly transport: GoogleCalendarTransport,
@@ -233,6 +267,10 @@ export class GoogleCalendarSyncAdapter {
   ) {}
 
   public async sync(): Promise<GoogleSyncResult> {
+    return await withGoogleSyncLock(this.connection.id, () => this.syncExclusive());
+  }
+
+  private async syncExclusive(): Promise<GoogleSyncResult> {
     let state = await this.states.read(this.connection.id) ?? initialState(this.connection);
     let pull: PullResult;
     try { pull = await this.pull(state); }

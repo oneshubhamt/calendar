@@ -68,7 +68,10 @@ export interface SyncStateStore {
 
 export class MemorySyncStateStore implements SyncStateStore {
   private readonly states = new Map<string, CalendarSyncConnectionState>();
-  public read(connectionId: string): CalendarSyncConnectionState | null { return this.states.get(connectionId) ?? null; }
+  public read(connectionId: string): CalendarSyncConnectionState | null {
+    const state = this.states.get(connectionId);
+    return state ? structuredClone(state) : null;
+  }
   public write(state: CalendarSyncConnectionState): void { this.states.set(state.connectionId, structuredClone(state)); }
   public remove(connectionId: string): void { this.states.delete(connectionId); }
 }

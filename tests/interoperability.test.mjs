@@ -37,6 +37,34 @@ test('interop metadata is namespaced and does not overwrite host metadata',()=>{
   assert.equal(linked.metadata.externalProvider,undefined);
 });
 
+test('MemorySyncStateStore read returns an owned clone',()=>{
+  const store=new Sync.MemorySyncStateStore();
+  store.write({provider:'google',connectionId:'clone',mode:'publish',externalCalendarId:'remote',localCalendarId:'personal',links:[]});
+  const first=store.read('clone');
+  first.links.push?.({bad:true});
+  first.connectionId='mutated';
+  const second=store.read('clone');
+  assert.equal(second.connectionId,'clone');
+  assert.deepEqual(second.links,[]);
+});
+
+test('concurrent Google syncs for one connection serialize before remote mutation',async()=>{
+  const repo=new Core.MemoryCalendarRepository([source],[event()]);
+  const states=new Sync.MemorySyncStateStore();
+  let inserts=0, active=0, maxActive=0;
+  const transport={
+    async listEvents(){active++;maxActive=Math.max(maxActive,active);await new Promise(resolve=>setTimeout(resolve,10));active--;return {items:[],nextSyncToken:'t'};},
+    async getEvent(){throw Error('unused');},async listInstances(){return {items:[]};},
+    async insertEvent(_c,e){inserts++;return {id:'g1',etag:'x',...e};},
+    async updateEvent(){throw Error('unused');},async patchEvent(){throw Error('unused');},async deleteEvent(){throw Error('unused');},
+  };
+  const a=new Google.GoogleCalendarSyncAdapter(transport,repo,states,{id:'serialized',googleCalendarId:'remote',localCalendarId:'personal',mode:'publish'});
+  const b=new Google.GoogleCalendarSyncAdapter(transport,repo,states,{id:'serialized',googleCalendarId:'remote',localCalendarId:'personal',mode:'publish'});
+  await Promise.all([a.sync(),b.sync()]);
+  assert.equal(maxActive,1);
+  assert.equal(inserts,1);
+});
+
 test('Google 412 is converted to a structured sync conflict', async()=>{
   const base=event({title:'Base'}), local=event({title:'Local edit'});
   const remoteBase=Google.googleEventToCalendarItem({id:'g1',etag:'"e1"',summary:'Base',start:{dateTime:base.start},end:{dateTime:base.end},reminders:{useDefault:false}},'personal','conn','e1','remote-cal');
