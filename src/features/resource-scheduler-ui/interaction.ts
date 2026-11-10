@@ -4,22 +4,11 @@ import type {
 } from "../../core/types.js";
 import { shiftCivilMinutes } from "../../core/civil-timeline.js";
 import { resizeInterval, type CalendarResizeEdge } from "../../core/interaction.js";
+import { parseAbsoluteDateTime } from "../../core/time.js";
 
 export interface CalendarResourceInteractionTimes {
   readonly start: string;
   readonly end: string;
-}
-
-function instant(value: string, label: string): Date {
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) throw new Error(`${label} is invalid`);
-  return date;
-}
-
-export function snapResourceInteractionMinutes(rawMinutes: number, snapMinutes: number): number {
-  if (!Number.isFinite(rawMinutes)) throw new RangeError("Interaction delta must be finite");
-  if (!Number.isFinite(snapMinutes) || snapMinutes <= 0) throw new RangeError("Interaction snap minutes must be positive and finite");
-  return Math.round(rawMinutes / snapMinutes) * snapMinutes;
 }
 
 /** Move an occurrence by civil wall-clock minutes. DST gaps are non-targetable. */
@@ -29,8 +18,8 @@ export function moveResourceOccurrenceByCivilMinutes(
   timeZone: string,
   overlap: CalendarOverlapDisambiguation,
 ): CalendarResourceInteractionTimes | null {
-  const start = instant(occurrence.start, "Occurrence start");
-  const end = instant(occurrence.end, "Occurrence end");
+  const start = parseAbsoluteDateTime(occurrence.start, "Occurrence start");
+  const end = parseAbsoluteDateTime(occurrence.end, "Occurrence end");
   const shiftedStart = shiftCivilMinutes(start, deltaMinutes, timeZone, overlap);
   if (!shiftedStart) return null;
   if (occurrence.temporalForm === "point") {

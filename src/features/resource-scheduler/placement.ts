@@ -19,6 +19,7 @@ import {
 } from "../../core/authority.js";
 import { CalendarCommandStaleError } from "../../core/commands.js";
 import { assertTimeZone } from "../../core/temporal.js";
+import { parseAbsoluteDateTime } from "../../core/time.js";
 import { flattenCalendarResources, validateCalendarResourceAssignments } from "./mechanics.js";
 import type {
   CalendarResource,
@@ -124,15 +125,6 @@ function preventedEvaluation(
       ...(request.assignmentVersion === undefined ? {} : { assignmentVersion: request.assignmentVersion }),
     },
   };
-}
-
-function absoluteInstant(value: unknown, label: string): number {
-  if (typeof value !== "string" || !/(?:Z|[+-]\d{2}:?\d{2})$/iu.test(value)) {
-    throw new Error(`${label} must be an absolute ISO date-time`);
-  }
-  const instant = Date.parse(value);
-  if (!Number.isFinite(instant)) throw new Error(`${label} must be a valid absolute ISO date-time`);
-  return instant;
 }
 
 function normalizedResourceSets(
@@ -380,10 +372,10 @@ export async function evaluateCalendarResourcePlacement(
   let afterStart: number;
   let afterEnd: number;
   try {
-    beforeStart = absoluteInstant(request.occurrence.start, "Occurrence start");
-    beforeEnd = absoluteInstant(request.occurrence.end, "Occurrence end");
-    afterStart = absoluteInstant(request.start, "Placement start");
-    afterEnd = absoluteInstant(request.end, "Placement end");
+    beforeStart = parseAbsoluteDateTime(request.occurrence.start, "Occurrence start").getTime();
+    beforeEnd = parseAbsoluteDateTime(request.occurrence.end, "Occurrence end").getTime();
+    afterStart = parseAbsoluteDateTime(request.start, "Placement start").getTime();
+    afterEnd = parseAbsoluteDateTime(request.end, "Placement end").getTime();
   } catch (error) {
     return preventedEvaluation(request, error instanceof Error ? error.message : "Resource placement time is invalid.");
   }

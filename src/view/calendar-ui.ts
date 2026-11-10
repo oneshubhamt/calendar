@@ -11,6 +11,7 @@ import type {
   CalendarOccurrenceCommand,
   CalendarRange,
   CalendarSnapPolicy,
+  CalendarSnapStrategy,
   CalendarSource,
   CalendarView,
   ISODateTime,
@@ -27,7 +28,7 @@ import { civilMinuteOfInstant, civilMinuteResolution, instantAtCivilMinute, shif
 import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from "./time-zone-scale.js";
 import { groupAgendaByDay, groupAllDayBackgroundRangesByDay, groupByDay, layoutBackgroundDay, layoutTimedDay } from "../core/layout.js";
 import { sameRecurrence } from "../core/recurrence.js";
-import { evaluateCalendarPlacement, normalizeSnapPolicy, placementInNavigationBounds, placementTimePatch, resizeInterval, resizePreview, type CalendarResizeEdge } from "../core/interaction.js";
+import { evaluateCalendarPlacement, normalizeSnapPolicy, placementInNavigationBounds, placementTimePatch, resizeInterval, resizePreview, snapMinuteCoordinate, type CalendarResizeEdge } from "../core/interaction.js";
 import {
   calendarOccurrenceCommandContext, resolveOccurrenceCapabilities, temporalMutationCapabilityRequirements,
   type CalendarOccurrenceCapabilityKey, type ResolvedCalendarOccurrenceCapabilities,
@@ -147,13 +148,6 @@ function withLocalTime(
   const time = instantToPlain(source.getTime(), timeZone);
   const minute = time.hour * 60 + time.minute + time.second / 60 + time.millisecond / 60_000;
   return instantAtCivilMinute(day, minute, timeZone, overlap);
-}
-
-function snapMinuteCoordinate(value: number, slotMinutes: number, strategy: CalendarSnapPolicy["move"]): number {
-  if (strategy === "none") return value;
-  const units = value / slotMinutes;
-  const rounded = strategy === "floor" ? Math.floor(units) : strategy === "ceil" ? Math.ceil(units) : Math.round(units);
-  return rounded * slotMinutes;
 }
 
 function calendarDaySpan(start: Date, end: Date, timeZone: string): number {
@@ -1266,17 +1260,15 @@ export class CalendarUi {
     return mode === "resize-start" ? "start" : "end";
   }
 
-  private snappedDeltaMinutes(deltaPixels: number, strategy: CalendarSnapPolicy["move"]): number {
+  private snappedDeltaMinutes(deltaPixels: number, strategy: CalendarSnapStrategy): number {
     if (strategy === "none") return Math.round(deltaPixels);
-    const raw = deltaPixels / this.slotMinutes;
-    const units = strategy === "floor" ? Math.floor(raw) : strategy === "ceil" ? Math.ceil(raw) : Math.round(raw);
-    return units * this.slotMinutes;
+    return snapMinuteCoordinate(deltaPixels, this.slotMinutes, strategy);
   }
 
   private timeAtGridMinute(
     day: Date,
     minute: number,
-    strategy: CalendarSnapPolicy["move"],
+    strategy: CalendarSnapStrategy,
     action: string,
   ): Date | null {
     const snapped = snapMinuteCoordinate(minute, this.slotMinutes, strategy);

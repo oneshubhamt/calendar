@@ -2,9 +2,11 @@ import type {
   CalendarOccurrence,
   CalendarOverlapDisambiguation,
   CalendarRange,
+  CalendarSnapPolicy,
   CalendarSource,
   SeriesEditScope,
 } from "../../core/types.js";
+import { normalizeSnapPolicy, snapMinuteCoordinate } from "../../core/interaction.js";
 import type { CalendarUiExtension } from "../../view/types.js";
 import { isSafeHostClassName, resolveOccurrencePresentation } from "../../view/presentation.js";
 import {
@@ -24,7 +26,6 @@ import { resolveResourceTimelineRangeGeometry } from "../resource-scheduler/time
 import {
   moveResourceOccurrenceByCivilMinutes,
   resizeResourceOccurrenceByCivilMinutes,
-  snapResourceInteractionMinutes,
 } from "./interaction.js";
 import { RESOURCE_SCHEDULER_CSS } from "./styles.js";
 
@@ -72,7 +73,10 @@ export interface CalendarResourceSchedulerProjection {
 
 export interface CalendarResourceSchedulerInteractionOptions
   extends Omit<CalendarResourcePlacementExecutionOptions, "source" | "acceptWarnings"> {
-  readonly snapMinutes?: number | undefined;
+  /** Shared Calendar snap interval. Defaults to 15 minutes. */
+  readonly slotMinutes?: number | undefined;
+  /** Shared Calendar move/resize/keyboard snapping semantics. */
+  readonly snapPolicy?: CalendarSnapPolicy | undefined;
   readonly minimumDurationMinutes?: number | undefined;
   readonly dstOverlapDisambiguation?: CalendarOverlapDisambiguation | undefined;
   readonly sourceForOccurrence?: ((occurrence: CalendarOccurrence) => CalendarSource | undefined) | undefined;
@@ -158,6 +162,8 @@ export class CalendarResourceSchedulerUi {
   private readonly onCollapseChange: CalendarResourceSchedulerUiOptions["onCollapseChange"];
   private readonly onError: CalendarResourceSchedulerUiOptions["onError"];
   private readonly interaction: CalendarResourceSchedulerInteractionOptions | undefined;
+  private readonly slotMinutes: number;
+  private readonly snapPolicy: Required<CalendarSnapPolicy>;
   private readonly interactionHelpId: string;
   private readonly status: HTMLElement;
   private readonly pendingOccurrences = new Set<string>();
@@ -181,9 +187,10 @@ export class CalendarResourceSchedulerUi {
     this.onCollapseChange = options.onCollapseChange;
     this.onError = options.onError;
     this.interaction = options.interaction;
+    this.slotMinutes = this.interaction?.slotMinutes ?? 15;
+    this.snapPolicy = normalizeSnapPolicy(this.interaction?.snapPolicy, this.slotMinutes);
     this.interactionHelpId = `dc-rs-interaction-help-${++schedulerUiSequence}`;
     if (this.interaction) {
-      positiveNumber(this.interaction.snapMinutes, 15, "interaction.snapMinutes");
       positiveNumber(this.interaction.minimumDurationMinutes, 5, "interaction.minimumDurationMinutes");
       if (typeof this.interaction.mutationPort?.commit !== "function") {
         throw new Error("interaction.mutationPort.commit must be a function");
@@ -556,14 +563,10 @@ export class CalendarResourceSchedulerUi {
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
       event.preventDefault();
       event.stopPropagation();
-      const delta = (event.key === "ArrowRight" ? 1 : -1) * this.interactionSnapMinutes();
+      const delta = (event.key === "ArrowRight" ? 1 : -1) * this.snapPolicy.keyboardStepMinutes;
       void this.keyboardResize(node, occurrence, resourceId, edge, delta);
     });
     return handle;
-  }
-
-  private interactionSnapMinutes(): number {
-    return positiveNumber(this.interaction?.snapMinutes, 15, "interaction.snapMinutes");
   }
 
   private minimumDurationMinutes(): number {
@@ -584,7 +587,8 @@ export class CalendarResourceSchedulerUi {
 
   private resourceAt(clientX: number, clientY: number): CalendarResource | undefined {
     const row = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>(".dc-rs-resource-row");
-    const id = row?.dataset.resourceId;
+    if (!row || !this.root.contains(row)) return undefined;
+    const id = row.dataset.resourceId;
     return id ? this.resourceById(id) : undefined;
   }
 
@@ -651,7 +655,8 @@ export class CalendarResourceSchedulerUi {
     drag.moved = true;
     drag.ghost.hidden = false;
     const rawMinutes = dx / drag.scale;
-    const deltaMinutes = snapResourceInteractionMinutes(rawMinutes, this.interactionSnapMinutes());
+    const strategy = drag.mode === "move" ? this.snapPolicy.move : this.snapPolicy.resize;
+    const deltaMinutes = snapMinuteCoordinate(rawMinutes, this.slotMinutes, strategy);
     const candidate = this.interactionCandidate(drag, deltaMinutes, event.clientX, event.clientY);
     drag.candidate = candidate;
     this.updateDragPreview(drag, candidate);
@@ -1098,8 +1103,8 @@ export class CalendarResourceSchedulerUi {
     if (this.interaction && event.altKey && occurrence && resourceId
       && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
       event.preventDefault();
-      const horizontal = event.key === "ArrowLeft" ? -this.interactionSnapMinutes()
-        : event.key === "ArrowRight" ? this.interactionSnapMinutes() : 0;
+      const horizontal = event.key === "ArrowLeft" ? -this.snapPolicy.keyboardStepMinutes
+        : event.key === "ArrowRight" ? this.snapPolicy.keyboardStepMinutes : 0;
       const vertical = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
       void this.keyboardMove(current, occurrence, resourceId, horizontal, vertical as -1 | 0 | 1);
       return;

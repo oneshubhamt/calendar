@@ -11,7 +11,7 @@ import type {
 import { expandItems } from "./event-series.js";
 import { sortOccurrences } from "./layout.js";
 import { assertCalendarBackgroundRangeIntegrity, assertCalendarOccurrenceIntegrity, assertCalendarStateIntegrity } from "./store.js";
-import { hasExplicitOffset, intersectsRange, toDate } from "./time.js";
+import { intersectsRange, parseAbsoluteDateTime, toDate } from "./time.js";
 
 export interface CalendarQueryResult {
   readonly range: CalendarRange;
@@ -31,10 +31,7 @@ export interface CalendarQueryOptions {
 
 
 function canonicalAbsolute(value: string, label: string): string {
-  if (!hasExplicitOffset(value)) throw new Error(`${label} must be an absolute ISO date-time`);
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) throw new Error(`${label} must be an absolute ISO date-time`);
-  return date.toISOString();
+  return parseAbsoluteDateTime(value, label).toISOString();
 }
 
 /** Canonicalize the provider boundary once so all downstream occurrence mechanics consume absolute instants. */

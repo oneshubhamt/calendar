@@ -3,7 +3,7 @@ import type {
   CalendarRange,
 } from "../../core/types.js";
 import { civilMinuteOfInstant } from "../../core/civil-timeline.js";
-import { hasExplicitOffset } from "../../core/time.js";
+import { parseAbsoluteDateTime } from "../../core/time.js";
 import {
   flattenCalendarResources,
   validateCalendarResourceAssignments,
@@ -58,15 +58,6 @@ interface PreparedLayout extends Omit<CalendarResourceTimelineLayoutItem, "lane"
   readonly point: boolean;
 }
 
-function absoluteInstant(value: unknown, label: string): number {
-  if (typeof value !== "string" || !hasExplicitOffset(value)) {
-    throw new Error(`${label} must be an absolute ISO date-time`);
-  }
-  const instant = Date.parse(value);
-  if (!Number.isFinite(instant)) throw new Error(`${label} must be a valid absolute ISO date-time`);
-  return instant;
-}
-
 function prepareOccurrence(occurrence: CalendarOccurrence): PreparedOccurrence {
   if (!occurrence || typeof occurrence !== "object" || Array.isArray(occurrence)) {
     throw new Error("Resource timeline occurrence must be an object");
@@ -76,8 +67,8 @@ function prepareOccurrence(occurrence: CalendarOccurrence): PreparedOccurrence {
   if (occurrence.temporalForm !== undefined && occurrence.temporalForm !== "interval" && occurrence.temporalForm !== "point") {
     throw new Error(`Resource timeline occurrence ${occurrence.occurrenceId} temporal form is invalid`);
   }
-  const start = absoluteInstant(occurrence.start, `Resource timeline occurrence ${occurrence.occurrenceId} start`);
-  const end = absoluteInstant(occurrence.end, `Resource timeline occurrence ${occurrence.occurrenceId} end`);
+  const start = parseAbsoluteDateTime(occurrence.start, `Resource timeline occurrence ${occurrence.occurrenceId} start`).getTime();
+  const end = parseAbsoluteDateTime(occurrence.end, `Resource timeline occurrence ${occurrence.occurrenceId} end`).getTime();
   const point = occurrence.temporalForm === "point";
   if (point ? start !== end : end <= start) {
     throw new Error(point
@@ -182,8 +173,8 @@ export function resolveResourceTimelineRangeGeometry(
   range: CalendarRange,
   timeZone?: string | undefined,
 ): ResourceTimelineRangeGeometry {
-  const start = absoluteInstant(range?.start, "Resource timeline range start");
-  const end = absoluteInstant(range?.end, "Resource timeline range end");
+  const start = parseAbsoluteDateTime(range?.start, "Resource timeline range start").getTime();
+  const end = parseAbsoluteDateTime(range?.end, "Resource timeline range end").getTime();
   if (end <= start) throw new Error("Resource timeline range must end after it starts");
   if (timeZone !== undefined && (typeof timeZone !== "string" || !timeZone.trim())) {
     throw new Error("Resource timeline time zone must be a non-empty string");

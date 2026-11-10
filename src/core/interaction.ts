@@ -23,14 +23,36 @@ export const DEFAULT_COLLISION_POLICY: CalendarCollisionPolicy = Object.freeze({
   includeAllDay: false,
 });
 
+function assertSnapSlotMinutes(slotMinutes: number): void {
+  if (!Number.isInteger(slotMinutes) || slotMinutes <= 0 || slotMinutes > 1_440) {
+    throw new RangeError("slotMinutes must be an integer from 1 to 1440");
+  }
+}
+
 export function normalizeSnapPolicy(policy: CalendarSnapPolicy | undefined, slotMinutes: number): Required<CalendarSnapPolicy> {
-  const keyboardStepMinutes = Math.max(1, Math.round(policy?.keyboardStepMinutes ?? slotMinutes));
+  assertSnapSlotMinutes(slotMinutes);
+  const configuredStep = policy?.keyboardStepMinutes ?? slotMinutes;
+  if (!Number.isFinite(configuredStep) || configuredStep <= 0) {
+    throw new RangeError("keyboardStepMinutes must be positive and finite");
+  }
+  const keyboardStepMinutes = Math.max(1, Math.round(configuredStep));
   return Object.freeze({
     selection: policy?.selection ?? DEFAULT_SNAP_POLICY.selection,
     move: policy?.move ?? DEFAULT_SNAP_POLICY.move,
     resize: policy?.resize ?? DEFAULT_SNAP_POLICY.resize,
     keyboardStepMinutes,
   });
+}
+
+/** Snap a minute-valued coordinate/delta using the generic Calendar snap strategy. */
+export function snapMinuteCoordinate(value: number, slotMinutes: number, strategy: CalendarSnapStrategy): number {
+  if (!Number.isFinite(value)) throw new RangeError("minute coordinate must be finite");
+  assertSnapSlotMinutes(slotMinutes);
+  if (!["none", "floor", "round", "ceil"].includes(strategy)) throw new RangeError("snap strategy is invalid");
+  if (strategy === "none") return value;
+  const units = value / slotMinutes;
+  const rounded = strategy === "floor" ? Math.floor(units) : strategy === "ceil" ? Math.ceil(units) : Math.round(units);
+  return rounded * slotMinutes;
 }
 
 export function snapWithPolicy(value: Date, slotMinutes: number, strategy: CalendarSnapStrategy): Date {
