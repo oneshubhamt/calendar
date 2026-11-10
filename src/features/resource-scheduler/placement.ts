@@ -18,7 +18,7 @@ import {
   type CalendarOccurrenceCapabilityKey,
 } from "../../core/authority.js";
 import { CalendarCommandStaleError } from "../../core/commands.js";
-import { validateCalendarResources } from "./mechanics.js";
+import { flattenCalendarResources, validateCalendarResourceAssignments } from "./mechanics.js";
 import type {
   CalendarResource,
   CalendarResourceAssignment,
@@ -138,46 +138,31 @@ function normalizedResourceSets(
   resources: readonly CalendarResource[],
   request: CalendarResourcePlacementRequest,
 ): NormalizedResourceSets {
-  validateCalendarResources(resources);
-  const resourceById = new Map(resources.map(resource => [resource.id, resource] as const));
-  const order = new Map<string, number>();
-  let ordinal = 0;
-  const children = new Map<string | undefined, CalendarResource[]>();
-  for (const resource of resources) {
-    const siblings = children.get(resource.parentId) ?? [];
-    siblings.push(resource);
-    children.set(resource.parentId, siblings);
-  }
-  for (const siblings of children.values()) {
-    siblings.sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.id.localeCompare(b.id));
-  }
-  const roots = children.get(undefined) ?? [];
-  const stack = [...roots].reverse();
-  while (stack.length) {
-    const resource = stack.pop()!;
-    order.set(resource.id, ordinal++);
-    const descendants = children.get(resource.id) ?? [];
-    for (let index = descendants.length - 1; index >= 0; index -= 1) stack.push(descendants[index]!);
-  }
-
-  const normalize = (ids: readonly CalendarResourceId[], label: string): readonly CalendarResourceId[] => {
-    if (!Array.isArray(ids)) throw new Error(`${label} must be an array`);
-    const seen = new Set<string>();
-    const normalized: string[] = [];
-    for (const id of ids) {
-      if (typeof id !== "string" || !id.trim()) throw new Error(`${label} contains an invalid resource id`);
-      if (seen.has(id)) throw new Error(`${label} contains duplicate resource ${id}`);
-      const resource = resourceById.get(id);
-      if (!resource) throw new Error(`${label} contains unknown resource ${id}`);
-      if (resource.acceptsAssignments !== true) throw new Error(`Resource ${id} does not accept assignments`);
-      seen.add(id);
-      normalized.push(id);
+  const rows = flattenCalendarResources(resources);
+  const resourceById = new Map(rows.map(row => [row.resource.id, row.resource] as const));
+  const normalize = (
+    ids: readonly CalendarResourceId[],
+    label: string,
+    version?: CalendarResourceAssignmentVersion | undefined,
+  ): readonly CalendarResourceId[] => {
+    try {
+      const [assignment] = validateCalendarResourceAssignments(
+        resources,
+        [request.occurrence],
+        [{
+          occurrenceId: request.occurrence.occurrenceId,
+          resourceIds: ids,
+          ...(version === undefined ? {} : { version }),
+        }],
+      );
+      return assignment?.resourceIds ?? [];
+    } catch (error) {
+      const message = error instanceof Error ? error.message : `${label} is invalid`;
+      throw new Error(`${label}: ${message}`);
     }
-    normalized.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
-    return normalized;
   };
 
-  const from = normalize(request.fromResourceIds, "Current resource assignment");
+  const from = normalize(request.fromResourceIds, "Current resource assignment", request.assignmentVersion);
   const to = normalize(request.toResourceIds, "Target resource assignment");
   if (request.sourceResourceId !== undefined && !from.includes(request.sourceResourceId)) {
     throw new Error(`Source resource ${request.sourceResourceId} is not in the current assignment`);
@@ -268,6 +253,10 @@ async function evaluateResourceCollisions(
   readonly collisions: readonly CalendarResourcePlacementCollision[];
 }> {
   const policy = options.resourceCollisionPolicy ?? { mode: "allow" as const };
+  if (!["allow", "warn", "prevent"].includes(String(policy.mode))
+    || (policy.includeAllDay !== undefined && typeof policy.includeAllDay !== "boolean")) {
+    return { mode: "prevent", messages: ["Resource conflicts could not be evaluated."], collisions: [] };
+  }
   if (policy.mode === "allow" || toResourceIds.length === 0) return { mode: "allow", messages: [], collisions: [] };
   if (!options.loadResourceCollisionProjection) {
     return { mode: "prevent", messages: ["Resource conflicts could not be evaluated."], collisions: [] };
@@ -293,56 +282,34 @@ async function evaluateResourceCollisions(
     return { mode: "prevent", messages: ["Resource conflicts could not be evaluated."], collisions: [] };
   }
 
-  let assignments: readonly CalendarResourceAssignment[];
+  let collisions: CalendarResourcePlacementCollision[];
   try {
-    const occurrenceIds = new Set<string>();
-    for (const occurrence of projection.occurrences) {
-      if (!occurrence || typeof occurrence.occurrenceId !== "string" || !occurrence.occurrenceId) throw new Error("Invalid collision occurrence");
-      if (occurrenceIds.has(occurrence.occurrenceId)) throw new Error("Duplicate collision occurrence");
-      occurrenceIds.add(occurrence.occurrenceId);
-    }
-    const seenAssignments = new Set<string>();
-    const order = new Map(resources.map((resource, index) => [resource.id, index]));
-    const normalized: CalendarResourceAssignment[] = [];
-    for (const assignment of projection.assignments) {
-      if (!assignment || typeof assignment.occurrenceId !== "string" || !occurrenceIds.has(assignment.occurrenceId) || seenAssignments.has(assignment.occurrenceId) || !Array.isArray(assignment.resourceIds)) {
-        throw new Error("Invalid collision assignment");
-      }
-      seenAssignments.add(assignment.occurrenceId);
-      const seenResources = new Set<string>();
-      const ids: string[] = [];
-      for (const resourceId of assignment.resourceIds) {
-        const resource = resourceById.get(resourceId);
-        if (!resource || resource.acceptsAssignments !== true || seenResources.has(resourceId)) throw new Error("Invalid collision resource");
-        seenResources.add(resourceId);
-        ids.push(resourceId);
-      }
-      ids.sort((a,b)=>(order.get(a) ?? 0)-(order.get(b) ?? 0));
-      normalized.push({ occurrenceId: assignment.occurrenceId, resourceIds: ids, ...(assignment.version === undefined ? {} : { version: assignment.version }) });
-    }
-    assignments = normalized;
+    const assignments = validateCalendarResourceAssignments(
+      resources,
+      projection.occurrences,
+      projection.assignments,
+    );
+    const target = new Set(toResourceIds);
+    const resourcesByOccurrence = new Map(assignments.map(assignment => [assignment.occurrenceId, assignment.resourceIds]));
+    const candidates = projection.occurrences.filter(occurrence => {
+      const ids = resourcesByOccurrence.get(occurrence.occurrenceId) ?? [];
+      return ids.some(id => target.has(id));
+    });
+    const temporalCollisions = placementCollisions(
+      candidates,
+      new Date(request.start),
+      new Date(request.end),
+      Boolean(request.occurrence.allDay || request.occurrence.precision === "date"),
+      policy,
+      request.occurrence.occurrenceId,
+    );
+    collisions = temporalCollisions.map(({ occurrence }) => ({
+      occurrence,
+      resourceIds: (resourcesByOccurrence.get(occurrence.occurrenceId) ?? []).filter(id => target.has(id)),
+    }));
   } catch {
     return { mode: "prevent", messages: ["Resource conflicts could not be evaluated."], collisions: [] };
   }
-
-  const target = new Set(toResourceIds);
-  const resourcesByOccurrence = new Map(assignments.map(assignment => [assignment.occurrenceId, assignment.resourceIds]));
-  const candidates = projection.occurrences.filter(occurrence => {
-    const ids = resourcesByOccurrence.get(occurrence.occurrenceId) ?? [];
-    return ids.some(id => target.has(id));
-  });
-  const temporalCollisions = placementCollisions(
-    candidates,
-    new Date(request.start),
-    new Date(request.end),
-    Boolean(request.occurrence.allDay || request.occurrence.precision === "date"),
-    policy,
-    request.occurrence.occurrenceId,
-  );
-  const collisions: CalendarResourcePlacementCollision[] = temporalCollisions.map(({ occurrence }) => ({
-    occurrence,
-    resourceIds: (resourcesByOccurrence.get(occurrence.occurrenceId) ?? []).filter(id => target.has(id)),
-  }));
   if (!collisions.length) return { mode: "allow", messages: [], collisions: [] };
   const message = collisionMessage(collisions, resourceById);
   return policy.mode === "prevent"

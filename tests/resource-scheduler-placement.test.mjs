@@ -249,3 +249,39 @@ test("R5 non-stale mutation failures propagate and resource scheduler remains is
   assert.doesNotMatch(view,/CalendarResource|resource-scheduler/);
   assert.doesNotMatch(ui,/executeCalendarResourcePlacement|CalendarResourceMutationPort|evaluateCalendarResourcePlacement/);
 });
+
+
+test("R5 reuses R2 canonical hierarchy/assignment validation rather than maintaining a second ordering implementation",async()=>{
+  const placement=await fs.readFile(new URL("../src/features/resource-scheduler/placement.ts",import.meta.url),"utf8");
+  assert.match(placement,/flattenCalendarResources/);
+  assert.match(placement,/validateCalendarResourceAssignments/);
+  assert.doesNotMatch(placement,/const children = new Map|siblings\.sort\(/);
+
+  const malformedVersion={}; malformedVersion.self=malformedVersion;
+  const invalidVersion=await evaluateCalendarResourcePlacement(resources,request({assignmentVersion:malformedVersion}),{
+    resourceCapabilityProvider:allowReassign,
+  });
+  assert.equal(invalidVersion.mode,"prevent");
+  assert.match(invalidVersion.messages[0],/cycle/i);
+});
+
+test("R5 malformed resource collision policy/projections fail closed instead of weakening resource safety",async()=>{
+  const malformedPolicy=await evaluateCalendarResourcePlacement(resources,request(),{
+    resourceCapabilityProvider:allowReassign,
+    resourceCollisionPolicy:{mode:"maybe"},
+    loadResourceCollisionProjection:()=>({occurrences:[],assignments:[]}),
+  });
+  assert.equal(malformedPolicy.mode,"prevent");
+  assert.deepEqual(malformedPolicy.messages,["Resource conflicts could not be evaluated."]);
+
+  const badProjection=await evaluateCalendarResourcePlacement(resources,request(),{
+    resourceCapabilityProvider:allowReassign,
+    resourceCollisionPolicy:{mode:"prevent"},
+    loadResourceCollisionProjection:()=>({
+      occurrences:[occurrence({occurrenceId:"bad",start:"not-a-time",end:"also-bad"})],
+      assignments:[{occurrenceId:"bad",resourceIds:["b"]}],
+    }),
+  });
+  assert.equal(badProjection.mode,"prevent");
+  assert.deepEqual(badProjection.messages,["Resource conflicts could not be evaluated."]);
+});
