@@ -93,6 +93,24 @@ test("view decomposition keeps mutation, rendering and gesture concerns separate
   assert.doesNotMatch(gestures, /CalendarCommand|commandHandler|executeCalendarPlacement/);
 });
 
+test("Google interoperability keeps transport, mapping and sync responsibilities behind one public facade", async () => {
+  const [facade, transport, mapping, sync] = await Promise.all([
+    read("../src/interoperability/google-calendar.ts"),
+    read("../src/interoperability/google-transport.ts"),
+    read("../src/interoperability/google-mapping.ts"),
+    read("../src/interoperability/google-sync.ts"),
+  ]);
+
+  assert.doesNotMatch(facade, /class |function |fetch\(|navigator\.|CalendarRepository/);
+  assert.match(facade, /from "\.\/google-transport\.js"/);
+  assert.match(facade, /from "\.\/google-mapping\.js"/);
+  assert.match(facade, /from "\.\/google-sync\.js"/);
+  assert.doesNotMatch(transport, /google-(?:mapping|sync)\.js/);
+  assert.doesNotMatch(mapping, /google-sync\.js/);
+  assert.match(sync, /from "\.\/google-transport\.js"/);
+  assert.match(sync, /from "\.\/google-mapping\.js"/);
+});
+
 test("durable browser storage has one canonical physical database substrate", async () => {
   const [database, repository, interoperability] = await Promise.all([
     read("../src/storage/browser-database.ts"),
