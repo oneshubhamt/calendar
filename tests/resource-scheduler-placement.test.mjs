@@ -247,7 +247,8 @@ test("R5 non-stale mutation failures propagate and resource scheduler remains is
   assert.doesNotMatch(placement,/document\.|HTMLElement|CalendarResourceSchedulerUi|\.\.\/\.\.\/(view|storage|interoperability)\//);
   assert.doesNotMatch(coreTypes,/CalendarResource|resourceTimeline|\bresourceIds?\b/);
   assert.doesNotMatch(view,/CalendarResource|resource-scheduler/);
-  assert.doesNotMatch(ui,/executeCalendarResourcePlacement|CalendarResourceMutationPort|evaluateCalendarResourcePlacement/);
+  assert.match(ui,/executeCalendarResourcePlacement/);
+  assert.doesNotMatch(ui,/mutationPort\.commit\(|evaluateCalendarResourcePlacement\(|CalendarResourceMutationPort/);
 });
 
 

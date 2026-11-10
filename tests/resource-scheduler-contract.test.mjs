@@ -15,9 +15,9 @@ test("R1 exposes Resource Scheduler only through its explicit optional package s
   const module = await import("../dist/features/resource-scheduler/index.js");
   assert.deepEqual(Object.keys(module).sort(), [
     "associateCalendarResources", "evaluateCalendarResourcePlacement", "executeCalendarResourcePlacement",
-    "flattenCalendarResources", "layoutResourceTimeline",
+    "flattenCalendarResources", "layoutResourceTimeline", "replaceCalendarResourceAssignment",
     "validateCalendarResourceAssignments", "validateCalendarResources",
-  ].sort(), "only explicit optional R2 pure mechanics may be exported at runtime");
+  ].sort(), "only explicit optional Resource Scheduler runtime APIs may be exported");
 });
 
 test("R1 Resource Scheduler contracts depend only on core types", async () => {

@@ -105,3 +105,21 @@ test("R6 does not leak Resource Scheduler interaction into ordinary Calendar, co
   assert.doesNotMatch(root,/CalendarResourceScheduler|resource-scheduler/);
   assert.doesNotMatch(ui,/\.\.\/\.\.\/(storage|interoperability)\//);
 });
+
+
+test("R6 committed mutation is not reclassified as a failed write when host callbacks or reprojection fail",async()=>{
+  const ui=await read("../src/features/resource-scheduler-ui/index.ts");
+  assert.match(ui,/try \{ interaction\.onResult\?\.\(result, request\); \} catch \(error\) \{ this\.reportError\(error\); \}/);
+  assert.match(ui,/changed, but authoritative refresh failed/);
+  assert.match(ui,/if \(result\.status === "committed" \|\| result\.status === "stale"\)/);
+  const submit=ui.match(/private async submitCandidate\([\s\S]*?\n  }\n\n  private resultAnnouncement/)?.[0] ?? "";
+  assert.doesNotMatch(submit,/refreshAuthoritativeProjection\(\)[\s\S]*was not changed/);
+});
+
+test("R6 projection/collapse rerenders cancel active pointer capture before replacing DOM",async()=>{
+  const ui=await read("../src/features/resource-scheduler-ui/index.ts");
+  assert.match(ui,/public setProjection\([^)]*\): void \{\s*this\.cancelDrag\(\)/);
+  assert.match(ui,/public setCollapsedResourceIds\([^)]*\): void \{\s*this\.cancelDrag\(\)/);
+  assert.match(ui,/public refresh\(\): void \{\s*this\.cancelDrag\(\)/);
+  assert.match(ui,/private toggleResource\([^)]*\): void \{\s*this\.cancelDrag\(\)/);
+});

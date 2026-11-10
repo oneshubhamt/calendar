@@ -206,6 +206,7 @@ export class CalendarResourceSchedulerUi {
   }
 
   public setProjection(projection: CalendarResourceSchedulerProjection): void {
+    this.cancelDrag();
     const stable: CalendarResourceSchedulerProjection = {
       resources: [...projection.resources],
       occurrences: [...projection.occurrences],
@@ -221,6 +222,7 @@ export class CalendarResourceSchedulerUi {
   }
 
   public setCollapsedResourceIds(ids: readonly CalendarResourceId[]): void {
+    this.cancelDrag();
     if (!this.projection) {
       this.collapsed = new Set(ids);
       return;
@@ -240,6 +242,7 @@ export class CalendarResourceSchedulerUi {
   }
 
   public refresh(): void {
+    this.cancelDrag();
     if (!this.projection) {
       this.replaceSurface(this.emptyState());
       return;
@@ -293,7 +296,7 @@ export class CalendarResourceSchedulerUi {
     const scroll = element("div", "dc-rs-scroll");
     scroll.tabIndex = 0;
     if (this.interaction) {
-      const help = element("div", "dc-rs-sr-only", "Use Alt plus arrow keys to move in time or between resources. Focus a resize handle and use left or right arrow to resize.");
+      const help = element("div", "dc-rs-sr-only", "Use Alt+Left/Right to move in time and Alt+Up/Down to move between resources. Focus a resize handle and use Left/Right to resize.");
       help.id = "dc-rs-interaction-help";
       scroll.append(help);
     }
@@ -851,7 +854,7 @@ export class CalendarResourceSchedulerUi {
     };
 
     this.setOccurrencePending(occurrence.occurrenceId, true);
-    let result: CalendarResourcePlacementExecutionResult;
+    let result: CalendarResourcePlacementExecutionResult | undefined;
     try {
       const executionOptions: CalendarResourcePlacementExecutionOptions = {
         ...interaction,
@@ -860,7 +863,12 @@ export class CalendarResourceSchedulerUi {
       };
       result = await executeCalendarResourcePlacement(projection.resources, request, executionOptions);
       if (result.status === "warning" && interaction.confirmWarnings) {
-        const accepted = await interaction.confirmWarnings(result.evaluation.messages, request);
+        let accepted = false;
+        try {
+          accepted = await interaction.confirmWarnings(result.evaluation.messages, request);
+        } catch (error) {
+          this.reportError(error);
+        }
         if (accepted) {
           result = await executeCalendarResourcePlacement(projection.resources, request, {
             ...executionOptions,
@@ -868,15 +876,24 @@ export class CalendarResourceSchedulerUi {
           });
         }
       }
-      interaction.onResult?.(result, request);
-      this.announce(this.resultAnnouncement(result, occurrence));
-      if (result.status === "committed" || result.status === "stale") await this.refreshAuthoritativeProjection();
     } catch (error) {
       this.reportError(error);
       this.announce(`${occurrence.title} was not changed.`);
-    } finally {
-      this.setOccurrencePending(occurrence.occurrenceId, false);
     }
+
+    if (result) {
+      try { interaction.onResult?.(result, request); } catch (error) { this.reportError(error); }
+      this.announce(this.resultAnnouncement(result, occurrence));
+      if (result.status === "committed" || result.status === "stale") {
+        try {
+          await this.refreshAuthoritativeProjection();
+        } catch (error) {
+          this.reportError(error);
+          if (result.status === "committed") this.announce(`${occurrence.title} changed, but authoritative refresh failed.`);
+        }
+      }
+    }
+    this.setOccurrencePending(occurrence.occurrenceId, false);
     if (node.isConnected) node.focus();
   }
 
@@ -973,6 +990,7 @@ export class CalendarResourceSchedulerUi {
   }
 
   private toggleResource(resourceId: CalendarResourceId, expand?: boolean): void {
+    this.cancelDrag();
     if (!this.projection) return;
     const next = new Set(this.collapsed);
     const shouldExpand = expand ?? next.has(resourceId);
