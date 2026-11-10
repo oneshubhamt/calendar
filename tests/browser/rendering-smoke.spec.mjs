@@ -14,7 +14,7 @@ test("live temporal chrome advances across midnight without re-querying projecti
     let projectionCalls = 0;
     const projection = {
       id: "temporal-probe",
-      projectItems() {
+      project() {
         projectionCalls += 1;
         return [];
       },
