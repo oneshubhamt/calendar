@@ -27,7 +27,7 @@ import { civilMinuteOfInstant, civilMinuteResolution, instantAtCivilMinute, shif
 import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from "./time-zone-scale.js";
 import { groupAgendaByDay, groupAllDayBackgroundRangesByDay, groupByDay, layoutBackgroundDay, layoutTimedDay } from "../core/layout.js";
 import { sameRecurrence } from "../core/recurrence.js";
-import { evaluatePlacementGuards, normalizeSnapPolicy, placementCollisions, placementTimePatch, resizeInterval, resizePreview, type CalendarResizeEdge } from "../core/interaction.js";
+import { evaluateCalendarPlacement, normalizeSnapPolicy, placementInNavigationBounds, placementTimePatch, resizeInterval, resizePreview, type CalendarResizeEdge } from "../core/interaction.js";
 import {
   calendarOccurrenceCommandContext, resolveOccurrenceCapabilities, temporalMutationCapabilityRequirements,
   type CalendarOccurrenceCapabilityKey, type ResolvedCalendarOccurrenceCapabilities,
@@ -40,7 +40,7 @@ import { isSafeHostClassName, resolveOccurrencePresentation, resolveSourceAction
 import { calendarHostCss } from "./extension-styles.js";
 import { occurrenceWithPreview, previewPatchForCommand, type PendingOccurrencePreview } from "./occurrence-preview.js";
 import {
-  boundProjectionRange, clampNavigationDate, navigationDateInBounds, placementInNavigationBounds, resolveNavigationBounds,
+  boundProjectionRange, clampNavigationDate, navigationDateInBounds, resolveNavigationBounds,
   type ResolvedCalendarNavigationBounds,
 } from "./navigation.js";
 
@@ -2028,12 +2028,7 @@ export class CalendarUi {
     action: string,
     calendarId: CalendarId | undefined = occurrence?.calendarId,
   ): Promise<boolean> {
-    if (!placementInNavigationBounds(start, end, this.navigationBounds, this.timeZone)) {
-      this.announce(`${action} blocked because it is outside the allowed calendar date range.`);
-      return false;
-    }
-
-    const guardEvaluation = await evaluatePlacementGuards(this.options.placementGuards, {
+    const context = {
       start: start.toISOString(),
       end: end.toISOString(),
       allDay,
@@ -2041,37 +2036,41 @@ export class CalendarUi {
       timeZone: this.timeZone,
       ...(calendarId ? { calendarId } : {}),
       ...(occurrence ? { occurrence } : {}),
+    };
+    const evaluation = await evaluateCalendarPlacement(context, {
+      navigationBounds: this.navigationBounds,
+      guards: this.options.placementGuards,
+      collisionPolicy: this.collisionPolicy,
+      loadCollisionOccurrences: async () => {
+        const queryStart = addDays(startOfDay(start, this.timeZone), -1, this.timeZone);
+        const queryEnd = addDays(startOfDay(end, this.timeZone), 2, this.timeZone);
+        const queryRange = boundProjectionRange(
+          { start: queryStart.toISOString(), end: queryEnd.toISOString() },
+          this.navigationBounds,
+          this.timeZone,
+        );
+        const allSources = new Set(this.sources.map(source => source.id));
+        const result = await this.engine.query(queryRange, {
+          visibleSourceIds: allSources,
+          timeZone: this.timeZone,
+          includeBackgroundRanges: false,
+        });
+        return result.occurrences;
+      },
     });
-    if (guardEvaluation.mode === "prevent") {
-      this.announce(`${action} blocked. ${guardEvaluation.messages.join(" ")}`);
+
+    if (evaluation.mode === "prevent") {
+      this.announce(`${action} blocked. ${evaluation.messages.join(" ")}`);
       return false;
     }
+    if (evaluation.mode === "allow") return true;
 
-    const warnings = [...guardEvaluation.messages];
-    if (this.collisionPolicy.mode !== "allow") {
-      const queryStart = addDays(startOfDay(start, this.timeZone), -1, this.timeZone);
-      const queryEnd = addDays(startOfDay(end, this.timeZone), 2, this.timeZone);
-      const queryRange = boundProjectionRange({ start: queryStart.toISOString(), end: queryEnd.toISOString() }, this.navigationBounds, this.timeZone);
-      const allSources = new Set(this.sources.map(source => source.id));
-      const result = await this.engine.query(queryRange, {
-        visibleSourceIds: allSources,
-        timeZone: this.timeZone,
-        includeBackgroundRanges: false,
-      });
-      const collisions = placementCollisions(result.occurrences, start, end, allDay, this.collisionPolicy, occurrence?.occurrenceId);
-      if (collisions.length) {
-        const names = [...new Set(collisions.map(row => row.occurrence.title))];
-        const summary = names.slice(0, 3).join(", ") + (names.length > 3 ? ` and ${names.length - 3} more` : "");
-        if (this.collisionPolicy.mode === "prevent") {
-          this.announce(`${action} blocked because it overlaps ${summary}.`);
-          return false;
-        }
-        warnings.push(`It overlaps ${summary}.`);
-      }
-    }
-
-    if (!warnings.length) return true;
-    const allowed = await confirmCalendarAction(this.host, "Scheduling check", `${warnings.join(" ")} Continue?`, "Continue");
+    const allowed = await confirmCalendarAction(
+      this.host,
+      "Scheduling check",
+      `${evaluation.messages.join(" ")} Continue?`,
+      "Continue",
+    );
     if (!allowed) this.announce(`${action} cancelled after a scheduling warning.`);
     return allowed;
   }
