@@ -257,6 +257,11 @@ test('background day geometry uses civil time, clips visibly and layers determin
     layout.map(x=>x.range.id),
   );
 
+  const istCarryIn=C.layoutBackgroundDay([
+    range('ist-carry','2026-11-09T18:00:00Z','2026-11-10T04:30:00Z'),
+  ],new Date('2026-11-10T06:30:00Z'),{timeZone:'Asia/Kolkata'});
+  assert.deepEqual([istCarryIn[0].topMinutes,istCarryIn[0].heightMinutes],[0,600]);
+
   const spring=C.layoutBackgroundDay([
     range('spring','2026-03-08T06:30:00Z','2026-03-08T07:30:00Z'),
   ],new Date('2026-03-08T17:00:00Z'),{timeZone:'America/New_York'});
