@@ -188,6 +188,11 @@ test('v1.1 release contract and package surface are synchronized and lean',async
   const contract=await fs.readFile(new URL('../src/integration/package-contract.ts',import.meta.url),'utf8');
   assert.equal(pkg.version,'1.1.0');
   assert.equal(Object.hasOwn(pkg.exports,'./fixtures/director'),false);
+  assert.equal(Object.hasOwn(pkg.exports,'./features'),false);
+  assert.equal(Object.hasOwn(pkg.exports,'./features/personal'),true);
+  assert.equal(Object.hasOwn(pkg.exports,'./features/personal-ui'),true);
+  assert.equal(Object.hasOwn(pkg.exports,'./features/planning'),true);
+  assert.equal(Object.hasOwn(pkg.exports,'./features/availability'),true);
   assert.deepEqual(pkg.files,['dist','docs','README.md']);
   assert.match(contract,/version: "1\.1\.0"/);
   assert.match(contract,/coreContract: 11/);
