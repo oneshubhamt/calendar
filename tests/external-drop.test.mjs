@@ -50,6 +50,8 @@ test("external-drop template validation owns bounded generic data and rejects ma
   assert.equal(normalizeCalendarExternalDropTemplate({}), undefined);
   assert.equal(normalizeCalendarExternalDropTemplate({ title: "x", durationMinutes: 0 }), undefined);
   assert.equal(normalizeCalendarExternalDropTemplate({ title: "x", temporalForm: "date" }), undefined);
+  assert.equal(normalizeCalendarExternalDropTemplate({ title: "x", calendarId: "   " }), undefined);
+  assert.equal(normalizeCalendarExternalDropTemplate({ title: "x", kind: "" }), undefined);
   assert.equal(normalizeCalendarExternalDropTemplate({ title: "x", display: { dimmed: "yes" } }), undefined);
 
   const cycle = {};
@@ -108,6 +110,10 @@ test("custom decoder declarations are validated once and preserve synchronous ow
   );
   assert.throws(
     () => resolveCalendarExternalDropDecoder({ types: ["bad type"], decode() { return null; } }),
+    /MIME types are invalid/i,
+  );
+  assert.throws(
+    () => resolveCalendarExternalDropDecoder({ types: [CALENDAR_EXTERNAL_DROP_MIME], decode() { return null; } }),
     /MIME types are invalid/i,
   );
   assert.throws(
