@@ -1,5 +1,8 @@
 import type { CalendarOccurrence, CalendarRange } from "../../core/types.js";
-import { resolveHorizontalTimelineRangeGeometry } from "../../core/horizontal-timeline.js";
+import {
+  horizontalTimelineTicks,
+  resolveHorizontalTimelineRangeGeometry,
+} from "../../core/horizontal-timeline.js";
 import { isSafeHostClassName } from "../../view/presentation.js";
 import {
   flattenCalendarResources,
@@ -9,8 +12,6 @@ import {
   type CalendarResourceId,
   type CalendarResourceTimelineLayoutItem,
 } from "../resource-scheduler/index.js";
-
-const MAX_AXIS_TICKS = 240;
 
 export interface ResourceSchedulerProjectionData {
   readonly resources: readonly CalendarResource[];
@@ -85,7 +86,10 @@ export function renderResourceSchedulerSurface(
   const geometry = resolveHorizontalTimelineRangeGeometry(projection.range, model.timeZone);
   const timelineWidth = Math.max(model.minTimelineWidth, geometry.widthMinutes * model.pixelsPerMinute);
   const scale = timelineWidth / geometry.widthMinutes;
-  const tickMinutes = resolvedTickMinutes(geometry.end - geometry.start, model.axisTickMinutes);
+  const ticks = horizontalTimelineTicks(geometry, model.axisTickMinutes);
+  const tickMinutes = ticks.length > 1
+    ? Math.max(model.axisTickMinutes, (ticks[1]!.instant - ticks[0]!.instant) / 60_000)
+    : model.axisTickMinutes;
 
   const scroll = element("div", "dc-rs-scroll");
   scroll.tabIndex = 0;
@@ -163,16 +167,9 @@ function headerRow(
     minute: "2-digit",
     timeZone: model.timeZone,
   });
-  const tickMs = tickMinutes * 60_000;
-  const seen = new Set<string>();
-  for (let instant = geometry.start; instant <= geometry.end; instant += tickMs) {
-    const minute = geometry.coordinate(instant);
-    if (minute < 0 || minute > geometry.widthMinutes) continue;
-    const key = minute.toFixed(6);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const tick = element("div", "dc-rs-axis-tick", formatter.format(new Date(instant)));
-    tick.style.left = `${clamp(minute * scale, 0, timelineWidth)}px`;
+  for (const point of horizontalTimelineTicks(geometry, tickMinutes)) {
+    const tick = element("div", "dc-rs-axis-tick", formatter.format(new Date(point.instant)));
+    tick.style.left = `${clamp(point.coordinate * scale, 0, timelineWidth)}px`;
     tick.setAttribute("aria-hidden", "true");
     axis.append(tick);
   }
@@ -250,10 +247,4 @@ function resourceRow(
   for (const layout of layouts) track.append(actions.renderOccurrence(layout, rowIndex, timelineWidth, scale));
   row.append(header, track);
   return row;
-}
-
-function resolvedTickMinutes(rangeMilliseconds: number, axisTickMinutes: number): number {
-  const elapsedMinutes = Math.max(1, rangeMilliseconds / 60_000);
-  const multiplier = Math.max(1, Math.ceil(elapsedMinutes / axisTickMinutes / MAX_AXIS_TICKS));
-  return axisTickMinutes * multiplier;
 }
