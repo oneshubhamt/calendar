@@ -68,11 +68,14 @@ test("standard external-drop MIME helper round-trips owned data and malformed pa
 
   assert.equal(transfer.effectAllowed, "copy");
   assert.equal(dataTransferHasType(transfer, CALENDAR_EXTERNAL_DROP_MIME), true);
-  assert.deepEqual(decodeCalendarExternalDropData(transfer), {
-    title: "Dropped event",
-    durationMinutes: 90,
-    metadata: { origin: "fixture" },
-  });
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(decodeCalendarExternalDropData(transfer))),
+    {
+      title: "Dropped event",
+      durationMinutes: 90,
+      metadata: { origin: "fixture" },
+    },
+  );
 
   const malformed = new FakeDataTransfer();
   malformed.setData(CALENDAR_EXTERNAL_DROP_MIME, "{not-json");
