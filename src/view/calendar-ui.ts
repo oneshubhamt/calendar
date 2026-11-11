@@ -399,7 +399,7 @@ export class CalendarUi {
 
   private customViewRenderers(): CalendarCustomViewRenderPort {
     return Object.freeze({
-      monthPanel: monthStart => {
+      monthPanel: (monthStart: Date) => {
         if (!(monthStart instanceof Date) || Number.isNaN(monthStart.getTime())) {
           throw new TypeError("Month panel start must be a valid Date");
         }
