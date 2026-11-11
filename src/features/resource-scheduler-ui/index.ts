@@ -13,6 +13,12 @@ import {
   snapMinuteCoordinate,
 } from "../../core/interaction.js";
 import { resolveHorizontalTimelineRangeGeometry } from "../../core/horizontal-timeline.js";
+import {
+  CalendarPointerGestureController,
+  type CalendarPointerGestureData,
+  type CalendarPointerGestureMove,
+  type CalendarPointerGestureSession,
+} from "../../view/pointer-gesture.js";
 import type { CalendarUiExtension } from "../../view/types.js";
 import { hostDataAttributeName, resolveOccurrencePresentation } from "../../view/presentation.js";
 import {
@@ -36,26 +42,27 @@ import {
   safeClassTokens,
 } from "./rendering.js";
 
-const POINTER_MOVE_THRESHOLD = 4;
-const AUTO_SCROLL_ZONE = 32;
-const AUTO_SCROLL_STEP = 18;
 let schedulerUiSequence = 0;
 
 type CalendarResourceInteractionMode = "move" | "resize-start" | "resize-end";
 
+interface CalendarResourceGestureData extends CalendarPointerGestureData {
+  readonly node: HTMLElement;
+  readonly occurrence: CalendarOccurrence;
+  readonly sourceResourceId: CalendarResourceId;
+  readonly assignment: CalendarResourceAssignment;
+  readonly mode: CalendarResourceInteractionMode;
+  readonly touch: boolean;
+}
+
 interface CalendarResourceDragState {
   readonly mode: CalendarResourceInteractionMode;
-  readonly pointerId: number;
   readonly node: HTMLElement;
   readonly occurrence: CalendarOccurrence;
   readonly sourceResourceId: CalendarResourceId;
   readonly assignment: CalendarResourceAssignment;
   readonly originalStart: string;
   readonly originalEnd: string;
-  readonly startClientX: number;
-  readonly startClientY: number;
-  readonly scrollStartLeft: number;
-  readonly scrollStartTop: number;
   readonly scale: number;
   readonly ghost: HTMLElement;
   moved: boolean;
@@ -85,6 +92,10 @@ export interface CalendarResourceSchedulerInteractionOptions
   readonly snapPolicy?: CalendarSnapPolicy | undefined;
   readonly minimumDurationMinutes?: number | undefined;
   readonly dstOverlapDisambiguation?: CalendarOverlapDisambiguation | undefined;
+  /** Shared touch/pointer lifecycle configuration. */
+  readonly longPressMs?: number | undefined;
+  readonly autoScrollEdgePx?: number | undefined;
+  readonly autoScrollMaxPxPerFrame?: number | undefined;
   readonly sourceForOccurrence?: ((occurrence: CalendarOccurrence) => CalendarSource | undefined) | undefined;
   readonly resolveScope?: ((
     occurrence: CalendarOccurrence,
@@ -149,6 +160,7 @@ export class CalendarResourceSchedulerUi {
   private readonly snapPolicy: Required<CalendarSnapPolicy>;
   private readonly interactionHelpId: string;
   private readonly status: HTMLElement;
+  private readonly pointerGestures: CalendarPointerGestureController<CalendarResourceGestureData>;
   private readonly pendingOccurrences = new Set<string>();
   private collapsed = new Set<CalendarResourceId>();
   private projection: CalendarResourceSchedulerProjection | undefined;
@@ -196,6 +208,17 @@ export class CalendarResourceSchedulerUi {
     this.status.setAttribute("role", "status");
     this.status.setAttribute("aria-live", "polite");
     this.status.setAttribute("aria-atomic", "true");
+    this.pointerGestures = new CalendarPointerGestureController<CalendarResourceGestureData>({
+      scrollElement: () => this.root.querySelector<HTMLElement>(".dc-rs-scroll") ?? undefined,
+      longPressMs: Math.max(250, this.interaction?.longPressMs ?? 420),
+      autoScrollEdgePx: Math.max(20, this.interaction?.autoScrollEdgePx ?? 32),
+      autoScrollMaxPxPerFrame: Math.max(2, this.interaction?.autoScrollMaxPxPerFrame ?? 18),
+      onArmingChange: (data, active) => data.node.classList.toggle("is-touch-arming", active),
+      onActivate: session => this.activateResourceGesture(session),
+      onMove: (_session, move) => this.moveResourceGesture(move),
+      onFinish: async (_session, event) => await this.finishResourceGesture(event),
+      onCancel: () => this.cleanupDragVisual(),
+    });
     this.replaceSurface(this.emptyState());
     this.host.replaceChildren(style, this.root);
   }
@@ -247,7 +270,7 @@ export class CalendarResourceSchedulerUi {
   }
 
   public destroy(): void {
-    this.cancelDrag();
+    this.pointerGestures.destroy();
     this.projection = undefined;
     this.collapsed.clear();
     this.pendingOccurrences.clear();
@@ -437,12 +460,26 @@ export class CalendarResourceSchedulerUi {
     mode: CalendarResourceInteractionMode,
   ): void {
     if (!this.interaction || !this.projection || event.button !== 0 || this.pendingOccurrences.has(occurrence.occurrenceId)) return;
-    if (this.drag) this.cancelDrag();
     const assignment = this.assignmentFor(occurrence.occurrenceId);
     if (!assignment || !assignment.resourceIds.includes(sourceResourceId)) return;
-    const scroll = this.root.querySelector<HTMLElement>(".dc-rs-scroll");
-    if (!scroll) return;
-    const geometry = resolveHorizontalTimelineRangeGeometry(this.projection.range, this.timeZone);
+    this.pointerGestures.begin(event, {
+      element: node,
+      node,
+      occurrence,
+      sourceResourceId,
+      assignment,
+      mode,
+      touch: event.pointerType === "touch",
+    });
+  }
+
+  private activateResourceGesture(
+    session: CalendarPointerGestureSession<CalendarResourceGestureData>,
+  ): void {
+    const projection = this.projection;
+    if (!projection) return;
+    const { node, occurrence, sourceResourceId, assignment, mode, touch } = session.data;
+    const geometry = resolveHorizontalTimelineRangeGeometry(projection.range, this.timeZone);
     const timelineWidth = Math.max(this.minTimelineWidth, geometry.widthMinutes * this.pixelsPerMinute);
     const scale = timelineWidth / geometry.widthMinutes;
     const rect = node.getBoundingClientRect();
@@ -454,71 +491,50 @@ export class CalendarResourceSchedulerUi {
     ghost.hidden = true;
     this.root.append(ghost);
     node.focus({ preventScroll: true });
-    node.setPointerCapture(event.pointerId);
     node.classList.add("is-drag-source");
     this.drag = {
       mode,
-      pointerId: event.pointerId,
       node,
       occurrence,
       sourceResourceId,
       assignment,
       originalStart: occurrence.start,
       originalEnd: occurrence.end,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      scrollStartLeft: scroll.scrollLeft,
-      scrollStartTop: scroll.scrollTop,
       scale,
       ghost,
       moved: false,
       candidate: undefined,
     };
-    node.addEventListener("pointermove", this.boundPointerMove);
-    node.addEventListener("pointerup", this.boundPointerUp);
-    node.addEventListener("pointercancel", this.boundPointerCancel);
-    event.preventDefault();
+    if (touch) this.announce(`${mode === "move" ? "Moving" : "Resizing"} ${occurrence.title}. Drag, then release.`);
   }
 
-  private readonly boundPointerMove = (event: PointerEvent): void => {
+  private moveResourceGesture(move: CalendarPointerGestureMove): void {
     const drag = this.drag;
-    if (!drag || event.pointerId !== drag.pointerId) return;
-    const scroll = this.root.querySelector<HTMLElement>(".dc-rs-scroll");
-    if (!scroll) return;
-    this.autoScroll(scroll, event.clientX, event.clientY);
-    const dx = event.clientX - drag.startClientX + (scroll.scrollLeft - drag.scrollStartLeft);
-    const dy = event.clientY - drag.startClientY + (scroll.scrollTop - drag.scrollStartTop);
-    if (!drag.moved && Math.hypot(dx, dy) < POINTER_MOVE_THRESHOLD) return;
+    if (!drag) return;
+    if (!drag.moved && Math.hypot(move.deltaX, move.deltaY) < 1) return;
     drag.moved = true;
     drag.ghost.hidden = false;
-    const rawMinutes = dx / drag.scale;
+    const rawMinutes = move.deltaX / drag.scale;
     const strategy = drag.mode === "move" ? this.snapPolicy.move : this.snapPolicy.resize;
     const deltaMinutes = snapMinuteCoordinate(rawMinutes, this.slotMinutes, strategy);
-    const candidate = this.interactionCandidate(drag, deltaMinutes, event.clientX, event.clientY);
+    const candidate = this.interactionCandidate(drag, deltaMinutes, move.clientX, move.clientY);
     drag.candidate = candidate;
     this.updateDragPreview(drag, candidate);
-    event.preventDefault();
-  };
+  }
 
-  private readonly boundPointerUp = (event: PointerEvent): void => {
+  private async finishResourceGesture(_event: PointerEvent): Promise<void> {
     const drag = this.drag;
-    if (!drag || event.pointerId !== drag.pointerId) return;
-    const candidate = drag.candidate;
-    const moved = drag.moved;
-    this.cleanupDrag(drag);
-    if (!moved) return;
+    const candidate = drag?.candidate;
+    const moved = drag?.moved === true;
+    if (drag) this.cleanupDragVisual();
+    if (!drag || !moved) return;
     drag.node.dataset.suppressActivation = "true";
     if (!candidate?.valid) {
       this.announce("That placement cannot be targeted.");
       return;
     }
-    void this.submitCandidate(drag.node, drag.occurrence, drag.sourceResourceId, drag.assignment, drag.mode, candidate);
-  };
-
-  private readonly boundPointerCancel = (event: PointerEvent): void => {
-    if (!this.drag || event.pointerId !== this.drag.pointerId) return;
-    this.cancelDrag();
-  };
+    await this.submitCandidate(drag.node, drag.occurrence, drag.sourceResourceId, drag.assignment, drag.mode, candidate);
+  }
 
   private interactionCandidate(
     drag: CalendarResourceDragState,
@@ -613,29 +629,19 @@ export class CalendarResourceSchedulerUi {
       : `${drag.occurrence.title} · ${drag.mode === "resize-start" ? "start" : "end"}`;
   }
 
-  private cleanupDrag(drag: CalendarResourceDragState): void {
-    drag.node.removeEventListener("pointermove", this.boundPointerMove);
-    drag.node.removeEventListener("pointerup", this.boundPointerUp);
-    drag.node.removeEventListener("pointercancel", this.boundPointerCancel);
-    if (drag.node.hasPointerCapture(drag.pointerId)) drag.node.releasePointerCapture(drag.pointerId);
+  private cleanupDragVisual(): void {
+    const drag = this.drag;
+    this.drag = undefined;
+    if (!drag) return;
     drag.node.classList.remove("is-drag-source");
     drag.ghost.remove();
     for (const row of this.root.querySelectorAll<HTMLElement>(".dc-rs-resource-row")) {
       row.classList.remove("is-drop-target", "is-drop-invalid");
     }
-    if (this.drag === drag) this.drag = undefined;
   }
 
   private cancelDrag(): void {
-    if (this.drag) this.cleanupDrag(this.drag);
-  }
-
-  private autoScroll(scroll: HTMLElement, clientX: number, clientY: number): void {
-    const rect = scroll.getBoundingClientRect();
-    if (clientX < rect.left + AUTO_SCROLL_ZONE) scroll.scrollLeft -= AUTO_SCROLL_STEP;
-    else if (clientX > rect.right - AUTO_SCROLL_ZONE) scroll.scrollLeft += AUTO_SCROLL_STEP;
-    if (clientY < rect.top + AUTO_SCROLL_ZONE) scroll.scrollTop -= AUTO_SCROLL_STEP;
-    else if (clientY > rect.bottom - AUTO_SCROLL_ZONE) scroll.scrollTop += AUTO_SCROLL_STEP;
+    this.pointerGestures.cancel();
   }
 
   private async keyboardMove(
