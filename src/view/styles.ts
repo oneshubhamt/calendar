@@ -22,7 +22,7 @@ export const CALENDAR_CSS = String.raw`
 .dc-selection-range{position:absolute;left:2px;right:2px;border:1px solid color-mix(in srgb,var(--dc-accent) 68%,transparent);background:color-mix(in srgb,var(--dc-accent) 14%,transparent);border-radius:6px;pointer-events:none;z-index:1}
 .dc-time-event:focus-within{z-index:40!important}.dc-time-event-main{outline-offset:-1px}
 .dc-context-menu:focus-within,.dc-source-menu:focus-within{outline:1px solid color-mix(in srgb,var(--dc-accent) 35%,transparent)}
-.dc-root[data-dragging="true"]{cursor:grabbing}
+.dc-root[data-dragging="true"]{cursor:grabbing}.dc-day-cell.is-external-drop-target,.dc-all-day-col.is-external-drop-target,.dc-time-column.is-external-drop-target{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--dc-accent) 72%,transparent);background:color-mix(in srgb,var(--dc-accent) 7%,var(--dc-bg))}
 @media(max-width:720px){
   .dc-root{min-height:440px;border-radius:10px}.dc-toolbar{gap:5px;padding:8px}.dc-toolbar .dc-btn{padding:6px 8px}.dc-title{font-size:15px}.dc-view-switch{order:4;width:100%;display:grid;grid-template-columns:repeat(5,minmax(0,1fr))}.dc-view-switch .dc-btn{text-align:center}
   .dc-time-shell[data-day-count="7"]{min-width:560px}.dc-time-shell[data-day-count="1"]{min-width:0;grid-template-columns:48px minmax(0,1fr)}.dc-time-shell[data-day-count="1"] .dc-time-axis-label{padding-right:5px}.dc-month-grid{min-width:420px;grid-auto-rows:minmax(84px,1fr)}.dc-weekdays{min-width:420px}.dc-day-cell{padding:3px}.dc-event{font-size:11px;padding:2px 4px}.dc-day-number{width:24px;height:24px}.dc-agenda{padding:6px 8px}.dc-agenda-row{grid-template-columns:72px minmax(0,1fr);gap:7px}.dc-agenda-time{font-size:12px}
