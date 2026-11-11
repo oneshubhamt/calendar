@@ -965,6 +965,16 @@ export class CalendarUi {
         event.preventDefault();
         void this.moveToDay(occurrence, day, true);
       });
+      if (inBounds) {
+        this.bindExternalDropTarget(all, () => {
+          const startAt = startOfDay(day, this.timeZone);
+          return {
+            start: startAt.toISOString(),
+            end: addDays(startAt, 1, this.timeZone).toISOString(),
+            allDay: true,
+          };
+        });
+      }
       if (inBounds && this.canCreateItems()) all.addEventListener("dblclick", () => void this.createFromSelection({ start: startOfDay(day, this.timeZone).toISOString(), end: addDays(startOfDay(day, this.timeZone), 1, this.timeZone).toISOString(), allDay: true }));
       allDay.append(all);
       grid.append(this.timeColumn(day));
@@ -1129,6 +1139,20 @@ export class CalendarUi {
         await this.mutations.issueOccurrencePatch(occurrence, patch, "Move", this.mutations.moveRequirements(occurrence, false), "move");
       })();
     });
+
+    if (inBounds) {
+      this.bindExternalDropTarget(column, event => {
+        const rect = column.getBoundingClientRect();
+        const minutes = this.dayStartHour * 60 + Math.max(0, event.clientY - rect.top);
+        const start = this.timeAtGridMinute(day, minutes, this.snapPolicy.selection, "External drop");
+        if (!start) return undefined;
+        return {
+          start: start.toISOString(),
+          end: new Date(start.getTime() + 60 * 60_000).toISOString(),
+          allDay: false,
+        };
+      });
+    }
 
     if (inBounds && this.canCreateItems()) {
       column.addEventListener("pointerdown", event => {
@@ -1403,6 +1427,7 @@ export class CalendarUi {
       moveToDay: (occurrence, day, allDay) => this.moveToDay(occurrence, day, allDay),
       canCreateItems: () => this.canCreateItems(),
       createFromSelection: selection => this.createFromSelection(selection),
+      bindExternalDropTarget: (element, resolveSelection) => this.bindExternalDropTarget(element, resolveSelection),
       addonEmptyMessage: () => this.addonEmptyMessage(),
       agendaSummaries: (date, occurrences) => (this.options.extensions ?? [])
         .map((extension, index) => this.hostHook(
