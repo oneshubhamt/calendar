@@ -47,3 +47,21 @@ export type {
   CalendarResourceAvailabilityProviderOptions,
   CalendarResourceAvailabilityPlacementGuardOptions,
 } from "./availability.js";
+
+export { executeCalendarResourceInteraction } from "./interaction-execution.js";
+export type {
+  CalendarResourceInteractionMode,
+  CalendarResourceInteractionCandidate,
+  CalendarResourceInteractionExecutionOptions,
+  CalendarResourceInteractionExecution,
+} from "./interaction-execution.js";
+
+export { layoutResourceTimeGrid } from "./time-grid-layout.js";
+export type {
+  CalendarResourceTimeGridLayoutOptions,
+  CalendarResourceTimeGridColumn,
+  CalendarResourceTimeGridLayoutItem,
+  CalendarResourceTimeGridAllDayItem,
+  CalendarResourceTimeGridAvailabilityLayout,
+  CalendarResourceTimeGridLayout,
+} from "./time-grid-layout.js";
