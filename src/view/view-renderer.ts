@@ -41,6 +41,10 @@ export interface CalendarStaticRenderActions {
   moveToDay(occurrence: CalendarOccurrence, day: Date, allDay: boolean): Promise<void>;
   canCreateItems(): boolean;
   createFromSelection(selection: CalendarSelection): Promise<void>;
+  bindExternalDropTarget(
+    element: HTMLElement,
+    resolveSelection: (event: DragEvent) => CalendarSelection | undefined,
+  ): void;
   addonEmptyMessage(): string | undefined;
   agendaSummaries(date: string, occurrences: readonly CalendarOccurrence[]): readonly string[];
   occurrencePresentation(occurrence: CalendarOccurrence): ResolvedCalendarOccurrencePresentation;
@@ -225,6 +229,16 @@ export function renderMonthView(model: CalendarStaticRenderModel, actions: Calen
       event.preventDefault();
       void actions.moveToDay(occurrence, date, isDateLikeOccurrence(occurrence));
     });
+    if (inBounds) {
+      actions.bindExternalDropTarget(cell, () => {
+        const startAt = startOfDay(date, model.timeZone);
+        return {
+          start: startAt.toISOString(),
+          end: addDays(startAt, 1, model.timeZone).toISOString(),
+          allDay: true,
+        };
+      });
+    }
     if (inBounds && actions.canCreateItems()) {
       cell.addEventListener("dblclick", event => {
         if ((event.target as Element).closest(".dc-event,.dc-day-number")) return;
