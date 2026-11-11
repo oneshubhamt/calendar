@@ -15,6 +15,17 @@ test('sync fingerprints are canonical across equivalent property insertion order
   assert.equal(Sync.fingerprintCalendarItem(first),Sync.fingerprintCalendarItem(second));
 });
 
+test('sync links retain full remote baselines only for recurring series',()=>{
+  const ordinary=event();
+  const identity={provider:'google',connectionId:'c',externalCalendarId:'remote',eventId:'g1'};
+  const ordinaryLink=Sync.linkAfterSync(ordinary,{identity,item:ordinary,deleted:false,fingerprint:Sync.fingerprintCalendarItem(ordinary)},'2026-01-01T00:00:00Z');
+  assert.equal(ordinaryLink.baseRemoteItem,undefined);
+
+  const recurring=event({recurrence:{rule:{frequency:'weekly'}}});
+  const recurringLink=Sync.linkAfterSync(recurring,{identity:{...identity,eventId:'g2'},item:recurring,deleted:false,fingerprint:Sync.fingerprintCalendarItem(recurring)},'2026-01-01T00:00:00Z');
+  assert.deepEqual(recurringLink.baseRemoteItem,recurring);
+});
+
 test('ICS alarms round-trip, imports preserve host authority, and Google reminder defaults are explicit',()=>{
   const ics=ICS.exportIcs([event({reminders:[{id:'os',minutesBefore:30,channel:'external'}]})],{now:'2026-01-01T00:00:00Z'});
   assert.match(ics,/BEGIN:VALARM/); assert.match(ics,/TRIGGER:-PT30M/);
