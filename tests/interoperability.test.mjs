@@ -204,3 +204,132 @@ test('Google two-way retry reattaches its deterministic remote event without dup
   assert.equal(result.state.links[0].localItemId,'e1');
   assert.equal(result.state.links[0].identity.eventId,remote.id);
 });
+
+
+test('Google pull retry rebases an already-applied local change after sync-state checkpoint failure',async()=>{
+  const base=event({title:'Base'});
+  const remoteBaseEvent={id:'g1',etag:'"e1"',summary:'Base',start:{dateTime:base.start},end:{dateTime:base.end},reminders:{useDefault:false}};
+  const remoteBase=Google.googleEventToCalendarItem(remoteBaseEvent,'personal','pull-retry','e1','remote');
+  const initialState={
+    provider:'google',connectionId:'pull-retry',mode:'import',externalCalendarId:'remote',localCalendarId:'personal',syncToken:'token-1',
+    links:[{
+      localItemId:'e1',
+      identity:{provider:'google',connectionId:'pull-retry',externalCalendarId:'remote',eventId:'g1',etag:'"e1"'},
+      baseLocalFingerprint:Sync.fingerprintCalendarItem(base),
+      baseRemoteFingerprint:Sync.fingerprintCalendarItem(remoteBase),
+      baseRemoteItem:remoteBase,
+      status:'clean',lastSyncedAt:'2026-01-01T00:00:00Z',
+    }],
+  };
+  let durableState=structuredClone(initialState),writeAttempts=0;
+  const states={
+    read(){return structuredClone(durableState);},
+    write(state){writeAttempts++;if(writeAttempts===1)throw Error('simulated checkpoint failure');durableState=structuredClone(state);},
+    remove(){durableState=null;},
+  };
+  const remoteChanged={id:'g1',etag:'"e2"',summary:'Remote v2',start:{dateTime:base.start},end:{dateTime:base.end},reminders:{useDefault:false}};
+  const transport={
+    async listEvents(){return {items:[structuredClone(remoteChanged)],nextSyncToken:'token-2'};},
+    async getEvent(){throw Error('unused');},async listInstances(){return {items:[]};},
+    async insertEvent(){throw Error('unused');},async updateEvent(){throw Error('unused');},async patchEvent(){throw Error('unused');},async deleteEvent(){throw Error('unused');},
+  };
+  const repo=new Core.MemoryCalendarRepository([source],[base]);
+  const adapter=new Google.GoogleCalendarSyncAdapter(transport,repo,states,{id:'pull-retry',googleCalendarId:'remote',localCalendarId:'personal',mode:'import'});
+
+  await assert.rejects(()=>adapter.sync(),/simulated checkpoint failure/);
+  assert.equal(repo.read().revision,1);
+  assert.equal(repo.read().items[0].title,'Remote v2');
+
+  const result=await adapter.sync();
+  assert.equal(repo.read().revision,1);
+  assert.equal(result.pulled,0);
+  assert.equal(result.conflicts.length,0);
+  assert.equal(result.state.syncToken,'token-2');
+  assert.equal(result.state.links[0].identity.etag,'"e2"');
+  assert.equal(result.state.links[0].baseLocalFingerprint,result.state.links[0].baseRemoteFingerprint);
+});
+
+test('Google import stages update delete and create into one guarded local commit',async()=>{
+  const first=event({id:'e1',title:'One'});
+  const second=event({id:'e2',title:'Two',start:'2026-03-02T14:00:00.000Z',end:'2026-03-02T15:00:00.000Z'});
+  const remoteOne=Google.googleEventToCalendarItem({id:'g1',etag:'"b1"',summary:'One',start:{dateTime:first.start},end:{dateTime:first.end},reminders:{useDefault:false}},'personal','batch','e1','remote');
+  const remoteTwo=Google.googleEventToCalendarItem({id:'g2',etag:'"b2"',summary:'Two',start:{dateTime:second.start},end:{dateTime:second.end},reminders:{useDefault:false}},'personal','batch','e2','remote');
+  const states=new Sync.MemorySyncStateStore();
+  states.write({
+    provider:'google',connectionId:'batch',mode:'import',externalCalendarId:'remote',localCalendarId:'personal',syncToken:'token-1',
+    links:[
+      {localItemId:'e1',identity:{provider:'google',connectionId:'batch',externalCalendarId:'remote',eventId:'g1',etag:'"b1"'},baseLocalFingerprint:Sync.fingerprintCalendarItem(first),baseRemoteFingerprint:Sync.fingerprintCalendarItem(remoteOne),baseRemoteItem:remoteOne,status:'clean',lastSyncedAt:'2026-01-01T00:00:00Z'},
+      {localItemId:'e2',identity:{provider:'google',connectionId:'batch',externalCalendarId:'remote',eventId:'g2',etag:'"b2"'},baseLocalFingerprint:Sync.fingerprintCalendarItem(second),baseRemoteFingerprint:Sync.fingerprintCalendarItem(remoteTwo),baseRemoteItem:remoteTwo,status:'clean',lastSyncedAt:'2026-01-01T00:00:00Z'},
+    ],
+  });
+
+  const inner=new Core.MemoryCalendarRepository([source],[first,second]);
+  let replacements=0,granularMutations=0;
+  const repo={
+    read:()=>inner.read(),
+    create(){granularMutations++;throw Error('granular create must not be used');},
+    update(){granularMutations++;throw Error('granular update must not be used');},
+    remove(){granularMutations++;throw Error('granular remove must not be used');},
+    replace(){throw Error('unguarded replace must not be used');},
+    replaceAtRevision(items,revision){replacements++;inner.replaceAtRevision(items,revision);},
+  };
+  const transport={
+    async listEvents(){return {items:[
+      {id:'g1',etag:'"u1"',summary:'One updated',start:{dateTime:first.start},end:{dateTime:first.end},reminders:{useDefault:false}},
+      {id:'g2',etag:'"d2"',status:'cancelled'},
+      {id:'g3',etag:'"n3"',summary:'Three',start:{dateTime:'2026-03-03T14:00:00.000Z'},end:{dateTime:'2026-03-03T15:00:00.000Z'},reminders:{useDefault:false}},
+    ],nextSyncToken:'token-2'};},
+    async getEvent(){throw Error('unused');},async listInstances(){return {items:[]};},
+    async insertEvent(){throw Error('unused');},async updateEvent(){throw Error('unused');},async patchEvent(){throw Error('unused');},async deleteEvent(){throw Error('unused');},
+  };
+  const adapter=new Google.GoogleCalendarSyncAdapter(transport,repo,states,{id:'batch',googleCalendarId:'remote',localCalendarId:'personal',mode:'import'});
+  const result=await adapter.sync();
+
+  assert.equal(replacements,1);
+  assert.equal(granularMutations,0);
+  assert.equal(inner.read().revision,1);
+  assert.deepEqual(inner.read().items.map(item=>item.title).sort(),['One updated','Three']);
+  assert.equal(result.pulled,2);
+  assert.equal(result.deletedLocal,1);
+});
+
+test('Google incremental checkpoint refreshes provider identity without rewriting unchanged local data',async()=>{
+  const local=event({title:'Stable'});
+  const remoteBase=Google.googleEventToCalendarItem({id:'g1',etag:'"e1"',summary:'Stable',start:{dateTime:local.start},end:{dateTime:local.end},reminders:{useDefault:false}},'personal','identity-refresh','e1','remote');
+  const states=new Sync.MemorySyncStateStore();
+  states.write({
+    provider:'google',connectionId:'identity-refresh',mode:'import',externalCalendarId:'remote',localCalendarId:'personal',syncToken:'token-1',
+    links:[{localItemId:'e1',identity:{provider:'google',connectionId:'identity-refresh',externalCalendarId:'remote',eventId:'g1',etag:'"e1"'},baseLocalFingerprint:Sync.fingerprintCalendarItem(local),baseRemoteFingerprint:Sync.fingerprintCalendarItem(remoteBase),baseRemoteItem:remoteBase,status:'clean',lastSyncedAt:'2026-01-01T00:00:00Z'}],
+  });
+  const repo=new Core.MemoryCalendarRepository([source],[local]);
+  const transport={
+    async listEvents(){return {items:[{id:'g1',etag:'"e2"',sequence:2,summary:'Stable',start:{dateTime:local.start},end:{dateTime:local.end},reminders:{useDefault:false}}],nextSyncToken:'token-2'};},
+    async getEvent(){throw Error('unused');},async listInstances(){return {items:[]};},
+    async insertEvent(){throw Error('unused');},async updateEvent(){throw Error('unused');},async patchEvent(){throw Error('unused');},async deleteEvent(){throw Error('unused');},
+  };
+  const result=await new Google.GoogleCalendarSyncAdapter(transport,repo,states,{id:'identity-refresh',googleCalendarId:'remote',localCalendarId:'personal',mode:'import'}).sync();
+  assert.equal(repo.read().revision,0);
+  assert.equal(result.pulled,0);
+  assert.equal(result.state.links[0].identity.etag,'"e2"');
+  assert.equal(result.state.links[0].identity.sequence,2);
+});
+
+test('Google sync removes a stale link once both local and remote are already deleted',async()=>{
+  const base=event({title:'Deleted'});
+  const remoteBase=Google.googleEventToCalendarItem({id:'g1',etag:'"e1"',summary:'Deleted',start:{dateTime:base.start},end:{dateTime:base.end},reminders:{useDefault:false}},'personal','delete-rebase','e1','remote');
+  const states=new Sync.MemorySyncStateStore();
+  states.write({
+    provider:'google',connectionId:'delete-rebase',mode:'import',externalCalendarId:'remote',localCalendarId:'personal',syncToken:'token-1',
+    links:[{localItemId:'e1',identity:{provider:'google',connectionId:'delete-rebase',externalCalendarId:'remote',eventId:'g1',etag:'"e1"'},baseLocalFingerprint:Sync.fingerprintCalendarItem(base),baseRemoteFingerprint:Sync.fingerprintCalendarItem(remoteBase),baseRemoteItem:remoteBase,status:'clean',lastSyncedAt:'2026-01-01T00:00:00Z'}],
+  });
+  const repo=new Core.MemoryCalendarRepository([source],[]);
+  const transport={
+    async listEvents(){return {items:[{id:'g1',etag:'"e2"',status:'cancelled'}],nextSyncToken:'token-2'};},
+    async getEvent(){throw Error('unused');},async listInstances(){return {items:[]};},
+    async insertEvent(){throw Error('unused');},async updateEvent(){throw Error('unused');},async patchEvent(){throw Error('unused');},async deleteEvent(){throw Error('unused');},
+  };
+  const result=await new Google.GoogleCalendarSyncAdapter(transport,repo,states,{id:'delete-rebase',googleCalendarId:'remote',localCalendarId:'personal',mode:'import'}).sync();
+  assert.equal(repo.read().revision,0);
+  assert.deepEqual(result.state.links,[]);
+  assert.equal(result.conflicts.length,0);
+});
