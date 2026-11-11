@@ -24,6 +24,7 @@ import type {
   CalendarItemFactoryInput,
   CalendarKindOption,
   CalendarPlacementValidationPort,
+  CalendarPresentationText,
   CalendarSelection,
   CalendarUiAddonContext,
   CalendarUiChromeOptions,
@@ -100,6 +101,16 @@ function creatableSource(source: CalendarSource | undefined): boolean {
 
 function durationMs(occurrence: CalendarOccurrence): number {
   return isPointOccurrence(occurrence) ? 0 : Math.max(1, toDate(occurrence.end).getTime() - toDate(occurrence.start).getTime());
+}
+
+function ownPresentationText(
+  value: { readonly text: string; readonly accessibleLabel?: string | undefined } | undefined,
+): CalendarPresentationText | undefined {
+  if (!value) return undefined;
+  return Object.freeze({
+    text: value.text,
+    ...(value.accessibleLabel !== undefined ? { accessibleLabel: value.accessibleLabel } : {}),
+  });
 }
 
 function withLocalTime(
@@ -392,15 +403,20 @@ export class CalendarUi {
     occurrence: CalendarOccurrence,
   ): CalendarCustomViewOccurrencePresentation {
     const presentation = this.occurrencePresentation(this.authoritativeOccurrence(occurrence));
+    const icon = ownPresentationText(presentation.icon);
+    const leading = ownPresentationText(presentation.leading);
+    const title = ownPresentationText(presentation.title);
+    const subtitle = ownPresentationText(presentation.subtitle);
+    const trailing = ownPresentationText(presentation.trailing);
     return Object.freeze({
       classNames: Object.freeze([...presentation.classNames]),
       data: Object.freeze({ ...presentation.data }),
-      ...(presentation.accessibleLabel ? { accessibleLabel: presentation.accessibleLabel } : {}),
-      ...(presentation.icon ? { icon: Object.freeze({ ...presentation.icon }) } : {}),
-      ...(presentation.leading ? { leading: Object.freeze({ ...presentation.leading }) } : {}),
-      ...(presentation.title ? { title: Object.freeze({ ...presentation.title }) } : {}),
-      ...(presentation.subtitle ? { subtitle: Object.freeze({ ...presentation.subtitle }) } : {}),
-      ...(presentation.trailing ? { trailing: Object.freeze({ ...presentation.trailing }) } : {}),
+      ...(presentation.accessibleLabel !== undefined ? { accessibleLabel: presentation.accessibleLabel } : {}),
+      ...(icon ? { icon } : {}),
+      ...(leading ? { leading } : {}),
+      ...(title ? { title } : {}),
+      ...(subtitle ? { subtitle } : {}),
+      ...(trailing ? { trailing } : {}),
       badges: Object.freeze(presentation.badges.map(badge => Object.freeze({ ...badge }))),
     });
   }
