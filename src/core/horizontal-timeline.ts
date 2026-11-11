@@ -50,6 +50,39 @@ export interface CalendarHorizontalTimelineRangeGeometry {
   ): Date | null;
 }
 
+export interface CalendarHorizontalTimelineTick {
+  readonly instant: number;
+  readonly coordinate: number;
+}
+
+export function horizontalTimelineTicks(
+  geometry: CalendarHorizontalTimelineRangeGeometry,
+  requestedTickMinutes: number,
+  maxTicks = 240,
+): readonly CalendarHorizontalTimelineTick[] {
+  if (!Number.isFinite(requestedTickMinutes) || requestedTickMinutes <= 0) {
+    throw new RangeError("Horizontal timeline tick minutes must be positive and finite");
+  }
+  if (!Number.isInteger(maxTicks) || maxTicks <= 0) {
+    throw new RangeError("Horizontal timeline maxTicks must be a positive integer");
+  }
+  const elapsedMinutes = Math.max(1, (geometry.end - geometry.start) / MINUTE_MS);
+  const multiplier = Math.max(1, Math.ceil(elapsedMinutes / requestedTickMinutes / maxTicks));
+  const tickMinutes = requestedTickMinutes * multiplier;
+  const tickMs = tickMinutes * MINUTE_MS;
+  const seen = new Set<string>();
+  const result: CalendarHorizontalTimelineTick[] = [];
+  for (let instant = geometry.start; instant <= geometry.end; instant += tickMs) {
+    const coordinate = geometry.coordinate(instant);
+    if (coordinate < 0 || coordinate > geometry.widthMinutes) continue;
+    const key = coordinate.toFixed(6);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(Object.freeze({ instant, coordinate }));
+  }
+  return Object.freeze(result);
+}
+
 export interface CalendarHorizontalTimelineLayoutOptions {
   /** Civil wall-clock geometry. Omit for absolute elapsed-minute geometry. */
   readonly timeZone?: string | undefined;
