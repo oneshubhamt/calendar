@@ -24,6 +24,7 @@ test("generic dependency direction and host-domain isolation are explicit archit
   ];
   const viewPaths = [
     "../src/view/types.ts","../src/view/calendar-ui.ts","../src/view/view-renderer.ts","../src/view/view-registry.ts",
+    "../src/view/month-panel.ts","../src/view/render-primitives.ts","../src/view/week-numbering.ts",
     "../src/view/external-drop.ts","../src/view/gesture-controller.ts","../src/view/temporal-chrome.ts",
   ];
   const core = await Promise.all(corePaths.map(async path => [path, await read(path)]));
