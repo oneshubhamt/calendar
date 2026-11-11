@@ -1500,7 +1500,6 @@ export class CalendarUi {
         precision: "date",
         temporal: { kind: "date" },
         kind: template.kind ?? "event",
-        ...(template.display ? { display: template.display } : {}),
         ...(template.metadata ? { metadata: template.metadata } : {}),
       };
     } else {
@@ -1525,7 +1524,6 @@ export class CalendarUi {
         temporal: { kind: "instant" },
         ...(point ? { temporalForm: "point" as const } : {}),
         kind: template.kind ?? "event",
-        ...(template.display ? { display: template.display } : {}),
         ...(template.metadata ? { metadata: template.metadata } : {}),
       };
     }
