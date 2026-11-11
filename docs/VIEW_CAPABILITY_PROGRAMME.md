@@ -176,6 +176,8 @@ A convenience browser-print method may be added only if it can be implemented wi
 
 ### VC-A — Custom-view registry and runtime boundary
 
+**Status:** complete on `working`.
+
 **Objective:** replace hard-coded view orchestration with a view-definition boundary while preserving existing behaviour exactly.
 
 Work:
