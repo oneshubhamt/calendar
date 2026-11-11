@@ -22,6 +22,7 @@ import type {
   CalendarReminder,
   CalendarReminderChannel,
   CalendarSource,
+  CalendarSnapPolicy,
   CalendarTemporalForm,
   CalendarTemporalSpec,
   CalendarView,
@@ -108,6 +109,10 @@ export interface CalendarCustomViewRenderContext extends CalendarViewTitleContex
   readonly occurrences: readonly CalendarOccurrence[];
   readonly backgroundRanges: readonly CalendarBackgroundRange[];
   readonly now: Date;
+  /** Resolved interaction policy shared with bundled/custom scheduling views. */
+  readonly slotMinutes: number;
+  readonly snapPolicy: Required<CalendarSnapPolicy>;
+  readonly dstOverlapDisambiguation: CalendarOverlapDisambiguation;
   readonly actions: CalendarCustomViewActionPort;
   readonly renderers: CalendarCustomViewRenderPort;
 }
