@@ -80,6 +80,16 @@ import {
   type ResolvedCalendarNavigationBounds,
 } from "./navigation.js";
 import { CalendarViewRegistry, type CalendarViewDefinition } from "./view-registry.js";
+import {
+  CALENDAR_EXTERNAL_DROP_MIME,
+  bindCalendarExternalDropTarget,
+  dataTransferHasType,
+  decodeCalendarExternalDropData,
+  normalizeCalendarExternalDropTemplate,
+  resolveCalendarExternalDropDecoder,
+  type CalendarExternalDropTemplate,
+  type ResolvedCalendarExternalDropDecoder,
+} from "./external-drop.js";
 
 
 interface SelectionDragState {
@@ -148,6 +158,7 @@ export class CalendarUi {
   private readonly dayEndHour: number;
   private readonly chrome: Required<CalendarUiChromeOptions>;
   private readonly navigationBounds: ResolvedCalendarNavigationBounds;
+  private readonly externalDropDecoder: ResolvedCalendarExternalDropDecoder | undefined;
   private readonly views: CalendarViewRegistry;
   private agendaSpan: CalendarAgendaSpan;
   private sources: readonly CalendarSource[];
@@ -196,6 +207,7 @@ export class CalendarUi {
       createControls: options.chrome?.createControls ?? true,
     };
     this.navigationBounds = resolveNavigationBounds(options.navigationBounds);
+    this.externalDropDecoder = resolveCalendarExternalDropDecoder(options.externalDropDecoder);
     this.agendaSpan = options.initialAgendaSpan ?? "30-days";
     this.views = new CalendarViewRegistry(this.builtInViewDefinitions(), options.customViews ?? []);
     this.view = options.initialView ?? "week";
@@ -416,6 +428,8 @@ export class CalendarUi {
       ),
       openOccurrence: async occurrence => await this.openCustomViewOccurrence(occurrence),
       createFromSelection: async selection => await this.createFromSelection(selection),
+      canAcceptExternalDrop: dataTransfer => this.canAcceptExternalDrop(dataTransfer),
+      dropExternal: (dataTransfer, selection) => this.dropExternal(dataTransfer, selection),
       moveOccurrence: async (occurrence, start, options) =>
         await this.moveOccurrenceToStart(occurrence, start, options?.allDay ?? isDateLikeOccurrence(occurrence)),
       resizeOccurrence: async (occurrence, edge, target) =>
@@ -558,6 +572,51 @@ export class CalendarUi {
     if (this.options.allowCreate === false) return false;
     if (!this.sources.some(source => creatableSource(source))) return false;
     return Boolean(this.options.commandHandler || this.options.callbacks?.handleCreate);
+  }
+
+  private canCreateExternalDrop(): boolean {
+    return this.options.allowCreate !== false
+      && Boolean(this.options.commandHandler)
+      && this.sources.some(source => creatableSource(source));
+  }
+
+  private canAcceptExternalDrop(dataTransfer: DataTransfer | null): boolean {
+    if (!dataTransfer || !this.canCreateExternalDrop() || dataTransferHasType(dataTransfer, NATIVE_DRAG_TYPE)) return false;
+    if (dataTransferHasType(dataTransfer, CALENDAR_EXTERNAL_DROP_MIME)) return true;
+    return this.externalDropDecoder?.types.some(type => dataTransferHasType(dataTransfer, type)) ?? false;
+  }
+
+  /** Decode synchronously before the returned promise can cross an asynchronous boundary. */
+  private dropExternal(
+    dataTransfer: DataTransfer | null,
+    selection: CalendarSelection,
+  ): Promise<boolean> {
+    const template = this.decodeExternalDrop(dataTransfer);
+    if (!template) return Promise.resolve(false);
+    return this.createExternalDrop(template, selection);
+  }
+
+  private decodeExternalDrop(dataTransfer: DataTransfer | null): CalendarExternalDropTemplate | undefined {
+    if (!dataTransfer || dataTransferHasType(dataTransfer, NATIVE_DRAG_TYPE)) return undefined;
+    const standard = decodeCalendarExternalDropData(dataTransfer);
+    if (standard) return standard;
+    const decoder = this.externalDropDecoder;
+    if (!decoder || !decoder.types.some(type => dataTransferHasType(dataTransfer, type))) return undefined;
+    try {
+      return normalizeCalendarExternalDropTemplate(decoder.decode(dataTransfer));
+    } catch {
+      return undefined;
+    }
+  }
+
+  private bindExternalDropTarget(
+    element: HTMLElement,
+    resolveSelection: (event: DragEvent) => CalendarSelection | undefined,
+  ): void {
+    bindCalendarExternalDropTarget(element, resolveSelection, {
+      canAcceptExternalDrop: dataTransfer => this.canAcceptExternalDrop(dataTransfer),
+      dropExternal: (dataTransfer, selection) => this.dropExternal(dataTransfer, selection),
+    });
   }
 
   private authoritativeOccurrence(occurrence: CalendarOccurrence): CalendarOccurrence {
@@ -1368,6 +1427,92 @@ export class CalendarUi {
       editPolicy: draft.editPolicy ?? this.options.defaultEditPolicy ?? "full",
       createdAt: now, updatedAt: now,
     };
+  }
+
+  private async createExternalDrop(
+    template: CalendarExternalDropTemplate,
+    selection: CalendarSelection,
+  ): Promise<boolean> {
+    if (!this.canCreateExternalDrop()) return false;
+
+    let selectionStart: Date;
+    let selectionEnd: Date;
+    try {
+      selectionStart = parseAbsoluteDateTime(selection.start, "External drop selection start");
+      selectionEnd = parseAbsoluteDateTime(selection.end, "External drop selection end");
+    } catch {
+      return false;
+    }
+
+    const requestedSource = template.calendarId
+      ? this.sources.find(source => source.id === template.calendarId)
+      : undefined;
+    const source = template.calendarId
+      ? requestedSource
+      : this.sources.find(candidate => candidate.id === this.defaultCalendarId && creatableSource(candidate))
+        ?? this.sources.find(candidate => creatableSource(candidate));
+    if (!creatableSource(source)) {
+      this.announce("External drop was blocked because the target calendar does not allow creation.");
+      return false;
+    }
+
+    let draft: CalendarCreateDraft;
+    if (selection.allDay) {
+      if (template.temporalForm === "point") return false;
+      const start = startOfDay(selectionStart, this.timeZone);
+      const selectedDays = selectionEnd.getTime() > selectionStart.getTime()
+        ? calendarDaySpan(selectionStart, selectionEnd, this.timeZone)
+        : 1;
+      const end = addDays(start, template.durationDays ?? selectedDays, this.timeZone);
+      const temporal = placementTimePatch(start, end, true, this.timeZone);
+      draft = {
+        calendarId: source.id,
+        title: template.title,
+        ...(template.description ? { description: template.description } : {}),
+        ...(template.location ? { location: template.location } : {}),
+        ...temporal,
+        kind: template.kind ?? "event",
+        ...(template.display ? { display: template.display } : {}),
+        ...(template.metadata ? { metadata: template.metadata } : {}),
+      };
+    } else {
+      const start = selectionStart;
+      const point = template.temporalForm === "point";
+      if (!point && selectionEnd.getTime() <= start.getTime()) return false;
+      const selectedDuration = Math.max(1, selectionEnd.getTime() - start.getTime());
+      const end = point
+        ? new Date(start)
+        : new Date(start.getTime() + (template.durationMinutes !== undefined
+          ? template.durationMinutes * 60_000
+          : selectedDuration));
+      draft = {
+        calendarId: source.id,
+        title: template.title,
+        ...(template.description ? { description: template.description } : {}),
+        ...(template.location ? { location: template.location } : {}),
+        start: start.toISOString(),
+        end: end.toISOString(),
+        allDay: false,
+        precision: "minute",
+        temporal: { kind: "instant" },
+        ...(point ? { temporalForm: "point" as const } : {}),
+        kind: template.kind ?? "event",
+        ...(template.display ? { display: template.display } : {}),
+        ...(template.metadata ? { metadata: template.metadata } : {}),
+      };
+    }
+
+    const item = this.createCalendarItem(draft, "external-drop");
+    const finalSource = this.sources.find(candidate => candidate.id === item.calendarId);
+    if (!creatableSource(finalSource)) {
+      this.announce("External drop was blocked because the target calendar does not allow creation.");
+      return false;
+    }
+    if (!await this.mutations.allowDraftPlacement(item, undefined, "external-drop")) return false;
+    this.hostHook("Calendar onCreate callback", () => this.options.callbacks?.onCreate?.(selection), undefined);
+    await this.mutations.dispatch({ type: "create", item });
+    this.announce(`Created ${item.title}.`);
+    return true;
   }
 
   private async createAtAnchor(): Promise<void> {
