@@ -305,6 +305,11 @@ export interface CalendarUiAddon {
   destroy?(): void;
 }
 
+export interface CalendarWeekNumbersOptions {
+  /** 1–7. Omitted resolves from locale where supported, otherwise falls back deterministically to 4. */
+  readonly minimumDaysInFirstWeek?: number | undefined;
+}
+
 export interface CalendarUiChromeOptions {
   /** Show Calendar-owned toolbar chrome. When false, its child controls are not mounted. */
   readonly toolbar?: boolean;
@@ -330,6 +335,8 @@ export interface CalendarUiOptions {
   /** Explicit trusted host command path for occurrences whose capability result selects `trusted-host`. */
   readonly trustedHostCommandHandler?: CalendarCommandHandler;
   readonly weekStartsOn?: Weekday | undefined;
+  /** Optional Month-like week-number gutter. */
+  readonly weekNumbers?: boolean | CalendarWeekNumbersOptions | undefined;
   readonly initialView?: CalendarUiViewId;
   /** Explicit custom views. IDs must be unique and may not reuse built-in view IDs. */
   readonly customViews?: readonly CalendarCustomViewPlugin[];
