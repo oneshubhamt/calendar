@@ -120,11 +120,13 @@ test("external drop remains a view-layer creation boundary rather than a persist
 });
 
 test("view decomposition keeps mutation, rendering and gesture concerns separated", async () => {
-  const [ui, mutations, occurrenceForm, renderer, gestures, temporal] = await Promise.all([
+  const [ui, mutations, occurrenceForm, renderer, monthPanel, renderPrimitives, gestures, temporal] = await Promise.all([
     read("../src/view/calendar-ui.ts"),
     read("../src/view/mutation-coordinator.ts"),
     read("../src/view/occurrence-form.ts"),
     read("../src/view/view-renderer.ts"),
+    read("../src/view/month-panel.ts"),
+    read("../src/view/render-primitives.ts"),
     read("../src/view/gesture-controller.ts"),
     read("../src/view/temporal-chrome.ts"),
   ]);
@@ -132,10 +134,21 @@ test("view decomposition keeps mutation, rendering and gesture concerns separate
   assert.match(ui, /from "\.\/view-renderer\.js"/);
   assert.match(ui, /from "\.\/gesture-controller\.js"/);
   assert.match(ui, /from "\.\/temporal-chrome\.js"/);
-  for (const leaf of [mutations, occurrenceForm, renderer, gestures, temporal]) assert.doesNotMatch(leaf, /from "\.\/calendar-ui\.js"/);
+  for (const leaf of [mutations, occurrenceForm, renderer, monthPanel, renderPrimitives, gestures, temporal]) {
+    assert.doesNotMatch(leaf, /from "\.\/calendar-ui\.js"/);
+  }
   assert.match(ui, /from "\.\/occurrence-form\.js"/);
   assert.match(mutations, /from "\.\/occurrence-form\.js"/);
-  assert.match(renderer, /from "\.\/occurrence-form\.js"/);
+  assert.match(monthPanel, /from "\.\/occurrence-form\.js"/);
+  assert.match(renderer, /from "\.\/month-panel\.js"/);
+  assert.match(renderer, /renderMonthPanel\(model, actions/);
+  assert.doesNotMatch(renderer, /dc-day-cell|bindExternalDropTarget\(cell/);
+  assert.match(monthPanel, /dc-day-cell/);
+  assert.match(monthPanel, /bindExternalDropTarget\(cell/);
+  assert.match(monthPanel, /openMonthOverflow/);
+  assert.match(monthPanel, /groupAllDayBackgroundRangesByDay/);
+  assert.match(monthPanel, /options\.range/);
+  assert.doesNotMatch(monthPanel, /model\.visibleRange/);
   assert.doesNotMatch(mutations, /HTMLElement|document\.|querySelector|addEventListener/);
   assert.doesNotMatch(ui, /new CalendarCommandLifecycle|evaluateCalendarPlacement\(|previewPatchForCommand|resolveOccurrenceCapabilities\(|private issueOccurrencePatch|private issueTimedCommand|private dispatchOccurrence/);
   assert.doesNotMatch(gestures, /CalendarCommand|commandHandler|executeCalendarPlacement/);
