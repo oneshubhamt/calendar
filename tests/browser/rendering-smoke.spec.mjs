@@ -260,6 +260,8 @@ test("registered custom views own range navigation rendering and use only the bo
         root.dataset.minimumDaysInFirstWeek = String(context.weekNumbering?.minimumDaysInFirstWeek ?? "");
         root.dataset.contextKeys = Object.keys(context).sort().join(",");
         root.dataset.actionKeys = Object.keys(context.actions).sort().join(",");
+        root.dataset.rendererKeys = Object.keys(context.renderers).sort().join(",");
+        root.dataset.renderersFrozen = String(Object.isFrozen(context.renderers));
         root.dataset.collectionsFrozen = String(
           Object.isFrozen(context.sources)
           && Object.isFrozen(context.occurrences)
@@ -358,6 +360,8 @@ test("registered custom views own range navigation rendering and use only the bo
   const exposed = await page.locator(".custom-two-day-view").evaluate(node => ({
     context: node.dataset.contextKeys,
     actions: node.dataset.actionKeys,
+    renderers: node.dataset.rendererKeys,
+    renderersFrozen: node.dataset.renderersFrozen,
   }));
   expect(exposed.context).not.toMatch(/repository|storage|engine/i);
   expect(exposed.actions).not.toMatch(/repository|storage|engine|commandHandler/i);
@@ -367,6 +371,9 @@ test("registered custom views own range navigation rendering and use only the bo
   expect(exposed.actions).toContain("canAcceptExternalDrop");
   expect(exposed.actions).toContain("dropExternal");
   expect(exposed.actions).toContain("bindExternalDropTarget");
+  expect(exposed.renderers).toBe("monthPanel");
+  expect(exposed.renderersFrozen).toBe("true");
+  expect(exposed.renderers).not.toMatch(/repository|storage|engine/i);
 
   await page.getByRole("button", { name: "Open custom event" }).click();
   expect(await page.evaluate(() => globalThis.__customViewProbe.openCalls())).toBe(1);
