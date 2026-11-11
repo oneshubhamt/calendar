@@ -1,4 +1,5 @@
 name: Working VC-F print verification
+# Temporary pass-local verification; remove after VC-F closes.
 
 on:
   push:
