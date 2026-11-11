@@ -90,9 +90,11 @@ test("custom view extensibility remains view-layer only and mutation-safe", asyn
   assert.doesNotMatch(coreTypes, /CalendarCustomView|CalendarUiViewId|customViews/);
   assert.match(viewTypes, /interface CalendarCustomViewPlugin/);
   assert.match(viewTypes, /interface CalendarCustomViewActionPort/);
+  assert.match(viewTypes, /weekNumbering\?: CalendarResolvedWeekNumbering/);
   assert.doesNotMatch(viewTypes, /CalendarRepository|IndexedDb|SyncState|GoogleCalendar/);
   assert.doesNotMatch(registry, /storage|interoperability|integration|adapters|CalendarRepository/);
   assert.match(ui, /new CalendarViewRegistry/);
+  assert.match(ui, /weekNumbering: this\.weekNumbering/);
   assert.match(ui, /body\.append\(this\.renderActiveView\(\)\)/);
   assert.doesNotMatch(ui, /if \(this\.view === "month"\) body\.append|else if \(this\.view === "year"\) body\.append/);
   assert.doesNotMatch(storage, /CalendarCustomView|CalendarUiViewId/);
