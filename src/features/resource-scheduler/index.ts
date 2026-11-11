@@ -32,21 +32,6 @@ export type {
   CalendarResourcePlacementExecutionResult,
 } from "./placement.js";
 
-export {
-  expandResourceAvailabilityDefinitions,
-  createResourceAvailabilityProvider,
-  createResourceAvailabilityPlacementGuard,
-} from "./availability.js";
-export type {
-  CalendarResourceAvailabilityState,
-  CalendarResourceAvailabilityExceptionReplacement,
-  CalendarResourceAvailabilityRecurrence,
-  CalendarResourceAvailabilityDefinition,
-  CalendarResourceAvailabilityRange,
-  CalendarResourceAvailabilityProvider,
-  CalendarResourceAvailabilityProviderOptions,
-  CalendarResourceAvailabilityPlacementGuardOptions,
-} from "./availability.js";
 
 export { executeCalendarResourceInteraction } from "./interaction-execution.js";
 export type {
@@ -56,12 +41,3 @@ export type {
   CalendarResourceInteractionExecution,
 } from "./interaction-execution.js";
 
-export { layoutResourceTimeGrid } from "./time-grid-layout.js";
-export type {
-  CalendarResourceTimeGridLayoutOptions,
-  CalendarResourceTimeGridColumn,
-  CalendarResourceTimeGridLayoutItem,
-  CalendarResourceTimeGridAllDayItem,
-  CalendarResourceTimeGridAvailabilityLayout,
-  CalendarResourceTimeGridLayout,
-} from "./time-grid-layout.js";

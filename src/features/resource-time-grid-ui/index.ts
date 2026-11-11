@@ -21,21 +21,23 @@ import type { CalendarUiExtension } from "../../view/types.js";
 import { hostDataAttributeName, isSafeHostClassName, resolveOccurrencePresentation } from "../../view/presentation.js";
 import {
   executeCalendarResourceInteraction,
-  layoutResourceTimeGrid,
   replaceCalendarResourceAssignment,
   type CalendarResource,
   type CalendarResourceAssignment,
-  type CalendarResourceAvailabilityRange,
   type CalendarResourceId,
   type CalendarResourceInteractionCandidate,
   type CalendarResourceInteractionExecutionOptions,
   type CalendarResourcePlacementExecutionResult,
   type CalendarResourcePlacementRequest,
+} from "../resource-scheduler/index.js";
+import type { CalendarResourceAvailabilityRange } from "../resource-availability.js";
+import {
+  layoutResourceTimeGrid,
   type CalendarResourceTimeGridColumn,
   type CalendarResourceTimeGridLayout,
   type CalendarResourceTimeGridLayoutItem,
   type CalendarResourceTimeGridAllDayItem,
-} from "../resource-scheduler/index.js";
+} from "../resource-time-grid/index.js";
 import { RESOURCE_TIME_GRID_CSS } from "./styles.js";
 import {
   element,

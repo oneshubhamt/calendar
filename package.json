@@ -119,6 +119,14 @@
     "./features/resource-time-grid-ui": {
       "types": "./dist/features/resource-time-grid-ui/index.d.ts",
       "import": "./dist/features/resource-time-grid-ui/index.js"
+    },
+    "./features/resource-availability": {
+      "types": "./dist/features/resource-availability.d.ts",
+      "import": "./dist/features/resource-availability.js"
+    },
+    "./features/resource-time-grid": {
+      "types": "./dist/features/resource-time-grid/index.d.ts",
+      "import": "./dist/features/resource-time-grid/index.js"
     }
   },
   "files": [

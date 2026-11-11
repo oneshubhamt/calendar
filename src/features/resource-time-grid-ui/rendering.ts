@@ -3,7 +3,7 @@ import type {
   CalendarResourceTimeGridColumn,
   CalendarResourceTimeGridLayout,
   CalendarResourceTimeGridLayoutItem,
-} from "../resource-scheduler/index.js";
+} from "../resource-time-grid/index.js";
 
 export interface ResourceTimeGridSurfaceModel {
   readonly layout: CalendarResourceTimeGridLayout;

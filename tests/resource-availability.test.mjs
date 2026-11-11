@@ -4,7 +4,7 @@ import {
   createResourceAvailabilityPlacementGuard,
   createResourceAvailabilityProvider,
   expandResourceAvailabilityDefinitions,
-} from "../dist/features/resource-scheduler/index.js";
+} from "../dist/features/resource-availability.js";
 
 const resources = [
   { id: "rooms", title: "Rooms" },

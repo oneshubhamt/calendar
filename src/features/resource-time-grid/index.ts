@@ -14,14 +14,14 @@ import { parseAbsoluteDateTime } from "../../core/time.js";
 import {
   flattenCalendarResources,
   validateCalendarResourceAssignments,
-} from "./mechanics.js";
-import type { CalendarResourceAvailabilityRange } from "./availability.js";
+} from "../resource-scheduler/mechanics.js";
+import type { CalendarResourceAvailabilityRange } from "../resource-availability.js";
 import type {
   CalendarResource,
   CalendarResourceAssignment,
   CalendarResourceAssignmentVersion,
   CalendarResourceId,
-} from "./types.js";
+} from "../resource-scheduler/types.js";
 
 export interface CalendarResourceTimeGridLayoutOptions {
   readonly timeZone: string;

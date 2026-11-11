@@ -6,12 +6,12 @@ import type {
   CalendarTemporalSpec,
   ISODateTime,
   RecurrenceRule,
-} from "../../core/types.js";
+} from "../core/types.js";
 import type {
   CalendarTemporalSeriesException,
   CalendarTemporalSeriesPatch,
   CalendarTemporalSeriesRecurrence,
-} from "../../core/recurrence.js";
+} from "../core/recurrence.js";
 import {
   createAvailabilityPlacementGuard,
   expandAvailabilityDefinitions,
@@ -19,13 +19,13 @@ import {
   type CalendarAvailabilityExpansionOptions,
   type CalendarAvailabilityPlacementPolicy,
   type CalendarAvailabilityState,
-} from "../availability.js";
-import { flattenCalendarResources, validateCalendarResources } from "./mechanics.js";
+} from "./availability.js";
+import { flattenCalendarResources, validateCalendarResources } from "./resource-scheduler/mechanics.js";
 import type {
   CalendarResource,
   CalendarResourceId,
   CalendarResourcePlacementGuard,
-} from "./types.js";
+} from "./resource-scheduler/types.js";
 
 export type CalendarResourceAvailabilityState = CalendarAvailabilityState;
 

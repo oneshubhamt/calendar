@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { layoutTimedDay } from "../dist/index.js";
-import { layoutResourceTimeGrid } from "../dist/features/resource-scheduler/index.js";
+import { layoutResourceTimeGrid } from "../dist/features/resource-time-grid/index.js";
 
 const resources = [
   { id: "group", title: "Rooms" },
