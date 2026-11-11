@@ -1400,9 +1400,12 @@ test("print snapshot is detached, read-only, isolated and print media expands cl
     );
     await second.refresh();
 
+    const revisionBefore = globalThis.__visualCalendar.repository.read().revision;
     const snapshot = first.createPrintSnapshot();
     const secondSnapshot = second.createPrintSnapshot({ title: "Second print" });
     const cloneEvent = snapshot.querySelector(".dc-time-event");
+    cloneEvent?.querySelector(".dc-occurrence-main")?.click();
+    const revisionAfter = globalThis.__visualCalendar.repository.read().revision;
     const detached = !snapshot.isConnected;
     const result = {
       detached,
@@ -1425,6 +1428,7 @@ test("print snapshot is detached, read-only, isolated and print media expands cl
       firstContainsSecond: snapshot.textContent?.includes("Second calendar only") ?? false,
       secondContainsFirst: secondSnapshot.textContent?.includes("Morning focus") ?? false,
       secondTitle: secondSnapshot.querySelector(".dc-print-heading")?.textContent,
+      repositoryUnchanged: revisionAfter === revisionBefore,
     };
 
     document.body.append(snapshot);
@@ -1449,7 +1453,11 @@ test("print snapshot is detached, read-only, isolated and print media expands cl
     firstContainsSecond: false,
     secondContainsFirst: false,
     secondTitle: "Second print",
+    repositoryUnchanged: true,
   });
+
+  await page.locator("#browser-test-host .dc-time-event .dc-occurrence-main").first().evaluate(node => node.click());
+  await expect(page.locator(".dc-dialog")).toBeVisible();
 
   await page.emulateMedia({ media: "print" });
   const printStyles = await page.evaluate(() => {
@@ -1457,6 +1465,9 @@ test("print snapshot is detached, read-only, isolated and print media expands cl
     const snapshotRoot = snapshot?.querySelector(".dc-root");
     const snapshotBody = snapshot?.querySelector(".dc-body");
     const liveToolbar = document.querySelector("#browser-test-host > .dc-root .dc-toolbar");
+    const liveToolbarButton = liveToolbar?.querySelector("button");
+    const liveToolbarTitle = liveToolbar?.querySelector(".dc-title");
+    const liveDialog = document.querySelector(".dc-dialog");
     const liveEvent = document.querySelector("#browser-test-host > .dc-root .dc-time-event");
     const weekHeaders = snapshot?.querySelector(".dc-day-headers");
     if (!(snapshotRoot instanceof HTMLElement) || !(snapshotBody instanceof HTMLElement)) throw new Error("Print snapshot missing");
@@ -1465,6 +1476,9 @@ test("print snapshot is detached, read-only, isolated and print media expands cl
       bodyOverflow: getComputedStyle(snapshotBody).overflow,
       bodyHeight: getComputedStyle(snapshotBody).height,
       toolbarDisplay: liveToolbar instanceof HTMLElement ? getComputedStyle(liveToolbar).display : "missing",
+      toolbarButtonDisplay: liveToolbarButton instanceof HTMLElement ? getComputedStyle(liveToolbarButton).display : "missing",
+      toolbarTitleDisplay: liveToolbarTitle instanceof HTMLElement ? getComputedStyle(liveToolbarTitle).display : "missing",
+      dialogDisplay: liveDialog instanceof HTMLElement ? getComputedStyle(liveDialog).display : "missing",
       headerPosition: weekHeaders instanceof HTMLElement ? getComputedStyle(weekHeaders).position : "missing",
       liveEventTransform: liveEvent instanceof HTMLElement ? getComputedStyle(liveEvent).transform : "missing",
       liveEventHeight: liveEvent instanceof HTMLElement ? getComputedStyle(liveEvent).height : "missing",
@@ -1475,7 +1489,10 @@ test("print snapshot is detached, read-only, isolated and print media expands cl
   expect(printStyles.rootOverflow).toBe("visible");
   expect(printStyles.bodyOverflow).toBe("visible");
   expect(printStyles.bodyHeight).not.toBe("0px");
-  expect(printStyles.toolbarDisplay).toBe("none");
+  expect(printStyles.toolbarDisplay).toBe("block");
+  expect(printStyles.toolbarButtonDisplay).toBe("none");
+  expect(printStyles.toolbarTitleDisplay).toBe("block");
+  expect(printStyles.dialogDisplay).toBe("none");
   expect(printStyles.headerPosition).toBe("static");
   expect(printStyles.liveEventTransform).toBe("none");
   expect(printStyles.liveEventHeight).toBe(printStyles.liveEventPrintHeight);

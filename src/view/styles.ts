@@ -64,7 +64,10 @@ export const CALENDAR_CSS = String.raw`
 
 @media print{
   .dc-root{--dc-border:#cbd5e1;--dc-muted:#4b5563;--dc-bg:#fff;--dc-soft:#f8fafc;--dc-text:#111827;color:var(--dc-text);background:var(--dc-bg);border:0!important;border-radius:0!important;min-height:0!important;height:auto!important;overflow:visible!important;box-shadow:none!important}
-  .dc-toolbar,.dc-source-menu,.dc-context-menu,.dc-addon-menu,.dc-inline-actions,.dc-resize-handle,.dc-timeline-resize-handle,.dc-selection-range,.dc-now,.dc-sr-only{display:none!important}
+  .dc-toolbar{display:block!important;min-height:0!important;padding:0 0 8px!important;border-bottom:1px solid var(--dc-border)!important;background:#fff!important}
+  .dc-toolbar>*{display:none!important}
+  .dc-toolbar>.dc-title{display:block!important;min-width:0!important;margin:0!important;font-size:18px!important;color:#111827!important}
+  .dc-dialog,.dc-source-menu,.dc-context-menu,.dc-addon-menu,.dc-inline-actions,.dc-resize-handle,.dc-timeline-resize-handle,.dc-selection-range,.dc-now,.dc-sr-only{display:none!important}
   .dc-body,.dc-timeline-scroll{height:auto!important;max-height:none!important;overflow:visible!important}
   .dc-weekdays,.dc-day-headers,.dc-agenda-heading,.dc-timeline-axis{position:static!important}
   .dc-day-cell,.dc-all-day-col,.dc-background-layer,.dc-day-background-layer{overflow:visible!important}
