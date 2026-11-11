@@ -253,7 +253,7 @@ export async function openEventEditor(
   const startPlain = instantToPlain(recurrenceAnchor.getTime(), editorTimeZone);
   const startWeekday = new Date(Date.UTC(startPlain.year, startPlain.month - 1, startPlain.day)).getUTCDay() as Weekday;
   const simpleByDay = currentRule?.byDay?.filter(entry => entry.ordinal === undefined).map(entry => entry.weekday);
-  const selectedWeekdays = new Set(simpleByDay?.length ? simpleByDay : currentRule?.byWeekday?.length ? currentRule.byWeekday : [startWeekday]);
+  const selectedWeekdays = new Set(simpleByDay?.length ? simpleByDay : [startWeekday]);
   for (const weekday of WEEKDAYS) {
     const label = element("label", "dc-weekday-check");
     const check = input(`weekday-${weekday.value}`, "checkbox");

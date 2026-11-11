@@ -1,14 +1,13 @@
+import { sameCanonicalValue } from "./canonical-value.js";
 import type {
-  CalendarItem,
-  CalendarItemPatch,
-  CalendarOccurrence,
   CalendarRange,
-  CalendarRecurrence,
+  CalendarTemporalForm,
   CalendarTemporalKind,
+  CalendarTemporalSpec,
   ISODateTime,
   RecurrenceByDay,
-  RecurrenceException,
   RecurrenceRule,
+  TemporalPrecision,
   Weekday,
 } from "./types.js";
 import { hasExplicitOffset, intersectsRange, resolvedTimeZone, toDate } from "./time.js";
@@ -33,13 +32,56 @@ import {
 
 const MAX_OCCURRENCES = 20_000;
 
-/** Structural equality for recurrence definitions used by both command and editor paths. */
-export function sameRecurrence(a: CalendarRecurrence | undefined, b: CalendarRecurrence | null | undefined): boolean {
-  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-}
-
 export interface RecurrenceExpansionOptions {
   readonly timeZone?: string | undefined;
+}
+
+/** Generic temporal-series input for recurrence resolution. It contains no event semantics. */
+export interface CalendarTemporalSeries {
+  readonly id: string;
+  readonly start: ISODateTime;
+  readonly end: ISODateTime;
+  readonly allDay?: boolean | undefined;
+  readonly precision?: TemporalPrecision | undefined;
+  readonly temporal?: CalendarTemporalSpec | undefined;
+  readonly temporalForm?: CalendarTemporalForm | undefined;
+}
+
+export interface CalendarTemporalSeriesPatch {
+  readonly start?: ISODateTime;
+  readonly end?: ISODateTime;
+}
+
+
+export interface CalendarTemporalSeriesEditPatch extends CalendarTemporalSeriesPatch {
+  readonly allDay?: boolean | undefined;
+  readonly precision?: TemporalPrecision | undefined;
+  readonly temporal?: CalendarTemporalSpec | null | undefined;
+  readonly temporalForm?: CalendarTemporalForm | undefined;
+}
+
+export interface CalendarResolvedTemporalPlacement {
+  readonly start: ISODateTime;
+  readonly end: ISODateTime;
+}
+
+export interface CalendarTemporalSeriesException<TPatch extends CalendarTemporalSeriesPatch = CalendarTemporalSeriesPatch> {
+  readonly originalStart: ISODateTime;
+  readonly cancelled?: boolean;
+  readonly replacement?: TPatch;
+}
+
+export interface CalendarTemporalSeriesRecurrence<TPatch extends CalendarTemporalSeriesPatch = CalendarTemporalSeriesPatch> {
+  readonly rule: RecurrenceRule;
+  readonly exceptions?: readonly CalendarTemporalSeriesException<TPatch>[] | undefined;
+}
+
+export interface CalendarResolvedTemporalRange<TPatch extends CalendarTemporalSeriesPatch = CalendarTemporalSeriesPatch> {
+  readonly originalStart: ISODateTime;
+  readonly start: ISODateTime;
+  readonly end: ISODateTime;
+  readonly recurring: boolean;
+  readonly exception?: CalendarTemporalSeriesException<TPatch> | undefined;
 }
 
 interface TemporalContext {
@@ -66,149 +108,61 @@ export function validateRecurrenceRule(rule: RecurrenceRule): void {
   if (rule.byMonthDay?.some(day => !Number.isInteger(day) || day === 0 || day < -31 || day > 31)) throw new RangeError("Invalid BYMONTHDAY value");
   if (rule.byMonth?.some(month => !Number.isInteger(month) || month < 1 || month > 12)) throw new RangeError("Invalid BYMONTH value");
   if (rule.bySetPosition?.some(position => !Number.isInteger(position) || position === 0 || position < -366 || position > 366)) throw new RangeError("Invalid BYSETPOS value");
-  if (rule.bySetPosition?.length && !(rule.byMonthDay?.length || rule.byMonth?.length || rule.byWeekday?.length || rule.byDay?.length)) throw new RangeError("BYSETPOS requires another BY rule");
+  if (rule.bySetPosition?.length && !(rule.byMonthDay?.length || rule.byMonth?.length || rule.byDay?.length)) throw new RangeError("BYSETPOS requires another BY rule");
   if (rule.byDay?.some(entry => entry.ordinal !== undefined && (!Number.isInteger(entry.ordinal) || entry.ordinal === 0 || entry.ordinal < -53 || entry.ordinal > 53))) throw new RangeError("Invalid ordinal BYDAY value");
   if ((rule.frequency === "daily" || rule.frequency === "weekly") && rule.byDay?.some(entry => entry.ordinal !== undefined)) throw new RangeError("Ordinal BYDAY is supported only for monthly/yearly recurrence");
 }
 
-export function occurrenceIdentityAtOrdinal(item: CalendarItem, ordinal: number, options: RecurrenceExpansionOptions = {}): string {
-  if (!Number.isInteger(ordinal) || ordinal < 1) throw new RangeError("ordinal must be a positive integer");
-  if (!item.recurrence) {
-    if (ordinal !== 1) throw new RangeError("Non-recurring item has only one occurrence");
-    return contextFor(item, options).kind === "instant" ? toDate(item.start).toISOString() : identityForPlain(contextFor(item, options).startPlain, contextFor(item, options).kind);
-  }
-  let index = 0;
-  for (const candidate of resolvedCandidates(item, options)) {
-    index += 1;
-    if (index === ordinal) return candidate.identity;
-    if (index >= (item.recurrence.rule.count ?? MAX_OCCURRENCES)) break;
-  }
-  throw new RangeError(`Recurrence ${item.id} has no occurrence ${ordinal}`);
+
+export interface TemporalRecurrenceShape {
+  readonly rule: RecurrenceRule;
+  readonly exceptions?: readonly unknown[] | undefined;
 }
 
-export function recurrenceOrdinal(item: CalendarItem, originalStart: ISODateTime | Date, options: RecurrenceExpansionOptions = {}): number {
-  if (!item.recurrence) return 1;
-  validateRecurrenceRule(item.recurrence.rule);
-  const target = canonicalIdentity(item, originalStart, options);
-  let ordinal = 0;
-  for (const candidate of resolvedCandidates(item, options)) {
-    ordinal += 1;
-    if (candidate.identity === target) return ordinal;
-    if (ordinal >= (item.recurrence.rule.count ?? MAX_OCCURRENCES)) break;
-  }
-  throw new Error(`Occurrence ${String(originalStart)} is not part of recurrence ${item.id}`);
+/** Structural equality for recurrence definitions independent of the consumer's exception payload. */
+export function sameRecurrence(
+  a: TemporalRecurrenceShape | undefined,
+  b: TemporalRecurrenceShape | null | undefined,
+): boolean {
+  return sameCanonicalValue(a ?? null, b ?? null);
 }
 
-export function occurrenceFromItem(item: CalendarItem, options: RecurrenceExpansionOptions = {}): CalendarOccurrence {
-  const candidate = resolveAnchor(item, contextFor(item, options));
-  return patchOccurrence(item, candidate, undefined, options);
-}
-
-export function expandItem(item: CalendarItem, range: CalendarRange, options: RecurrenceExpansionOptions = {}): CalendarOccurrence[] {
-  const rangeStart = toDate(range.start).getTime();
-  const rangeEnd = toDate(range.end).getTime();
-  if (rangeEnd <= rangeStart) throw new RangeError("Calendar range end must be after start");
-  if (!item.recurrence) {
-    const occurrence = occurrenceFromItem(item, options);
-    return intersectsRange(occurrence.start, occurrence.end, range.start, range.end, occurrence.temporalForm === "point") ? [occurrence] : [];
-  }
-
-  validateRecurrenceRule(item.recurrence.rule);
-  const out: CalendarOccurrence[] = [];
-  const exceptions = exceptionMap(item, item.recurrence.exceptions, options);
-  let generated = 0;
-  let pastRange = 0;
-  for (const candidate of resolvedCandidates(item, options)) {
-    generated += 1;
-    if (generated > (item.recurrence.rule.count ?? MAX_OCCURRENCES)) break;
-    const exception = exceptions.get(candidate.identity);
-    if (!exception?.cancelled) {
-      const occurrence = patchOccurrence(item, candidate, exception?.replacement, options);
-      if (intersectsRange(occurrence.start, occurrence.end, range.start, range.end, occurrence.temporalForm === "point")) out.push(occurrence);
-    }
-    if (candidate.startEpochMs >= rangeEnd) {
-      pastRange += 1;
-      if (pastRange > 2 && !hasLaterException(exceptions, candidate.identity, item, options)) break;
-    }
-  }
-  return out;
-}
-
-export function expandItems(items: readonly CalendarItem[], range: CalendarRange, options: RecurrenceExpansionOptions = {}): CalendarOccurrence[] {
-  return items.flatMap(item => expandItem(item, range, options)).sort((a, b) =>
-    toDate(a.start).getTime() - toDate(b.start).getTime() ||
-    toDate(a.end).getTime() - toDate(b.end).getTime() ||
-    a.title.localeCompare(b.title),
-  );
-}
-
-function displayZoneFor(item: CalendarItem, options: RecurrenceExpansionOptions): string {
-  const viewer = resolvedTimeZone(options.timeZone);
-  return item.temporal?.kind === "zoned" ? item.temporal.timeZone ?? viewer : viewer;
-}
-
-function displayPlain(value: ISODateTime, zone: string): PlainDateTimeParts {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return parsePlainDate(value);
-  return hasExplicitOffset(value) ? instantToPlain(toDate(value).getTime(), zone) : parsePlainDateTime(value);
-}
-
-function targetTemporalKind(item: CalendarItem, patch: CalendarItemPatch): CalendarTemporalKind {
-  if (patch.temporal && patch.temporal !== null) return patch.temporal.kind;
-  if (patch.temporal === null) {
-    const value = patch.start ?? item.start;
-    if (patch.allDay || patch.precision === "date" || /^\d{4}-\d{2}-\d{2}$/.test(value)) return "date";
-    return hasExplicitOffset(value) ? "instant" : "floating";
-  }
-  return item.temporal?.kind ?? (item.allDay || item.precision === "date" ? "date" : hasExplicitOffset(item.start) ? "instant" : "floating");
-}
-
-function serializeProjectedPlain(
-  plain: PlainDateTimeParts,
-  kind: CalendarTemporalKind,
-  targetZone: string,
-  disambiguation: "compatible" | "earlier" | "later" | "reject",
-): ISODateTime {
-  if (kind === "date") return formatPlainDate(plain);
-  if (kind === "floating" || kind === "zoned") return formatPlainDateTime(plain);
-  return new Date(plainToInstant(plain, targetZone, disambiguation)).toISOString();
-}
-
-/** Project an edited resolved occurrence back into the source series anchor while preserving temporal semantics. */
-export function projectOccurrencePatchToSeries(
-  item: CalendarItem,
-  occurrence: CalendarOccurrence,
-  patch: CalendarItemPatch,
+/** Project an edited resolved placement back to a temporal series anchor while preserving temporal representation. */
+export function projectTemporalPatchToSeries<TPatch extends CalendarTemporalSeriesEditPatch>(
+  series: CalendarTemporalSeries,
+  resolved: CalendarResolvedTemporalPlacement,
+  patch: TPatch,
   options: RecurrenceExpansionOptions = {},
-): CalendarItemPatch {
+): TPatch {
   const viewerZone = resolvedTimeZone(options.timeZone);
-  const sourceDisplayZone = displayZoneFor(item, options);
-  const targetKind = targetTemporalKind(item, patch);
+  const sourceDisplayZone = displayZoneFor(series, options);
+  const targetKind = targetTemporalKind(series, patch);
   const targetZone = targetKind === "zoned"
     ? patch.temporal && patch.temporal !== null && patch.temporal.kind === "zoned"
       ? patch.temporal.timeZone ?? sourceDisplayZone
-      : item.temporal?.timeZone ?? sourceDisplayZone
+      : series.temporal?.timeZone ?? sourceDisplayZone
     : viewerZone;
-  const patchInputZone = item.temporal?.kind === "zoned" ? sourceDisplayZone : targetZone;
+  const patchInputZone = series.temporal?.kind === "zoned" ? sourceDisplayZone : targetZone;
   const disambiguation = patch.temporal && patch.temporal !== null
-    ? patch.temporal.disambiguation ?? item.temporal?.disambiguation ?? "compatible"
-    : item.temporal?.disambiguation ?? "compatible";
+    ? patch.temporal.disambiguation ?? series.temporal?.disambiguation ?? "compatible"
+    : series.temporal?.disambiguation ?? "compatible";
 
-  const anchorStartPlain = displayPlain(item.start, sourceDisplayZone);
-  const anchorEndPlain = displayPlain(item.end, sourceDisplayZone);
-  const occurrenceStartPlain = instantToPlain(toDate(occurrence.start).getTime(), sourceDisplayZone);
-  const occurrenceEndPlain = instantToPlain(toDate(occurrence.end).getTime(), sourceDisplayZone);
+  const anchorStartPlain = displayPlain(series.start, sourceDisplayZone);
+  const anchorEndPlain = displayPlain(series.end, sourceDisplayZone);
+  const resolvedStartPlain = instantToPlain(toDate(resolved.start).getTime(), sourceDisplayZone);
+  const resolvedEndPlain = instantToPlain(toDate(resolved.end).getTime(), sourceDisplayZone);
 
   let startPlain = anchorStartPlain;
   let endPlain = anchorEndPlain;
   if (patch.start !== undefined) {
     const desiredStartPlain = displayPlain(patch.start, patchInputZone);
-    const delta = plainMinutesBetween(occurrenceStartPlain, desiredStartPlain);
+    const delta = plainMinutesBetween(resolvedStartPlain, desiredStartPlain);
     startPlain = addPlainMinutes(anchorStartPlain, delta);
     if (patch.end === undefined) endPlain = addPlainMinutes(anchorEndPlain, delta);
   }
   if (patch.end !== undefined) {
     const desiredEndPlain = displayPlain(patch.end, patchInputZone);
-    const delta = plainMinutesBetween(occurrenceEndPlain, desiredEndPlain);
+    const delta = plainMinutesBetween(resolvedEndPlain, desiredEndPlain);
     endPlain = addPlainMinutes(anchorEndPlain, delta);
   }
 
@@ -219,41 +173,152 @@ export function projectOccurrencePatchToSeries(
   };
 }
 
-/** Preserve existing exception meaning when a whole series start/rule is edited. Exceptions are rebased by occurrence ordinal. */
-export function rebaseRecurrenceExceptions(
-  previous: CalendarItem,
-  next: CalendarItem,
+/** Rebase generic recurrence exceptions by temporal occurrence ordinal after a series rule/anchor edit. */
+export function rebaseTemporalSeriesExceptions<TPatch extends CalendarTemporalSeriesPatch>(
+  previous: CalendarTemporalSeries,
+  previousRecurrence: CalendarTemporalSeriesRecurrence<TPatch> | undefined,
+  next: CalendarTemporalSeries,
+  nextRecurrence: CalendarTemporalSeriesRecurrence<TPatch> | undefined,
   options: RecurrenceExpansionOptions = {},
-): CalendarRecurrence | undefined {
-  if (!next.recurrence) return undefined;
-  if (!previous.recurrence?.exceptions?.length) return next.recurrence;
-  const rebased: RecurrenceException[] = [];
-  for (const exception of previous.recurrence.exceptions) {
+): CalendarTemporalSeriesRecurrence<TPatch> | undefined {
+  if (!nextRecurrence) return undefined;
+  if (!previousRecurrence?.exceptions?.length) return nextRecurrence;
+  const rebased: CalendarTemporalSeriesException<TPatch>[] = [];
+  for (const exception of previousRecurrence.exceptions) {
     try {
-      const ordinal = recurrenceOrdinal(previous, exception.originalStart, options);
-      const originalStart = occurrenceIdentityAtOrdinal(next, ordinal, options);
+      const ordinal = temporalSeriesOrdinal(previous, previousRecurrence.rule, exception.originalStart, options);
+      const originalStart = temporalSeriesIdentityAtOrdinal(next, nextRecurrence.rule, ordinal, options);
       rebased.push({ ...exception, originalStart });
     } catch {
       // The edited rule no longer has a corresponding occurrence; dropping the orphan is safer than misapplying it.
     }
   }
-  return { ...next.recurrence, ...(rebased.length ? { exceptions: rebased } : { exceptions: undefined }) };
+  return { ...nextRecurrence, ...(rebased.length ? { exceptions: rebased } : { exceptions: undefined }) };
 }
 
-function* resolvedCandidates(item: CalendarItem, options: RecurrenceExpansionOptions): Generator<ResolvedCandidate> {
-  const recurrence = item.recurrence;
-  const ctx = contextFor(item, options);
-  const anchor = resolveAnchor(item, ctx);
+export function resolveTemporalSeriesAnchor(
+  series: CalendarTemporalSeries,
+  rule?: RecurrenceRule,
+  options: RecurrenceExpansionOptions = {},
+): CalendarResolvedTemporalRange {
+  if (rule) validateRecurrenceRule(rule);
+  const candidate = resolveAnchor(series, contextFor(series, options));
+  return {
+    originalStart: candidate.identity,
+    start: new Date(candidate.startEpochMs).toISOString(),
+    end: new Date(candidate.endEpochMs).toISOString(),
+    recurring: Boolean(rule),
+  };
+}
+
+export function temporalSeriesIdentityAtOrdinal(
+  series: CalendarTemporalSeries,
+  rule: RecurrenceRule | undefined,
+  ordinal: number,
+  options: RecurrenceExpansionOptions = {},
+): string {
+  if (!Number.isInteger(ordinal) || ordinal < 1) throw new RangeError("ordinal must be a positive integer");
+  if (!rule && ordinal !== 1) throw new RangeError("Non-recurring temporal series has only one occurrence");
+  let index = 0;
+  for (const candidate of resolvedCandidates(series, rule, options)) {
+    index += 1;
+    if (index === ordinal) return candidate.identity;
+    if (index >= (rule?.count ?? MAX_OCCURRENCES)) break;
+  }
+  throw new RangeError(`Temporal series ${series.id} has no occurrence ${ordinal}`);
+}
+
+export function temporalSeriesOrdinal(
+  series: CalendarTemporalSeries,
+  rule: RecurrenceRule | undefined,
+  originalStart: ISODateTime | Date,
+  options: RecurrenceExpansionOptions = {},
+): number {
+  if (!rule) return 1;
+  validateRecurrenceRule(rule);
+  const target = canonicalIdentity(series, originalStart, options);
+  let ordinal = 0;
+  for (const candidate of resolvedCandidates(series, rule, options)) {
+    ordinal += 1;
+    if (candidate.identity === target) return ordinal;
+    if (ordinal >= (rule.count ?? MAX_OCCURRENCES)) break;
+  }
+  throw new Error(`Occurrence ${String(originalStart)} is not part of temporal series ${series.id}`);
+}
+
+/**
+ * Expand a generic temporal series into resolved absolute ranges.
+ * Candidate generation, timezone/DST handling and temporal exception geometry are shared by all consumers.
+ * The caller owns semantic fields and maps the resolved ranges into its own domain objects.
+ */
+export function expandTemporalSeries<TPatch extends CalendarTemporalSeriesPatch = CalendarTemporalSeriesPatch>(
+  series: CalendarTemporalSeries,
+  recurrence: CalendarTemporalSeriesRecurrence<TPatch> | undefined,
+  range: CalendarRange,
+  options: RecurrenceExpansionOptions = {},
+): CalendarResolvedTemporalRange<TPatch>[] {
+  const rangeStart = toDate(range.start).getTime();
+  const rangeEnd = toDate(range.end).getTime();
+  if (rangeEnd <= rangeStart) throw new RangeError("Calendar range end must be after start");
+  if (recurrence) validateRecurrenceRule(recurrence.rule);
+
+  const exceptions = new Map<string, CalendarTemporalSeriesException<TPatch>>();
+  for (const exception of recurrence?.exceptions ?? []) {
+    const identity = canonicalIdentity(series, exception.originalStart, options);
+    if (exceptions.has(identity)) throw new Error(`Temporal series ${series.id} has duplicate recurrence exception ${exception.originalStart}`);
+    if (exception.cancelled && exception.replacement) throw new Error(`Temporal series ${series.id} recurrence exception cannot be cancelled and replaced`);
+    exceptions.set(identity, exception);
+  }
+
+  const out: CalendarResolvedTemporalRange<TPatch>[] = [];
+  const remainingExceptions = new Set(exceptions.keys());
+  for (const candidate of resolvedCandidates(series, recurrence?.rule, options)) {
+    const exception = exceptions.get(candidate.identity);
+    remainingExceptions.delete(candidate.identity);
+    if (!exception?.cancelled) {
+      const patch = exception?.replacement;
+      const startEpoch = patch?.start !== undefined ? patchInstant(series, patch.start, options) : candidate.startEpochMs;
+      const endEpoch = patch?.end !== undefined
+        ? patchInstant(series, patch.end, options)
+        : patch?.start !== undefined
+          ? startEpoch + (candidate.endEpochMs - candidate.startEpochMs)
+          : candidate.endEpochMs;
+      if (series.temporalForm === "point" ? startEpoch !== endEpoch : endEpoch <= startEpoch) {
+        throw new RangeError(`Temporal series ${series.id} exception produces invalid chronology`);
+      }
+      const start = new Date(startEpoch).toISOString();
+      const end = new Date(endEpoch).toISOString();
+      if (intersectsRange(start, end, range.start, range.end, series.temporalForm === "point")) {
+        out.push({
+          originalStart: candidate.identity,
+          start,
+          end,
+          recurring: Boolean(recurrence),
+          ...(exception ? { exception } : {}),
+        });
+      }
+    }
+    if (candidate.startEpochMs >= rangeEnd && remainingExceptions.size === 0) break;
+  }
+  return out;
+}
+
+function* resolvedCandidates(
+  series: CalendarTemporalSeries,
+  rule: RecurrenceRule | undefined,
+  options: RecurrenceExpansionOptions,
+): Generator<ResolvedCandidate> {
+  const ctx = contextFor(series, options);
+  const anchor = resolveAnchor(series, ctx);
   yield anchor;
-  if (!recurrence) return;
-  const rule = recurrence.rule;
+  if (!rule) return;
   const until = rule.until;
   let yielded = 1;
   for (const plain of recurrencePlainCandidates(ctx.startPlain, rule)) {
     if (comparePlain(plain, ctx.startPlain) <= 0) continue;
-    const resolved = resolveCandidate(item, ctx, plain, false);
-    if (!resolved) continue; // RFC 5545: invalid/non-existent recurring local times are ignored and do not count.
-    if (!withinUntil(item, resolved, until, options)) return;
+    const resolved = resolveCandidate(series, ctx, plain, false);
+    if (!resolved) continue; // RFC 5545: nonexistent recurring local times are ignored and do not count.
+    if (!withinUntil(series, resolved, until, options)) return;
     yield resolved;
     yielded += 1;
     if (yielded >= (rule.count ?? MAX_OCCURRENCES)) return;
@@ -286,7 +351,7 @@ function weeklySet(anchor: PlainDateTimeParts, rule: RecurrenceRule, weekOffset:
   return [...new Set(days)]
     .sort((a, b) => ((a - weekStartsOn + 7) % 7) - ((b - weekStartsOn + 7) % 7))
     .map(weekday => addPlainDays(base, (weekday - weekStartsOn + 7) % 7))
-    .filter(candidate => matchesGeneral(candidate, { ...rule, byDay: undefined, byWeekday: undefined }));
+    .filter(candidate => matchesGeneral(candidate, { ...rule, byDay: undefined }));
 }
 
 function monthlySet(anchor: PlainDateTimeParts, rule: RecurrenceRule, monthOffset: number): PlainDateTimeParts[] {
@@ -339,8 +404,7 @@ function matchesGeneral(candidate: PlainDateTimeParts, rule: RecurrenceRule): bo
 }
 
 function combinedByDays(rule: RecurrenceRule): RecurrenceByDay[] {
-  if (rule.byDay?.length) return [...rule.byDay];
-  return (rule.byWeekday ?? []).map(weekday => ({ weekday }));
+  return [...(rule.byDay ?? [])];
 }
 
 function simpleByDays(rule: RecurrenceRule): RecurrenceByDay[] {
@@ -379,36 +443,79 @@ function uniqueSorted(values: PlainDateTimeParts[]): PlainDateTimeParts[] {
   return [...map.values()].sort(comparePlain);
 }
 
-function contextFor(item: CalendarItem, options: RecurrenceExpansionOptions): TemporalContext {
-  const viewerZone = resolvedTimeZone(options.timeZone);
-  const explicitKind = item.temporal?.kind;
-  const kind: CalendarTemporalKind = explicitKind ?? (item.allDay || item.precision === "date" ? "date" : hasExplicitOffset(item.start) ? "instant" : "floating");
-  const zone = kind === "instant" ? "UTC" : kind === "zoned" ? item.temporal?.timeZone ?? viewerZone : viewerZone;
-  if (kind === "zoned" && !item.temporal?.timeZone) throw new RangeError(`Zoned calendar item ${item.id} requires temporal.timeZone`);
-  const startPlain = sourcePlain(item.start, kind, zone, viewerZone);
-  const endPlain = sourcePlain(item.end, kind, zone, viewerZone);
-  const elapsedDurationMs = sourceInstant(item.end, kind, zone, viewerZone) - sourceInstant(item.start, kind, zone, viewerZone);
-  const wallDurationMinutes = plainMinutesBetween(startPlain, endPlain);
-  const dateDurationDays = Math.max(1, plainDaysBetween(startPlain, endPlain));
-  const point = item.temporalForm === "point";
-  if (point) {
-    if (kind === "date" || item.allDay || item.precision === "date") throw new RangeError(`Calendar item ${item.id} point temporal form cannot be date-only or all-day`);
-    if (wallDurationMinutes !== 0 || elapsedDurationMs !== 0) throw new RangeError(`Calendar item ${item.id} point temporal form requires start and end to be identical`);
-  } else if (kind !== "date" && wallDurationMinutes <= 0 && elapsedDurationMs <= 0) {
-    throw new RangeError(`Calendar item ${item.id} must end after it starts`);
+function displayZoneFor(series: CalendarTemporalSeries, options: RecurrenceExpansionOptions): string {
+  const viewer = resolvedTimeZone(options.timeZone);
+  return series.temporal?.kind === "zoned" ? series.temporal.timeZone ?? viewer : viewer;
+}
+
+function displayPlain(value: ISODateTime, zone: string): PlainDateTimeParts {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return parsePlainDate(value);
+  return hasExplicitOffset(value) ? instantToPlain(toDate(value).getTime(), zone) : parsePlainDateTime(value);
+}
+
+function targetTemporalKind(series: CalendarTemporalSeries, patch: CalendarTemporalSeriesEditPatch): CalendarTemporalKind {
+  if (patch.temporal && patch.temporal !== null) return patch.temporal.kind;
+  if (patch.temporal === null) {
+    const value = patch.start ?? series.start;
+    if (patch.allDay || patch.precision === "date" || /^\d{4}-\d{2}-\d{2}$/.test(value)) return "date";
+    return hasExplicitOffset(value) ? "instant" : "floating";
   }
-  return { kind, timeZone: zone, startPlain, endPlain, elapsedDurationMs, wallDurationMinutes, dateDurationDays, point };
+  return series.temporal?.kind ?? (series.allDay || series.precision === "date" ? "date" : hasExplicitOffset(series.start) ? "instant" : "floating");
 }
 
-function resolveAnchor(item: CalendarItem, ctx: TemporalContext): ResolvedCandidate {
-  return resolveCandidate(item, ctx, ctx.startPlain, true)!;
+function serializeProjectedPlain(
+  plain: PlainDateTimeParts,
+  kind: CalendarTemporalKind,
+  targetZone: string,
+  disambiguation: "compatible" | "earlier" | "later" | "reject",
+): ISODateTime {
+  if (kind === "date") return formatPlainDate(plain);
+  if (kind === "floating" || kind === "zoned") return formatPlainDateTime(plain);
+  return new Date(plainToInstant(plain, targetZone, disambiguation)).toISOString();
 }
 
-function resolveCandidate(item: CalendarItem, ctx: TemporalContext, plain: PlainDateTimeParts, anchor: boolean): ResolvedCandidate | null {
+function contextFor(series: CalendarTemporalSeries, options: RecurrenceExpansionOptions): TemporalContext {
+  if (typeof series.id !== "string" || !series.id.trim()) throw new Error("Temporal series id is required");
+  const viewerZone = resolvedTimeZone(options.timeZone);
+  const explicitKind = series.temporal?.kind;
+  const kind: CalendarTemporalKind = explicitKind ?? (series.allDay || series.precision === "date" ? "date" : hasExplicitOffset(series.start) ? "instant" : "floating");
+  const zone = kind === "instant" ? "UTC" : kind === "zoned" ? series.temporal?.timeZone ?? viewerZone : viewerZone;
+  if (kind === "zoned" && !series.temporal?.timeZone) throw new RangeError(`Zoned temporal series ${series.id} requires temporal.timeZone`);
+  const startPlain = sourcePlain(series.start, kind, zone, viewerZone);
+  const endPlain = sourcePlain(series.end, kind, zone, viewerZone);
+  const elapsedDurationMs = sourceInstant(series.end, kind, zone, viewerZone) - sourceInstant(series.start, kind, zone, viewerZone);
+  const wallDurationMinutes = plainMinutesBetween(startPlain, endPlain);
+  const rawDateDurationDays = plainDaysBetween(startPlain, endPlain);
+  const point = series.temporalForm === "point";
+  if (point) {
+    if (kind === "date" || series.allDay || series.precision === "date") throw new RangeError(`Temporal series ${series.id} point temporal form cannot be date-only or all-day`);
+    if (wallDurationMinutes !== 0 || elapsedDurationMs !== 0) throw new RangeError(`Temporal series ${series.id} point temporal form requires start and end to be identical`);
+  } else if (kind === "date") {
+    if (rawDateDurationDays <= 0) throw new RangeError(`Temporal series ${series.id} must end after it starts`);
+  } else if (wallDurationMinutes <= 0 && elapsedDurationMs <= 0) {
+    throw new RangeError(`Temporal series ${series.id} must end after it starts`);
+  }
+  return {
+    kind,
+    timeZone: zone,
+    startPlain,
+    endPlain,
+    elapsedDurationMs,
+    wallDurationMinutes,
+    dateDurationDays: Math.max(1, rawDateDurationDays),
+    point,
+  };
+}
+
+function resolveAnchor(series: CalendarTemporalSeries, ctx: TemporalContext): ResolvedCandidate {
+  return resolveCandidate(series, ctx, ctx.startPlain, true)!;
+}
+
+function resolveCandidate(series: CalendarTemporalSeries, ctx: TemporalContext, plain: PlainDateTimeParts, anchor: boolean): ResolvedCandidate | null {
   let startEpochMs: number;
   if (ctx.kind === "instant") startEpochMs = Date.UTC(plain.year, plain.month - 1, plain.day, plain.hour, plain.minute, plain.second, plain.millisecond);
   else if (ctx.kind === "date") startEpochMs = plainToInstant({ ...plain, hour: 0, minute: 0, second: 0, millisecond: 0 }, ctx.timeZone, "compatible");
-  else if (anchor) startEpochMs = plainToInstant(plain, ctx.timeZone, item.temporal?.disambiguation ?? "compatible");
+  else if (anchor) startEpochMs = plainToInstant(plain, ctx.timeZone, series.temporal?.disambiguation ?? "compatible");
   else {
     const recurrenceEpoch = recurrencePlainToInstant(plain, ctx.timeZone);
     if (recurrenceEpoch === null) return null;
@@ -423,56 +530,14 @@ function resolveCandidate(item: CalendarItem, ctx: TemporalContext, plain: Plain
     endEpochMs = plainToInstant(endPlain, ctx.timeZone, "compatible");
   } else {
     const endPlain = addPlainMinutes(plain, ctx.wallDurationMinutes);
-    endEpochMs = plainToInstant(endPlain, ctx.timeZone, item.temporal?.disambiguation ?? "compatible");
+    endEpochMs = plainToInstant(endPlain, ctx.timeZone, series.temporal?.disambiguation ?? "compatible");
   }
   return { plain, identity: identityForPlain(plain, ctx.kind), startEpochMs, endEpochMs };
 }
 
-function patchOccurrence(item: CalendarItem, base: ResolvedCandidate, patch: CalendarItemPatch | undefined, options: RecurrenceExpansionOptions): CalendarOccurrence {
-  const startEpoch = patch?.start !== undefined ? patchInstant(item, patch.start, options) : base.startEpochMs;
-  let endEpoch: number;
-  if (patch?.end !== undefined) endEpoch = patchInstant(item, patch.end, options);
-  else if (patch?.start !== undefined) endEpoch = startEpoch + (base.endEpochMs - base.startEpochMs);
-  else endEpoch = base.endEpochMs;
-  const metadata = patch?.metadata === null ? undefined : patch?.metadata ?? item.metadata;
-  const display = patch?.display === null ? undefined : patch?.display ?? item.display;
-  const description = patch?.description === null ? undefined : patch?.description ?? item.description;
-  const location = patch?.location === null ? undefined : patch?.location ?? item.location;
-  const temporal = patch?.temporal === null ? undefined : patch?.temporal ?? item.temporal;
-  const reminders = patch?.reminders === null ? undefined : patch?.reminders ?? item.reminders;
-  const occurrenceId = item.recurrence
-    ? `series:${item.seriesId ?? item.id}@${base.identity}`
-    : `item:${item.id}`;
-  return {
-    calendarId: patch?.calendarId ?? item.calendarId,
-    title: patch?.title ?? item.title,
-    ...(description !== undefined ? { description } : {}),
-    ...(location !== undefined ? { location } : {}),
-    start: new Date(startEpoch).toISOString(),
-    end: new Date(endEpoch).toISOString(),
-    allDay: patch?.allDay ?? item.allDay,
-    precision: patch?.precision ?? item.precision,
-    ...(temporal !== undefined ? { temporal } : {}),
-    ...((patch?.temporalForm ?? item.temporalForm) !== undefined ? { temporalForm: patch?.temporalForm ?? item.temporalForm } : {}),
-    kind: patch?.kind ?? item.kind,
-    ownership: item.ownership,
-    editPolicy: patch?.editPolicy ?? item.editPolicy,
-    ...(item.seriesId !== undefined ? { seriesId: item.seriesId } : {}),
-    ...(reminders !== undefined ? { reminders } : {}),
-    ...(display !== undefined ? { display } : {}),
-    ...(metadata !== undefined ? { metadata } : {}),
-    ...(item.createdAt !== undefined ? { createdAt: item.createdAt } : {}),
-    ...(item.updatedAt !== undefined ? { updatedAt: item.updatedAt } : {}),
-    occurrenceId,
-    sourceItemId: item.id,
-    originalStart: base.identity,
-    recurring: Boolean(item.recurrence),
-  };
-}
-
-function withinUntil(item: CalendarItem, candidate: ResolvedCandidate, until: string | undefined, options: RecurrenceExpansionOptions): boolean {
+function withinUntil(series: CalendarTemporalSeries, candidate: ResolvedCandidate, until: string | undefined, options: RecurrenceExpansionOptions): boolean {
   if (!until) return true;
-  const ctx = contextFor(item, options);
+  const ctx = contextFor(series, options);
   if (ctx.kind === "instant" || (ctx.kind === "zoned" && hasExplicitOffset(until))) return candidate.startEpochMs <= toDate(until).getTime();
   const untilPlain = ctx.kind === "date" ? parsePlainDate(until.slice(0, 10)) : parseTemporalPlain(until, ctx.timeZone);
   return comparePlain(candidate.plain, untilPlain) <= 0;
@@ -494,20 +559,19 @@ function sourceInstant(value: string, kind: CalendarTemporalKind, zone: string, 
   return plainToInstant(plain, kind === "date" ? viewerZone : zone, "compatible");
 }
 
-function patchInstant(item: CalendarItem, value: string, options: RecurrenceExpansionOptions): number {
+function patchInstant(series: CalendarTemporalSeries, value: string, options: RecurrenceExpansionOptions): number {
   if (hasExplicitOffset(value)) return toDate(value).getTime();
-  const ctx = contextFor(item, options);
+  const ctx = contextFor(series, options);
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return plainToInstant(parsePlainDate(value), ctx.timeZone, "compatible");
-  return plainToInstant(parsePlainDateTime(value), ctx.timeZone, item.temporal?.disambiguation ?? "compatible");
+  return plainToInstant(parsePlainDateTime(value), ctx.timeZone, series.temporal?.disambiguation ?? "compatible");
 }
 
-function canonicalIdentity(item: CalendarItem, value: ISODateTime | Date, options: RecurrenceExpansionOptions): string {
+function canonicalIdentity(series: CalendarTemporalSeries, value: ISODateTime | Date, options: RecurrenceExpansionOptions): string {
+  const ctx = contextFor(series, options);
   if (value instanceof Date) {
-    const ctx = contextFor(item, options);
     const plain = instantToPlain(value.getTime(), ctx.timeZone);
     return ctx.kind === "instant" ? value.toISOString() : identityForPlain(plain, ctx.kind);
   }
-  const ctx = contextFor(item, options);
   if (ctx.kind === "instant") return toDate(value).toISOString();
   if (ctx.kind === "date") {
     if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
@@ -521,23 +585,6 @@ function identityForPlain(plain: PlainDateTimeParts, kind: CalendarTemporalKind)
   if (kind === "date") return formatPlainDate(plain);
   if (kind === "instant") return new Date(Date.UTC(plain.year, plain.month - 1, plain.day, plain.hour, plain.minute, plain.second, plain.millisecond)).toISOString();
   return formatPlainDateTime(plain);
-}
-
-function exceptionMap(item: CalendarItem, exceptions: readonly RecurrenceException[] | undefined, options: RecurrenceExpansionOptions): Map<string, RecurrenceException> {
-  const map = new Map<string, RecurrenceException>();
-  for (const exception of exceptions ?? []) map.set(canonicalIdentity(item, exception.originalStart, options), exception);
-  return map;
-}
-
-function hasLaterException(exceptions: Map<string, RecurrenceException>, identity: string, item: CalendarItem, options: RecurrenceExpansionOptions): boolean {
-  if (!exceptions.size) return false;
-  try {
-    const currentOrdinal = recurrenceOrdinal(item, identity, options);
-    for (const key of exceptions.keys()) if (recurrenceOrdinal(item, key, options) > currentOrdinal) return true;
-  } catch {
-    return false;
-  }
-  return false;
 }
 
 function parseTemporalPlain(value: string, timeZone: string): PlainDateTimeParts {

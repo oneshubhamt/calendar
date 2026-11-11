@@ -45,6 +45,13 @@ export interface CalendarRange {
   readonly end: ISODateTime;
 }
 
+
+/** Inclusive local-date limits for generic scheduling/navigation surfaces. */
+export interface CalendarNavigationBounds {
+  readonly min?: ISODate;
+  readonly max?: ISODate;
+}
+
 export interface CalendarDisplay {
   readonly color?: string | undefined;
   readonly textColor?: string | undefined;
@@ -64,6 +71,38 @@ export interface CalendarMetadata {
   readonly [key: string]: CalendarMetadataValue | undefined;
 }
 
+/**
+ * Passive, already-resolved temporal context rendered behind ordinary calendar events.
+ * Background ranges are not events and carry no scheduling/availability semantics by themselves.
+ */
+export interface CalendarBackgroundDisplay {
+  /** Cosmetic background accent. Calendar uses it only through a scoped CSS custom property. */
+  readonly color?: string | undefined;
+  /** Cosmetic label color. */
+  readonly textColor?: string | undefined;
+  /** Space-separated host class tokens; reserved Calendar namespaces fail closed in the view. */
+  readonly className?: string | undefined;
+}
+
+export interface CalendarBackgroundRange {
+  /** Stable identity within the Calendar query result. */
+  readonly id: string;
+  /** Absolute ISO date-time at the resolved projection boundary. */
+  readonly start: ISODateTime;
+  /** Absolute ISO date-time; must be strictly after start. */
+  readonly end: ISODateTime;
+  /** Explicit day-level semantics for views that can truthfully represent full-day backgrounds. */
+  readonly allDay?: boolean | undefined;
+  /** Optional Calendar source association. Associated ranges follow that source's visibility. */
+  readonly calendarId?: CalendarId | undefined;
+  /** Optional generic text for passive presentation/accessibility; Calendar assigns no domain meaning. */
+  readonly label?: string | undefined;
+  /** Narrow cosmetic presentation contract; it never controls geometry or interaction. */
+  readonly display?: CalendarBackgroundDisplay | undefined;
+  /** Opaque bounded JSON-like host data. */
+  readonly metadata?: CalendarMetadata | undefined;
+}
+
 export interface RecurrenceByDay {
   readonly weekday: Weekday;
   readonly ordinal?: number | undefined;
@@ -72,8 +111,6 @@ export interface RecurrenceByDay {
 export interface RecurrenceRule {
   readonly frequency: RecurrenceFrequency;
   readonly interval?: number | undefined;
-  /** Legacy/simple BYDAY form. Prefer byDay for ordinal weekdays. */
-  readonly byWeekday?: readonly Weekday[] | undefined;
   readonly byDay?: readonly RecurrenceByDay[] | undefined;
   readonly byMonthDay?: readonly number[] | undefined;
   readonly byMonth?: readonly number[] | undefined;
@@ -204,6 +241,8 @@ export interface CalendarRepository extends CalendarSnapshotProvider {
   update(id: CalendarItemId, patch: CalendarItemPatch): Promise<void> | void;
   remove(id: CalendarItemId): Promise<void> | void;
   replace(items: readonly CalendarItem[]): Promise<void> | void;
+  /** Atomically replace items only when the authoritative revision still matches. */
+  replaceAtRevision(items: readonly CalendarItem[], expectedRevision: number): Promise<void> | void;
   createSource?(source: CalendarSource): Promise<void> | void;
   updateSource?(id: CalendarId, patch: CalendarSourcePatch): Promise<void> | void;
   removeSource?(id: CalendarId): Promise<void> | void;
@@ -223,6 +262,17 @@ export interface CalendarOccurrenceProjectionProvider {
   readonly id: string;
   projectOccurrences(range: CalendarRange): Promise<readonly CalendarOccurrence[]> | readonly CalendarOccurrence[];
   /** Optional invalidation signal for authoritative host occurrence data. */
+  subscribe?(listener: () => void): () => void;
+}
+
+/**
+ * Host/feature projection boundary for passive, already-expanded temporal background ranges.
+ * Calendar does not recurrence-expand these values or infer availability/constraint semantics from them.
+ */
+export interface CalendarBackgroundProjectionProvider {
+  readonly id: string;
+  projectBackgroundRanges(range: CalendarRange): Promise<readonly CalendarBackgroundRange[]> | readonly CalendarBackgroundRange[];
+  /** Optional invalidation signal for authoritative background data. */
   subscribe?(listener: () => void): () => void;
 }
 
@@ -265,6 +315,33 @@ export interface CalendarSnapPolicy {
 export interface CalendarCollisionPolicy {
   readonly mode: CalendarCollisionMode;
   readonly includeAllDay?: boolean;
+}
+
+
+export type CalendarPlacementGuardMode = "allow" | "warn" | "prevent";
+
+export interface CalendarPlacementContext {
+  readonly start: ISODateTime;
+  readonly end: ISODateTime;
+  readonly allDay: boolean;
+  readonly action: string;
+  readonly timeZone: string;
+  /** Target Calendar source after the proposed placement/edit, when known. */
+  readonly calendarId?: CalendarId | undefined;
+  /** Existing occurrence for move/resize/edit; omitted for creation. */
+  readonly occurrence?: CalendarOccurrence | undefined;
+}
+
+export interface CalendarPlacementDecision {
+  readonly mode: CalendarPlacementGuardMode;
+  /** Optional concise reason shown by Calendar for warn/prevent decisions. */
+  readonly message?: string | undefined;
+}
+
+/** Optional generic scheduling policy. Visual background ranges never invoke this contract implicitly. */
+export interface CalendarPlacementGuard {
+  readonly id: string;
+  evaluate(context: CalendarPlacementContext): CalendarPlacementDecision | Promise<CalendarPlacementDecision>;
 }
 
 export interface CalendarHistoryState {

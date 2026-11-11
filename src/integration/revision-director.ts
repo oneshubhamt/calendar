@@ -7,6 +7,7 @@ import type {
   RevisionDirectorObligation,
 } from "../adapters/revision-director.js";
 import { RevisionDirectorProjection } from "../adapters/revision-director.js";
+import { createCalendarIntegrationId } from "./id.js";
 
 /** Calendar-relevant subsets of the current Revision Director domain records. */
 export interface RevisionDirectorRawObligation {
@@ -57,12 +58,6 @@ export interface RevisionScheduleRequest {
   readonly chunkId?: string;
 }
 
-function randomId(): string {
-  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
 export function joinRevisionDirectorObligations(
   obligations: readonly RevisionDirectorRawObligation[],
   units: readonly RevisionDirectorRawUnit[],
@@ -104,7 +99,7 @@ export class RevisionCalendarScheduler {
   public async schedule(request: RevisionScheduleRequest): Promise<CalendarItem> {
     const start = toDate(request.start);
     const end = new Date(start.getTime() + Math.max(1, request.durationMinutes) * 60_000);
-    const id = `revision-scheduled:${randomId()}`;
+    const id = `revision-scheduled:${createCalendarIntegrationId()}`;
     const item: CalendarItem = {
       id,
       calendarId: "revision-director:scheduled",

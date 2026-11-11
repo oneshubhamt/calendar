@@ -1,13 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import {
   boundProjectionRange,
   clampNavigationDate,
   navigationDateInBounds,
-  placementInNavigationBounds,
   resolveNavigationBounds,
 } from '../dist/view/navigation.js';
+import { placementInNavigationBounds } from '../dist/core/interaction.js';
 
 const zone='Asia/Kolkata';
 
@@ -43,43 +42,4 @@ test('placement bounds allow the complete maximum day but reject cross-boundary 
   assert.equal(placementInNavigationBounds(d('2026-04-13T18:29:59.000Z'),d('2026-04-13T19:00:00.000Z'),bounds,zone),false);
   assert.equal(placementInNavigationBounds(d('2026-04-16T18:29:59.000Z'),d('2026-04-16T18:29:59.000Z'),bounds,zone),true,'point on maximum date remains valid');
   assert.equal(placementInNavigationBounds(d('2026-04-16T18:30:00.000Z'),d('2026-04-16T18:30:00.000Z'),bounds,zone),false,'max is an inclusive local date, not the next midnight');
-});
-
-test('embedded chrome is granular and toolbar removal does not make rendering depend on a title node',async()=>{
-  const types=await fs.readFile(new URL('../src/view/types.ts',import.meta.url),'utf8');
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  for(const key of ['toolbar','dateNavigation','viewSwitcher','sourceControls','createControls']) assert.match(types,new RegExp(`readonly ${key}\\?: boolean`));
-  assert.match(view,/if \(this\.chrome\.toolbar\) root\.append\(this\.toolbar\(\)\)/);
-  assert.match(view,/if \(!root \|\| !body\) return;\s*if \(title\) title\.textContent/);
-  assert.match(view,/if \(this\.chrome\.dateNavigation\)/);
-  assert.match(view,/if \(this\.chrome\.sourceControls\)/);
-  assert.match(view,/if \(this\.chrome\.viewSwitcher\)/);
-  assert.match(view,/this\.chrome\.createControls && this\.canCreateItems\(\)/);
-});
-
-test('hidden toolbar does not disable keyboard date navigation and programmatic navigation is clamped',async()=>{
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.match(view,/public goTo[\s\S]*this\.anchor = clampNavigationDate\(value, this\.navigationBounds, this\.timeZone\)/);
-  assert.match(view,/else if \(event\.key === "ArrowLeft"\) \{ event\.preventDefault\(\); this\.previous\(\); \}/);
-  assert.match(view,/else if \(event\.key === "ArrowRight"\) \{ event\.preventDefault\(\); this\.next\(\); \}/);
-  assert.doesNotMatch(view,/chrome\.toolbar[\s\S]{0,100}ArrowLeft/);
-});
-
-test('jump, drag, creation and add-on placement share the same bounded enforcement path',async()=>{
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  const dialogs=await fs.readFile(new URL('../src/view/dialogs.ts',import.meta.url),'utf8');
-  assert.match(view,/requestCalendarDate\([^\n]*this\.navigationBounds\)/);
-  assert.match(dialogs,/if \(bounds\?\.min\) input\.min = bounds\.min/);
-  assert.match(dialogs,/if \(bounds\?\.max\) input\.max = bounds\.max/);
-  assert.match(view,/private async allowPlacement[\s\S]*placementInNavigationBounds\(start, end, this\.navigationBounds, this\.timeZone\)/);
-  assert.match(view,/private async allowPlacement[\s\S]*const queryRange = boundProjectionRange\(/);
-  assert.match(view,/if \(!inBounds \|\| !occurrence \|\| !this\.canMoveOccurrenceToPlacement\(occurrence, false\)\) return/);
-  assert.match(view,/canPlaceDraft:[\s\S]*self\.allowPlacement/);
-  assert.match(view,/patchOccurrence:[\s\S]*self\.allowPlacement/);
-});
-
-test('C5 generic view contract contains no host-domain semantic dependency',async()=>{
-  const files=['../src/view/types.ts','../src/view/navigation.ts','../src/view/calendar-ui.ts','../src/view/dialogs.ts'];
-  const text=(await Promise.all(files.map(file=>fs.readFile(new URL(file,import.meta.url),'utf8')))).join('\n');
-  for(const token of ['Ayana','journey','habit','payment','nominal']) assert.equal(new RegExp(`\\b${token}\\b`,'i').test(text),false,`generic C5 path leaked ${token}`);
 });

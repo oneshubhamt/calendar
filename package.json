@@ -1,6 +1,6 @@
 {
   "name": "@director/calendar",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "sideEffects": false,
   "exports": {
@@ -48,10 +48,6 @@
       "types": "./dist/integration/common.d.ts",
       "import": "./dist/integration/common.js"
     },
-    "./package-contract": {
-      "types": "./dist/integration/package-contract.d.ts",
-      "import": "./dist/integration/package-contract.js"
-    },
     "./adapters/study-director": {
       "types": "./dist/adapters/study-director.d.ts",
       "import": "./dist/adapters/study-director.js"
@@ -88,10 +84,6 @@
       "types": "./dist/interoperability/storage.d.ts",
       "import": "./dist/interoperability/storage.js"
     },
-    "./features": {
-      "types": "./dist/features/index.d.ts",
-      "import": "./dist/features/index.js"
-    },
     "./features/personal": {
       "types": "./dist/features/personal.d.ts",
       "import": "./dist/features/personal.js"
@@ -103,6 +95,18 @@
     "./features/personal-ui": {
       "types": "./dist/features/personal-ui.d.ts",
       "import": "./dist/features/personal-ui.js"
+    },
+    "./features/availability": {
+      "types": "./dist/features/availability.d.ts",
+      "import": "./dist/features/availability.js"
+    },
+    "./features/resource-scheduler": {
+      "types": "./dist/features/resource-scheduler/index.d.ts",
+      "import": "./dist/features/resource-scheduler/index.js"
+    },
+    "./features/resource-scheduler-ui": {
+      "types": "./dist/features/resource-scheduler-ui/index.d.ts",
+      "import": "./dist/features/resource-scheduler-ui/index.js"
     }
   },
   "files": [
@@ -117,10 +121,13 @@
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
     "check": "npm run typecheck && npm test && npm pack --dry-run",
     "prepack": "npm run build:package",
-    "build:package": "npm run clean && tsc -p tsconfig.package.json"
+    "build:package": "npm run clean && tsc -p tsconfig.package.json",
+    "qa:browser": "npm run build && playwright test --config=playwright.config.mjs",
+    "qa:browser:update": "npm run build && playwright test --config=playwright.config.mjs --update-snapshots"
   },
   "devDependencies": {
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "@playwright/test": "1.65.0"
   },
   "packageManager": "npm@12.2.2",
   "repository": {

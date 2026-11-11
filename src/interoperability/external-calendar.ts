@@ -17,7 +17,7 @@ export class IcsCalendarOverlayProvider implements CalendarProjectionProvider {
   private readonly items: readonly CalendarItem[];
   public constructor(text: string, options: IcsImportOptions & { readonly providerId?: string }) {
     this.id = `ics-overlay:${options.providerId ?? options.calendarId}`;
-    this.items = importIcs(text, { ...options, readOnly: true }).items;
+    this.items = importIcs(text, { ...options, editPolicy: "readonly" }).items;
   }
   public project(_range: CalendarRange): readonly CalendarItem[] { return this.items; }
 }

@@ -73,9 +73,7 @@ export interface RecurrenceAdvancedFields {
 }
 
 export function recurrenceAdvancedFields(rule: RecurrenceRule | undefined): RecurrenceAdvancedFields {
-  const advancedByDay = rule?.frequency === "weekly"
-    ? undefined
-    : rule?.byDay ?? rule?.byWeekday?.map(weekday => ({ weekday }));
+  const advancedByDay = rule?.frequency === "weekly" ? undefined : rule?.byDay;
   return {
     byMonthDay: formatRecurrenceIntegerList(rule?.byMonthDay),
     byMonth: formatRecurrenceIntegerList(rule?.byMonth),
@@ -119,7 +117,9 @@ export function recurrenceRuleFromEditor(input: RecurrenceRuleEditorInput): Recu
     frequency: input.frequency,
     interval: Math.max(1, Math.round(input.interval) || 1),
     ...advanced,
-    ...(input.frequency === "weekly" && !hasAdvancedDayRule ? { byWeekday: checkedWeekdays.length ? checkedWeekdays : undefined } : {}),
+    ...(input.frequency === "weekly" && !hasAdvancedDayRule
+      ? { byDay: checkedWeekdays.length ? checkedWeekdays.map(weekday => ({ weekday })) : undefined }
+      : {}),
     ...(input.frequency === "monthly" && !hasAdvancedDayRule && !hasAdvancedMonthDay ? { byMonthDay: [input.startMonthDay] } : {}),
     ...(input.frequency === "yearly" && !hasAdvancedDayRule && !hasAdvancedMonthDay ? { byMonthDay: [input.startMonthDay] } : {}),
     ...(input.frequency === "yearly" && !hasAdvancedMonth ? { byMonth: [input.startMonth] } : {}),

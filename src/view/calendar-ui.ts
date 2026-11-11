@@ -1,12 +1,12 @@
 import type {
   CalendarAgendaSpan,
+  CalendarBackgroundRange,
   CalendarCollisionPolicy,
   CalendarOverlapDisambiguation,
-  CalendarCommand,
+  CalendarId,
   CalendarItem,
   CalendarItemPatch,
   CalendarOccurrence,
-  CalendarOccurrenceCommand,
   CalendarRange,
   CalendarSnapPolicy,
   CalendarSource,
@@ -16,55 +16,55 @@ import type {
   Weekday,
 } from "../core/types.js";
 import type {
-  CalendarCreateDraft, CalendarItemFactoryInput, CalendarKindOption, CalendarSelection, CalendarUiAddonContext, CalendarUiChromeOptions, CalendarUiOptions,
+  CalendarCreateDraft, CalendarItemFactoryInput, CalendarKindOption, CalendarPlacementValidationPort, CalendarSelection, CalendarUiAddonContext, CalendarUiChromeOptions, CalendarUiOptions,
 } from "./types.js";
 import { CalendarEngine } from "../core/calendar-engine.js";
-import { addDays, addMonths, addYears, dateKey, rangeForView, resolvedTimeZone, startOfDay, startOfYear, toDate } from "../core/time.js";
+import { addDays, addMonths, addYears, dateKey, rangeForView, resolvedTimeZone, startOfDay, systemClock, toDate, type CalendarClock } from "../core/time.js";
 import { instantToPlain } from "../core/temporal.js";
 import { civilMinuteOfInstant, civilMinuteResolution, instantAtCivilMinute, shiftCivilMinutes } from "../core/civil-timeline.js";
 import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from "./time-zone-scale.js";
-import { groupAgendaByDay, groupByDay, layoutTimedDay } from "../core/layout.js";
-import { sameRecurrence } from "../core/recurrence.js";
-import { normalizeSnapPolicy, placementCollisions, placementTimePatch, resizeInterval, resizePreview, type CalendarResizeEdge } from "../core/interaction.js";
+import { CalendarTemporalChrome } from "./temporal-chrome.js";
 import {
-  calendarOccurrenceCommandContext, resolveOccurrenceCapabilities, temporalMutationCapabilityRequirements,
-  type CalendarOccurrenceCapabilityKey, type ResolvedCalendarOccurrenceCapabilities,
-} from "../core/authority.js";
+  backgroundAriaSuffix,
+  dayLevelBackgroundLayer,
+  el,
+  formatDateTime,
+  formatTime,
+  humanizeKind,
+  periodTitle as renderPeriodTitle,
+  renderAgendaView,
+  renderMonthView,
+  renderYearView,
+  sameLocalDay,
+  type CalendarStaticRenderActions,
+  type CalendarStaticRenderModel,
+} from "./view-renderer.js";
+import {
+  CalendarGestureController,
+  dragResizeEdge,
+  snapDragDeltaMinutes,
+  type CalendarDragMode,
+  type CalendarDragState,
+} from "./gesture-controller.js";
+import { groupAllDayBackgroundRangesByDay, groupByDay, layoutBackgroundDay, layoutTimedDay } from "../core/layout.js";
+import { sameRecurrence } from "../core/recurrence.js";
+import { normalizeSnapPolicy, placementInNavigationBounds, placementTimePatch, resizeInterval, snapMinuteCoordinate, type CalendarResizeEdge } from "../core/interaction.js";
+import type { ResolvedCalendarOccurrenceCapabilities } from "../core/authority.js";
 import { chooseSeriesScope, openEventEditor } from "./event-editor.js";
 import { CALENDAR_CSS } from "./styles.js";
 import { confirmCalendarAction, requestCalendarDate } from "./dialogs.js";
-import { CalendarCommandLifecycle, type CalendarCommandLifecycleStatus } from "./command-lifecycle.js";
-import { isSafeHostClassName, resolveOccurrencePresentation, resolveSourceActions, type ResolvedCalendarOccurrencePresentation, type ResolvedCalendarSourceAction } from "./presentation.js";
-import { calendarHostCss } from "./extension-styles.js";
-import { occurrenceWithPreview, previewPatchForCommand, type PendingOccurrencePreview } from "./occurrence-preview.js";
 import {
-  boundProjectionRange, clampNavigationDate, navigationDateInBounds, placementInNavigationBounds, resolveNavigationBounds,
+  CalendarMutationCoordinator,
+  mutationCommitted,
+} from "./mutation-coordinator.js";
+import { hostDataAttributeName, isSafeHostClassName, resolveOccurrencePresentation, type ResolvedCalendarOccurrencePresentation, type ResolvedCalendarSourceAction } from "./presentation.js";
+import { calendarHostCss } from "./extension-styles.js";
+import { isDateLikeOccurrence, isPointOccurrence } from "./occurrence-form.js";
+import {
+  boundProjectionRange, clampNavigationDate, navigationDateInBounds, resolveNavigationBounds,
   type ResolvedCalendarNavigationBounds,
 } from "./navigation.js";
 
-
-type OccurrenceDispatchResult = CalendarCommandLifecycleStatus | "cancelled";
-
-function mutationCommitted(status: OccurrenceDispatchResult): boolean {
-  return status === "completed" || status === "committed-refresh-failed";
-}
-
-interface DragState {
-  readonly occurrence: CalendarOccurrence;
-  readonly mode: "move" | "resize-start" | "resize-end";
-  readonly pointerId: number;
-  readonly pointerStartX: number;
-  readonly pointerStartY: number;
-  readonly originalStart: Date;
-  readonly originalEnd: Date;
-  readonly element: HTMLElement;
-  readonly originalHeightCss: string;
-  readonly grabOffsetMinutes: number;
-  readonly scrollStartTop: number;
-  readonly scrollStartLeft: number;
-  lastClientX: number;
-  lastClientY: number;
-}
 
 interface SelectionDragState {
   readonly pointerId: number;
@@ -77,63 +77,14 @@ interface SelectionDragState {
   moved: boolean;
 }
 
-interface TouchPressState {
-  readonly pointerId: number;
-  readonly startX: number;
-  readonly startY: number;
-  lastX: number;
-  lastY: number;
-  readonly timer: number;
-  readonly occurrence: CalendarOccurrence;
-  readonly element: HTMLElement;
-  readonly mode: "move" | "resize-start" | "resize-end";
-}
-
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const NATIVE_DRAG_TYPE = "application/x-calendar-occurrence";
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-function sameLocalDay(a: Date, b: Date, timeZone: string): boolean {
-  return dateKey(a, timeZone) === dateKey(b, timeZone);
-}
-
-function formatTime(date: Date, locale: string, timeZone: string): string {
-  return new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit", timeZone }).format(date);
-}
-
-function formatDateTime(date: Date, locale: string, timeZone: string): string {
-  return new Intl.DateTimeFormat(locale, { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", timeZone }).format(date);
-}
-
-function humanizeKind(value: string): string {
-  const text = value.replace(/[-_]+/gu, " ").trim();
-  return text ? text[0]!.toUpperCase() + text.slice(1) : "Event";
-}
-
-function weekdayOrder(weekStartsOn: Weekday): readonly Weekday[] {
-  return Array.from({ length: 7 }, (_, i) => ((weekStartsOn + i) % 7) as Weekday);
-}
 
 function creatableSource(source: CalendarSource | undefined): boolean {
   return Boolean(source && !source.readOnly && source.allowCreate !== false);
 }
 
-function isPointOccurrence(occurrence: CalendarOccurrence): boolean {
-  return occurrence.temporalForm === "point";
-}
-
 function durationMs(occurrence: CalendarOccurrence): number {
   return isPointOccurrence(occurrence) ? 0 : Math.max(1, toDate(occurrence.end).getTime() - toDate(occurrence.start).getTime());
-}
-
-function isDateLikeOccurrence(occurrence: CalendarOccurrence): boolean {
-  return Boolean(occurrence.allDay || occurrence.precision === "date" || occurrence.temporal?.kind === "date");
 }
 
 function withLocalTime(
@@ -147,13 +98,6 @@ function withLocalTime(
   return instantAtCivilMinute(day, minute, timeZone, overlap);
 }
 
-function snapMinuteCoordinate(value: number, slotMinutes: number, strategy: CalendarSnapPolicy["move"]): number {
-  if (strategy === "none") return value;
-  const units = value / slotMinutes;
-  const rounded = strategy === "floor" ? Math.floor(units) : strategy === "ceil" ? Math.ceil(units) : Math.round(units);
-  return rounded * slotMinutes;
-}
-
 function calendarDaySpan(start: Date, end: Date, timeZone: string): number {
   const a = instantToPlain(start.getTime(), timeZone);
   const b = instantToPlain(end.getTime(), timeZone);
@@ -162,6 +106,7 @@ function calendarDaySpan(start: Date, end: Date, timeZone: string): number {
 
 
 export class CalendarUi {
+  private readonly clock: CalendarClock;
   private readonly locale: string;
   private readonly timeZone: string;
   private readonly secondaryTimeZone: string | undefined;
@@ -186,27 +131,23 @@ export class CalendarUi {
   private anchor: Date;
   private visibleRange: CalendarRange;
   private occurrences: readonly CalendarOccurrence[] = [];
+  private backgroundRanges: readonly CalendarBackgroundRange[] = [];
   private destroyed = false;
-  private drag: DragState | null = null;
   private selectionDrag: SelectionDragState | null = null;
-  private touchPress: TouchPressState | null = null;
-  private autoScrollFrame: number | null = null;
   private renderGeneration = 0;
   private contextMenu: HTMLElement | null = null;
   private readonly unsubscribeRepository: () => void;
-  private dragListenerCleanup: (() => void) | null = null;
-  private pointerArmCleanup: (() => void) | null = null;
-  private touchListenerCleanup: (() => void) | null = null;
-  private suppressOccurrenceClickUntil = 0;
-  private readonly commandLifecycle = new CalendarCommandLifecycle();
-  private readonly pendingPreviews = new Map<string, PendingOccurrencePreview>();
+  private readonly mutations: CalendarMutationCoordinator;
   private readonly reportedHostHookErrors = new Set<string>();
+  private readonly temporalChrome: CalendarTemporalChrome;
+  private readonly gestures: CalendarGestureController;
 
   public constructor(
     private readonly host: HTMLElement,
     private readonly engine: CalendarEngine,
     private readonly options: CalendarUiOptions = {},
   ) {
+    this.clock = options.clock ?? systemClock;
     this.locale = options.locale ?? (typeof navigator !== "undefined" ? navigator.language : undefined) ?? "en-US";
     this.timeZone = resolvedTimeZone(options.timeZone);
     this.secondaryTimeZone = resolveSecondaryTimeZone(options.secondaryTimeZone);
@@ -230,13 +171,66 @@ export class CalendarUi {
     this.navigationBounds = resolveNavigationBounds(options.navigationBounds);
     this.agendaSpan = options.initialAgendaSpan ?? "30-days";
     this.view = options.initialView ?? "week";
-    const initialAnchor = options.initialDate ? toDate(options.initialDate, this.timeZone) : new Date();
+    const initialAnchor = options.initialDate ? toDate(options.initialDate, this.timeZone) : this.clock.now();
     this.anchor = clampNavigationDate(initialAnchor, this.navigationBounds, this.timeZone);
     this.visibleRange = rangeForView(this.anchor, this.view, this.weekStartsOn, this.timeZone, this.agendaSpan);
     this.sources = this.engine.snapshot().sources;
     for (const source of this.sources) this.sourceVisibility.set(source.id, source.visible);
     this.defaultCalendarId = options.defaultCalendarId ?? this.sources.find(source => !source.readOnly && source.allowCreate !== false)?.id ?? this.sources[0]?.id ?? "calendar";
+    this.mutations = new CalendarMutationCoordinator({
+      engine: this.engine,
+      clock: this.clock,
+      timeZone: this.timeZone,
+      navigationBounds: this.navigationBounds,
+      collisionPolicy: this.collisionPolicy,
+      placementGuards: this.options.placementGuards,
+      commandHandler: this.options.commandHandler,
+      trustedHostCommandHandler: this.options.trustedHostCommandHandler,
+      occurrenceCapabilities: this.options.occurrenceCapabilities,
+      sourceActions: this.options.sourceActions,
+      sources: () => this.sources,
+      occurrence: occurrenceId => this.occurrenceIndex.get(occurrenceId),
+      refresh: () => this.refresh(),
+      announce: message => this.announce(message),
+      onCommand: command => this.hostHook(
+        "Calendar onCommand callback",
+        () => this.options.callbacks?.onCommand?.(command),
+        undefined,
+      ),
+      onPendingChange: (occurrenceId, operation, pending) =>
+        this.setOccurrencePending(occurrenceId, operation, pending),
+      onSettled: () => { if (!this.destroyed) this.render(); },
+      confirmPlacementWarning: async messages => await confirmCalendarAction(
+        this.host,
+        "Scheduling check",
+        `${messages.join(" ")} Continue?`,
+        "Continue",
+      ),
+      selectSeriesScope: async (action, allowThisAndFollowing) =>
+        await chooseSeriesScope(this.host, action, allowThisAndFollowing),
+    });
+    this.temporalChrome = new CalendarTemporalChrome({
+      host: this.host,
+      clock: this.clock,
+      timeZone: this.timeZone,
+      dayStartHour: this.dayStartHour,
+      dayEndHour: this.dayEndHour,
+      showNowIndicator: this.options.showNowIndicator !== false,
+      onTick: now => this.updateTodayNavigation(now),
+    });
+    this.gestures = new CalendarGestureController({
+      host: this.host,
+      slotMinutes: this.slotMinutes,
+      snapPolicy: this.snapPolicy,
+      longPressMs: this.longPressMs,
+      autoScrollEdgePx: this.autoScrollEdgePx,
+      autoScrollMaxPxPerFrame: this.autoScrollMaxPxPerFrame,
+      setDragging: active => this.setDraggingState(active),
+      announce: message => this.announce(message),
+      finishDrag: (pointer, drag) => this.finishDrag(pointer, drag),
+    });
     this.mountShell();
+    this.temporalChrome.start();
     this.unsubscribeRepository = this.engine.subscribe(() => { if (!this.destroyed) this.requestRefresh(); });
     this.requestRefresh();
   }
@@ -260,11 +254,13 @@ export class CalendarUi {
     const result = await this.engine.query(projectionRange, {
       visibleSourceIds,
       timeZone: this.timeZone,
+      includeBackgroundRanges: this.view === "month" || this.view === "week" || this.view === "day",
       ...(filters.length ? { predicate: (occurrence: CalendarOccurrence) => filters.every(addon => this.hostHook(`Calendar add-on ${addon.id} filter`, () => addon.filterOccurrence?.(occurrence, sourceById.get(occurrence.calendarId)) !== false, true)) } : {}),
     });
     if (this.destroyed || generation !== this.renderGeneration) return;
     this.occurrences = result.occurrences;
-    const extensionContext = { occurrences: this.occurrences, range: this.visibleRange, timeZone: this.timeZone, now: new Date() };
+    this.backgroundRanges = result.backgroundRanges;
+    const extensionContext = { occurrences: this.occurrences, range: this.visibleRange, timeZone: this.timeZone, now: this.clock.now() };
     for (const [index, extension] of (this.options.extensions ?? []).entries()) this.hostHook(`Calendar extension ${index + 1} prepare`, () => extension.prepare?.(extensionContext), undefined);
     for (const addon of this.options.addons ?? []) this.hostHook(`Calendar add-on ${addon.id} refresh`, () => addon.onRefresh?.(this.addonContext()), undefined);
     this.occurrenceIndex.clear();
@@ -292,7 +288,7 @@ export class CalendarUi {
   }
 
   public today(): void {
-    const today = new Date();
+    const today = this.clock.now();
     if (!this.dateInNavigationBounds(today)) return;
     this.goTo(today);
   }
@@ -335,10 +331,8 @@ export class CalendarUi {
 
   public destroy(): void {
     this.destroyed = true;
-    this.cancelTouchPress();
-    this.cancelPointerArm();
-    this.cancelActiveDrag();
-    this.stopAutoScroll();
+    this.gestures.destroy();
+    this.temporalChrome.stop();
     this.dismissContextMenu();
     for (const addon of this.options.addons ?? []) this.hostHook(`Calendar add-on ${addon.id} destroy`, () => addon.destroy?.(), undefined);
     this.unsubscribeRepository();
@@ -353,27 +347,19 @@ export class CalendarUi {
   }
 
   private authoritativeOccurrence(occurrence: CalendarOccurrence): CalendarOccurrence {
-    return this.occurrenceIndex.get(occurrence.occurrenceId) ?? occurrence;
+    return this.mutations.authoritativeOccurrence(occurrence);
   }
 
   private occurrenceCapabilities(occurrence: CalendarOccurrence): ResolvedCalendarOccurrenceCapabilities {
-    const authoritative = this.authoritativeOccurrence(occurrence);
-    return resolveOccurrenceCapabilities(authoritative, this.sources.find(source => source.id === authoritative.calendarId), this.options.occurrenceCapabilities);
-  }
-
-  private commandHandlerFor(occurrence: CalendarOccurrence, capabilities = this.occurrenceCapabilities(occurrence)) {
-    return capabilities.commandPath === "trusted-host" ? this.options.trustedHostCommandHandler : this.options.commandHandler;
+    return this.mutations.capabilities(occurrence);
   }
 
   private canMoveOccurrence(occurrence: CalendarOccurrence): boolean {
-    const capabilities = this.occurrenceCapabilities(occurrence);
-    return capabilities.canMove && Boolean(this.commandHandlerFor(occurrence, capabilities));
+    return this.mutations.canMove(occurrence);
   }
 
   private canResizeOccurrence(occurrence: CalendarOccurrence, edge: CalendarResizeEdge): boolean {
-    const capabilities = this.occurrenceCapabilities(occurrence);
-    const allowed = edge === "start" ? capabilities.canResizeStart : capabilities.canResizeEnd;
-    return allowed && Boolean(this.commandHandlerFor(occurrence, capabilities));
+    return this.mutations.canResize(occurrence, edge);
   }
 
   private canEditOccurrence(occurrence: CalendarOccurrence): boolean {
@@ -384,7 +370,9 @@ export class CalendarUi {
       || (capabilities.canMove && capabilities.canMoveBetweenAllDayAndTimed)
       || capabilities.canChangeRecurrence
       || (isPointOccurrence(occurrence) && capabilities.canMove);
-    return editorAuthority && Boolean(this.options.callbacks?.handleEdit || this.commandHandlerFor(occurrence, capabilities));
+    return editorAuthority && Boolean(
+      this.options.callbacks?.handleEdit || this.mutations.hasCommandPath(occurrence, capabilities),
+    );
   }
 
   /** Semantic fields are governed directly by the canonical occurrence capability resolver. */
@@ -396,27 +384,23 @@ export class CalendarUi {
   }
 
   private canDeleteOccurrence(occurrence: CalendarOccurrence): boolean {
-    const capabilities = this.occurrenceCapabilities(occurrence);
-    return capabilities.canDelete && Boolean(this.commandHandlerFor(occurrence, capabilities));
+    return this.mutations.canDelete(occurrence);
   }
 
   private canOpenOccurrence(occurrence: CalendarOccurrence): boolean {
-    return this.occurrenceCapabilities(occurrence).canOpen;
+    return this.mutations.canOpen(occurrence);
   }
 
   private canInvokeActions(occurrence: CalendarOccurrence): boolean {
-    return this.occurrenceCapabilities(occurrence).canInvokeActions;
+    return this.mutations.canInvokeActions(occurrence);
   }
 
   private isOccurrencePending(occurrence: CalendarOccurrence): boolean {
-    return this.commandLifecycle.isPending(occurrence.occurrenceId);
+    return this.mutations.isPending(occurrence);
   }
 
   private canMoveOccurrenceToPlacement(occurrence: CalendarOccurrence, allDay: boolean): boolean {
-    if (!this.canMoveOccurrence(occurrence)) return false;
-    if (isPointOccurrence(occurrence) && allDay) return false;
-    if (isDateLikeOccurrence(occurrence) === allDay) return true;
-    return this.occurrenceCapabilities(occurrence).canMoveBetweenAllDayAndTimed;
+    return this.mutations.canMoveToPlacement(occurrence, allDay);
   }
 
   private canDuplicateOccurrence(): boolean {
@@ -424,12 +408,7 @@ export class CalendarUi {
   }
 
   private displayOccurrences(): readonly CalendarOccurrence[] {
-    if (this.pendingPreviews.size === 0) return this.occurrences;
-    return this.occurrences.map(occurrence => occurrenceWithPreview(
-      occurrence,
-      this.pendingPreviews.get(occurrence.occurrenceId),
-      this.timeZone,
-    ));
+    return this.mutations.previewOccurrences(this.occurrences);
   }
 
   private mountShell(): void {
@@ -553,7 +532,7 @@ export class CalendarUi {
     const today = root.querySelector<HTMLButtonElement>("[data-navigation='today']");
     if (previous) previous.disabled = !this.canNavigate(-1);
     if (next) next.disabled = !this.canNavigate(1);
-    if (today) today.disabled = !this.dateInNavigationBounds(new Date());
+    if (today) today.disabled = !this.dateInNavigationBounds(this.clock.now());
     const agendaSpan = root.querySelector<HTMLSelectElement>("[data-role='agenda-span']");
     if (agendaSpan) { agendaSpan.hidden = this.view !== "agenda"; agendaSpan.value = this.agendaSpan; }
     const history = this.options.commandHandler?.historyState?.();
@@ -566,135 +545,24 @@ export class CalendarUi {
     else if (this.view === "year") body.append(this.renderYear());
     else if (this.view === "agenda") body.append(this.renderAgenda());
     else body.append(this.renderTimeGrid(this.view === "week" ? 7 : 1));
+    this.temporalChrome.refresh();
+  }
+
+  private updateTodayNavigation(now: Date): void {
+    const today = this.host.querySelector<HTMLButtonElement>("[data-navigation='today']");
+    if (today) today.disabled = !this.dateInNavigationBounds(now);
   }
 
   private periodTitle(): string {
-    if (this.view === "year") return new Intl.DateTimeFormat(this.locale, { year: "numeric", timeZone: this.timeZone }).format(this.anchor);
-    if (this.view === "month" || (this.view === "agenda" && this.agendaSpan === "month")) return new Intl.DateTimeFormat(this.locale, { month: "long", year: "numeric", timeZone: this.timeZone }).format(this.anchor);
-    if (this.view === "day" || (this.view === "agenda" && this.agendaSpan === "day")) return new Intl.DateTimeFormat(this.locale, { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: this.timeZone }).format(this.anchor);
-    const start = toDate(this.visibleRange.start);
-    const end = new Date(toDate(this.visibleRange.end).getTime() - 1);
-    return `${new Intl.DateTimeFormat(this.locale, { day: "numeric", month: "short", timeZone: this.timeZone }).format(start)} – ${new Intl.DateTimeFormat(this.locale, { day: "numeric", month: "short", year: "numeric", timeZone: this.timeZone }).format(end)}`;
+    return renderPeriodTitle({ ...this.staticRenderModel(), view: this.view });
   }
 
   private renderYear(): HTMLElement {
-    const grid = el("div", "dc-year-grid");
-    const buckets = groupByDay(this.displayOccurrences(), this.timeZone, this.visibleRange);
-    const yearStart = startOfYear(this.anchor, this.timeZone);
-    const today = new Date();
-    for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
-      const monthStart = addMonths(yearStart, monthIndex, this.timeZone);
-      const month = el("section", "dc-year-month");
-      const heading = el("button", "dc-year-month-title", new Intl.DateTimeFormat(this.locale, { month: "long", timeZone: this.timeZone }).format(monthStart));
-      heading.type = "button";
-      const monthEnd = addMonths(monthStart, 1, this.timeZone);
-      const monthFirstKey = dateKey(monthStart, this.timeZone);
-      const monthLastKey = dateKey(addDays(monthEnd, -1, this.timeZone), this.timeZone);
-      const monthInBounds = (!this.navigationBounds.min || monthLastKey >= this.navigationBounds.min)
-        && (!this.navigationBounds.max || monthFirstKey <= this.navigationBounds.max);
-      heading.disabled = !monthInBounds;
-      heading.addEventListener("click", () => {
-        if (!monthInBounds) return;
-        const target = this.navigationBounds.min && monthFirstKey < this.navigationBounds.min ? toDate(this.navigationBounds.min, this.timeZone) : monthStart;
-        this.anchor = clampNavigationDate(target, this.navigationBounds, this.timeZone);
-        this.setView("month");
-      });
-      month.append(heading);
-      const weekdays = el("div", "dc-year-weekdays");
-      for (const weekday of weekdayOrder(this.weekStartsOn)) weekdays.append(el("span", undefined, DAY_NAMES[weekday]!.slice(0, 1)));
-      month.append(weekdays);
-      const days = el("div", "dc-year-days");
-      const monthRange = rangeForView(monthStart, "month", this.weekStartsOn, this.timeZone);
-      for (let cursor = toDate(monthRange.start); cursor < toDate(monthRange.end); cursor = addDays(cursor, 1, this.timeZone)) {
-        const day = new Date(cursor);
-        const parts = instantToPlain(day.getTime(), this.timeZone);
-        const monthParts = instantToPlain(monthStart.getTime(), this.timeZone);
-        const outside = parts.month !== monthParts.month;
-        const button = el("button", "dc-year-day") as HTMLButtonElement;
-        button.type = "button";
-        button.classList.toggle("is-outside", outside);
-        button.classList.toggle("is-today", sameLocalDay(day, today, this.timeZone));
-        const inBounds = this.dateInNavigationBounds(day);
-        button.classList.toggle("is-out-of-bounds", !inBounds);
-        button.disabled = !outside && !inBounds;
-        if (outside) {
-          button.tabIndex = -1;
-          button.setAttribute("aria-hidden", "true");
-        } else {
-          const bucket = buckets.get(dateKey(day, this.timeZone));
-          const count = (bucket?.allDay.length ?? 0) + (bucket?.timed.length ?? 0);
-          button.append(el("span", "dc-year-day-number", String(parts.day)));
-          if (count) button.append(el("span", "dc-year-event-count", count > 9 ? "9+" : String(count)));
-          button.setAttribute("aria-label", `${new Intl.DateTimeFormat(this.locale, { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: this.timeZone }).format(day)}${count ? `, ${count} event${count === 1 ? "" : "s"}` : ", no events"}`);
-          button.addEventListener("click", () => this.openDay(day));
-        }
-        days.append(button);
-      }
-      month.append(days);
-      grid.append(month);
-    }
-    return grid;
+    return renderYearView(this.staticRenderModel(), this.staticRenderActions());
   }
 
   private renderMonth(): HTMLElement {
-    const wrapper = el("div");
-    const header = el("div", "dc-weekdays");
-    for (const weekday of weekdayOrder(this.weekStartsOn)) header.append(el("div", "dc-weekday", DAY_NAMES[weekday]));
-    const grid = el("div", "dc-month-grid");
-    const buckets = groupByDay(this.displayOccurrences(), this.timeZone, this.visibleRange);
-    const start = toDate(this.visibleRange.start);
-    const end = toDate(this.visibleRange.end);
-    const today = new Date();
-    const anchorParts = instantToPlain(this.anchor.getTime(), this.timeZone);
-    for (let cursor = new Date(start); cursor < end; cursor = addDays(cursor, 1, this.timeZone)) {
-      const date = new Date(cursor);
-      const parts = instantToPlain(date.getTime(), this.timeZone);
-      const cell = el("div", "dc-day-cell");
-      const inBounds = this.dateInNavigationBounds(date);
-      cell.tabIndex = inBounds ? 0 : -1;
-      cell.setAttribute("role", "group");
-      cell.setAttribute("aria-label", new Intl.DateTimeFormat(this.locale, { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: this.timeZone }).format(date));
-      cell.classList.toggle("is-outside", parts.month !== anchorParts.month);
-      cell.classList.toggle("is-today", sameLocalDay(date, today, this.timeZone));
-      cell.classList.toggle("is-out-of-bounds", !inBounds);
-      if (!inBounds) cell.setAttribute("aria-disabled", "true");
-      cell.dataset.date = date.toISOString();
-      const number = el("button", "dc-day-number", String(parts.day));
-      number.type = "button";
-      number.disabled = !inBounds;
-      number.addEventListener("click", () => this.openDay(date));
-      const events = el("div", "dc-month-events");
-      const bucket = buckets.get(dateKey(date, this.timeZone));
-      const rows = [...(bucket?.allDay ?? []), ...(bucket?.timed ?? [])];
-      for (const occurrence of rows.slice(0, 4)) events.append(this.monthEvent(occurrence));
-      if (rows.length > 4) {
-        const more = el("button", "dc-more", `+${rows.length - 4} more`) as HTMLButtonElement;
-        more.type = "button";
-        more.setAttribute("aria-label", `Show all ${rows.length} events on ${new Intl.DateTimeFormat(this.locale, { day: "numeric", month: "long", year: "numeric", timeZone: this.timeZone }).format(date)}`);
-        more.addEventListener("click", event => { event.stopPropagation(); this.openMonthOverflow(date, rows); });
-        events.append(more);
-      }
-      cell.append(number, events);
-      cell.addEventListener("dragover", event => {
-        if (inBounds && this.dragOccurrenceFromTransfer(event.dataTransfer)) event.preventDefault();
-      });
-      cell.addEventListener("drop", event => {
-        const occurrence = this.dragOccurrenceFromTransfer(event.dataTransfer);
-        if (!inBounds || !occurrence || !this.canMoveOccurrence(occurrence)) return;
-        event.preventDefault();
-        void this.moveToDay(occurrence, date, isDateLikeOccurrence(occurrence));
-      });
-      if (inBounds && this.canCreateItems()) {
-        cell.addEventListener("dblclick", event => {
-          if ((event.target as Element).closest(".dc-event,.dc-day-number")) return;
-          const startAt = startOfDay(date, this.timeZone);
-          void this.createFromSelection({ start: startAt.toISOString(), end: addDays(startAt, 1, this.timeZone).toISOString(), allDay: true });
-        });
-      }
-      grid.append(cell);
-    }
-    wrapper.append(header, grid);
-    return wrapper;
+    return renderMonthView(this.staticRenderModel(), this.staticRenderActions());
   }
 
   private openMonthOverflow(date: Date, rows: readonly CalendarOccurrence[]): void {
@@ -789,11 +657,13 @@ export class CalendarUi {
     grid.style.gridTemplateColumns = `repeat(${dayCount},minmax(0,1fr))`;
     grid.style.minHeight = `${(this.dayEndHour - this.dayStartHour) * 60}px`;
     const buckets = groupByDay(this.displayOccurrences(), this.timeZone, this.visibleRange);
+    const backgroundBuckets = groupAllDayBackgroundRangesByDay(this.backgroundRanges, this.timeZone, this.visibleRange);
 
     for (const day of days) {
       const inBounds = this.dateInNavigationBounds(day);
       const head = el("button", "dc-day-header");
       head.type = "button";
+      head.dataset.calendarDate = day.toISOString();
       head.disabled = !inBounds;
       head.classList.toggle("is-out-of-bounds", !inBounds);
       head.append(el("strong", undefined, new Intl.DateTimeFormat(this.locale, { weekday: "short", timeZone: this.timeZone }).format(day)), el("span", undefined, new Intl.DateTimeFormat(this.locale, { day: "numeric", month: "short", timeZone: this.timeZone }).format(day)));
@@ -801,10 +671,13 @@ export class CalendarUi {
       headers.append(head);
       const all = el("div", "dc-all-day-col");
       all.dataset.date = day.toISOString();
+      all.dataset.calendarDate = day.toISOString();
       all.classList.toggle("is-out-of-bounds", !inBounds);
       if (!inBounds) all.setAttribute("aria-disabled", "true");
       all.setAttribute("role", "group");
-      all.setAttribute("aria-label", `All-day events for ${new Intl.DateTimeFormat(this.locale, { weekday: "long", day: "numeric", month: "long", timeZone: this.timeZone }).format(day)}`);
+      const dayBackgrounds = backgroundBuckets.get(dateKey(day, this.timeZone)) ?? [];
+      all.setAttribute("aria-label", `All-day events for ${new Intl.DateTimeFormat(this.locale, { weekday: "long", day: "numeric", month: "long", timeZone: this.timeZone }).format(day)}${this.backgroundAriaSuffix(dayBackgrounds)}`);
+      if (inBounds && dayBackgrounds.length) all.append(this.dayLevelBackgroundLayer(dayBackgrounds));
       for (const occurrence of buckets.get(dateKey(day, this.timeZone))?.allDay ?? []) all.append(this.monthEvent(occurrence));
       all.addEventListener("dragover", event => {
         const occurrence = this.dragOccurrenceFromTransfer(event.dataTransfer);
@@ -843,14 +716,61 @@ export class CalendarUi {
     return axis;
   }
 
+  private backgroundAriaSuffix(ranges: readonly CalendarBackgroundRange[]): string {
+    return backgroundAriaSuffix(ranges);
+  }
+
+  private dayLevelBackgroundLayer(ranges: readonly CalendarBackgroundRange[]): HTMLElement {
+    return dayLevelBackgroundLayer(ranges, (element, range) => this.applyBackgroundPresentation(element, range));
+  }
+
+  private backgroundLayer(day: Date): HTMLElement {
+    const layer = el("div", "dc-background-layer");
+    layer.setAttribute("data-role", "background-ranges");
+    const layouts = layoutBackgroundDay(
+      this.backgroundRanges.filter(range => range.allDay !== true),
+      day,
+      {
+        timeZone: this.timeZone,
+        startMinute: this.dayStartHour * 60,
+        endMinute: this.dayEndHour * 60,
+      },
+    );
+    const visibleStart = this.dayStartHour * 60;
+    for (const layout of layouts) {
+      const range = layout.range;
+      const background = el("div", "dc-background-range");
+      background.dataset.backgroundRangeId = range.id;
+      background.style.top = `${layout.topMinutes - visibleStart}px`;
+      background.style.height = `${layout.heightMinutes}px`;
+      background.style.zIndex = String(layout.layer);
+      this.applyBackgroundPresentation(background, range);
+      if (range.label) {
+        const label = el("span", "dc-background-range-label", range.label);
+        background.append(label);
+        background.setAttribute("role", "note");
+        background.setAttribute(
+          "aria-label",
+          `${range.label}. ${formatDateTime(toDate(range.start), this.locale, this.timeZone)} to ${formatDateTime(toDate(range.end), this.locale, this.timeZone)}`,
+        );
+      } else {
+        background.setAttribute("aria-hidden", "true");
+      }
+      layer.append(background);
+    }
+    return layer;
+  }
+
   private timeColumn(day: Date): HTMLElement {
     const column = el("div", "dc-time-column");
     const inBounds = this.dateInNavigationBounds(day);
     column.dataset.date = day.toISOString();
+    column.dataset.calendarDate = day.toISOString();
     column.classList.toggle("is-out-of-bounds", !inBounds);
     if (!inBounds) column.setAttribute("aria-disabled", "true");
     column.setAttribute("role", "group");
     column.setAttribute("aria-label", `Timed events for ${new Intl.DateTimeFormat(this.locale, { weekday: "long", day: "numeric", month: "long", timeZone: this.timeZone }).format(day)}`);
+    if (inBounds) column.append(this.backgroundLayer(day));
     const layouts = layoutTimedDay(this.displayOccurrences(), day, this.timeZone);
     for (const layout of layouts) {
       const occurrence = layout.occurrence;
@@ -930,7 +850,7 @@ export class CalendarUi {
         const patch = dateLike
           ? placementTimePatch(target, end, false, this.timeZone)
           : { start: target.toISOString(), end: end.toISOString(), allDay: false, precision: "minute" as const };
-        await this.issueOccurrencePatch(occurrence, patch, "Move", this.moveRequirements(occurrence, false), "move");
+        await this.mutations.issueOccurrencePatch(occurrence, patch, "Move", this.mutations.moveRequirements(occurrence, false), "move");
       })();
     });
 
@@ -950,16 +870,6 @@ export class CalendarUi {
       });
     }
 
-    if (inBounds && this.options.showNowIndicator !== false && sameLocalDay(day, new Date(), this.timeZone)) {
-      const now = new Date();
-      const minute = civilMinuteOfInstant(now, day, this.timeZone) - this.dayStartHour * 60;
-      if (minute >= 0 && minute <= (this.dayEndHour - this.dayStartHour) * 60) {
-        const marker = el("div", "dc-now");
-        marker.setAttribute("aria-hidden", "true");
-        marker.style.top = `${minute}px`;
-        column.append(marker);
-      }
-    }
     return column;
   }
 
@@ -973,7 +883,7 @@ export class CalendarUi {
     if (shortcuts.length) node.setAttribute("aria-keyshortcuts", shortcuts.join(" "));
     node.addEventListener("click", event => {
       event.stopPropagation();
-      if (Date.now() <= this.suppressOccurrenceClickUntil || this.isOccurrencePending(occurrence) || !this.canOpenOccurrence(occurrence)) return;
+      if (this.gestures.shouldSuppressOccurrenceClick() || this.isOccurrencePending(occurrence) || !this.canOpenOccurrence(occurrence)) return;
       void this.openDetails(occurrence);
     });
     node.addEventListener("contextmenu", event => {
@@ -1010,268 +920,11 @@ export class CalendarUi {
     return id ? this.occurrenceIndex.get(id) : undefined;
   }
 
-  private beginDrag(pointer: PointerEvent, occurrence: CalendarOccurrence, element: HTMLElement, mode: "move" | "resize-start" | "resize-end"): void {
-    if (pointer.button !== 0) return;
-    pointer.stopPropagation();
-    if (pointer.pointerType === "touch") {
-      this.armTouchDrag(pointer, occurrence, element, mode);
-      return;
-    }
-    this.armPointerDrag(pointer, occurrence, element, mode);
+  private beginDrag(pointer: PointerEvent, occurrence: CalendarOccurrence, element: HTMLElement, mode: CalendarDragMode): void {
+    this.gestures.beginDrag(pointer, occurrence, element, mode);
   }
 
-  private armPointerDrag(pointer: PointerEvent, occurrence: CalendarOccurrence, element: HTMLElement, mode: "move" | "resize-start" | "resize-end"): void {
-    this.cancelPointerArm();
-    const pointerId = pointer.pointerId;
-    const startX = pointer.clientX;
-    const startY = pointer.clientY;
-    const move = (event: PointerEvent) => {
-      if (event.pointerId !== pointerId) return;
-      if (Math.hypot(event.clientX - startX, event.clientY - startY) < 4) return;
-      event.preventDefault();
-      cleanup();
-      this.activateDrag(pointerId, startX, startY, occurrence, element, mode);
-      this.moveDrag(event);
-    };
-    const end = (event: PointerEvent) => {
-      if (event.pointerId !== pointerId) return;
-      cleanup();
-    };
-    const cleanup = () => {
-      window.removeEventListener("pointermove", move, true);
-      window.removeEventListener("pointerup", end, true);
-      window.removeEventListener("pointercancel", end, true);
-      if (this.pointerArmCleanup === cleanup) this.pointerArmCleanup = null;
-    };
-    this.pointerArmCleanup?.();
-    this.pointerArmCleanup = cleanup;
-    window.addEventListener("pointermove", move, true);
-    window.addEventListener("pointerup", end, true);
-    window.addEventListener("pointercancel", end, true);
-  }
-
-  private cancelPointerArm(): void {
-    this.pointerArmCleanup?.();
-  }
-
-  private armTouchDrag(pointer: PointerEvent, occurrence: CalendarOccurrence, element: HTMLElement, mode: "move" | "resize-start" | "resize-end"): void {
-    this.cancelTouchPress();
-    const pointerId = pointer.pointerId;
-    const startX = pointer.clientX;
-    const startY = pointer.clientY;
-    element.classList.add("is-touch-arming");
-    const timer = window.setTimeout(() => {
-      const press = this.touchPress;
-      if (!press || press.pointerId !== pointerId) return;
-      this.touchPress = null;
-      element.classList.remove("is-touch-arming");
-      this.touchListenerCleanup?.();
-      this.activateDrag(pointerId, press.lastX, press.lastY, occurrence, element, mode);
-      this.announce(`${mode === "move" ? "Moving" : "Resizing"} ${occurrence.title}. Drag, then release.`);
-    }, this.longPressMs);
-    this.touchPress = { pointerId, startX, startY, lastX: startX, lastY: startY, timer, occurrence, element, mode };
-
-    const move = (event: PointerEvent) => {
-      const press = this.touchPress;
-      if (!press || event.pointerId !== press.pointerId) return;
-      press.lastX = event.clientX;
-      press.lastY = event.clientY;
-      if (Math.hypot(event.clientX - press.startX, event.clientY - press.startY) > 10) this.cancelTouchPress();
-    };
-    const cleanup = () => {
-      window.removeEventListener("pointermove", move, true);
-      window.removeEventListener("pointerup", end, true);
-      window.removeEventListener("pointercancel", end, true);
-      if (this.touchListenerCleanup === cleanup) this.touchListenerCleanup = null;
-    };
-    const end = (event: PointerEvent) => {
-      if (event.pointerId !== pointerId) return;
-      this.cancelTouchPress();
-      cleanup();
-    };
-    this.touchListenerCleanup?.();
-    this.touchListenerCleanup = cleanup;
-    window.addEventListener("pointermove", move, true);
-    window.addEventListener("pointerup", end, true);
-    window.addEventListener("pointercancel", end, true);
-  }
-
-  private cancelTouchPress(): void {
-    if (this.touchPress) {
-      clearTimeout(this.touchPress.timer);
-      this.touchPress.element.classList.remove("is-touch-arming");
-      this.touchPress = null;
-    }
-    this.touchListenerCleanup?.();
-  }
-
-  private activateDrag(pointerId: number, clientX: number, clientY: number, occurrence: CalendarOccurrence, element: HTMLElement, mode: "move" | "resize-start" | "resize-end"): void {
-    this.cancelTouchPress();
-    const rect = element.getBoundingClientRect();
-    try { element.setPointerCapture(pointerId); } catch { /* pointer capture can be unavailable after synthetic/browser transitions */ }
-    element.classList.add("is-dragging");
-    this.setDraggingState(true);
-    const body = this.host.querySelector<HTMLElement>(".dc-body");
-    this.drag = {
-      occurrence,
-      mode,
-      pointerId,
-      pointerStartX: clientX,
-      pointerStartY: clientY,
-      originalStart: toDate(occurrence.start),
-      originalEnd: toDate(occurrence.end),
-      element,
-      originalHeightCss: element.style.height,
-      grabOffsetMinutes: Math.max(0, clientY - rect.top),
-      scrollStartTop: body?.scrollTop ?? 0,
-      scrollStartLeft: body?.scrollLeft ?? 0,
-      lastClientX: clientX,
-      lastClientY: clientY,
-    };
-    const cleanup = () => {
-      window.removeEventListener("pointermove", move, true);
-      window.removeEventListener("pointerup", end, true);
-      window.removeEventListener("pointercancel", cancel, true);
-      if (this.dragListenerCleanup === cleanup) this.dragListenerCleanup = null;
-    };
-    const move = (event: PointerEvent) => {
-      if (!this.drag || event.pointerId !== this.drag.pointerId) return;
-      event.preventDefault();
-      this.moveDrag(event);
-    };
-    const end = (event: PointerEvent) => {
-      if (!this.drag || event.pointerId !== this.drag.pointerId) return;
-      event.preventDefault();
-      cleanup();
-      void this.finishDrag(event);
-    };
-    const cancel = (event: PointerEvent) => {
-      if (!this.drag || event.pointerId !== this.drag.pointerId) return;
-      cleanup();
-      this.cancelActiveDrag();
-    };
-    this.dragListenerCleanup?.();
-    this.dragListenerCleanup = cleanup;
-    window.addEventListener("pointermove", move, true);
-    window.addEventListener("pointerup", end, true);
-    window.addEventListener("pointercancel", cancel, true);
-    this.startAutoScroll();
-  }
-
-  private cancelActiveDrag(): void {
-    this.dragListenerCleanup?.();
-    const drag = this.drag;
-    this.drag = null;
-    this.stopAutoScroll();
-    if (!drag) return;
-    this.suppressOccurrenceClickUntil = Date.now() + 350;
-    drag.element.classList.remove("is-dragging");
-    drag.element.style.transform = "";
-    drag.element.style.height = drag.originalHeightCss;
-    this.setDraggingState(false);
-    this.announce(`${drag.mode === "move" ? "Move" : "Resize"} cancelled for ${drag.occurrence.title}.`);
-  }
-
-  private moveDrag(pointer: PointerEvent): void {
-    if (!this.drag) return;
-    this.drag.lastClientX = pointer.clientX;
-    this.drag.lastClientY = pointer.clientY;
-    const body = this.host.querySelector<HTMLElement>(".dc-body");
-    const scrollDelta = (body?.scrollTop ?? 0) - this.drag.scrollStartTop;
-    const horizontalScrollDelta = (body?.scrollLeft ?? 0) - this.drag.scrollStartLeft;
-    const rawDelta = pointer.clientY - this.drag.pointerStartY + scrollDelta;
-    if (this.drag.mode !== "move") {
-      const delta = this.snappedDeltaMinutes(rawDelta, this.snapPolicy.resize);
-      const renderedHeight = Number.parseFloat(this.drag.originalHeightCss);
-      const duration = Number.isFinite(renderedHeight) ? Math.max(this.slotMinutes, renderedHeight) : this.slotMinutes;
-      const preview = resizePreview(duration, delta, this.resizeEdge(this.drag.mode), this.slotMinutes);
-      this.drag.element.style.transform = `translateY(${preview.offsetMinutes}px)`;
-      this.drag.element.style.height = `${preview.heightMinutes}px`;
-      return;
-    }
-    const snappedDelta = this.snappedDeltaMinutes(rawDelta, this.snapPolicy.move);
-    const deltaX = pointer.clientX - this.drag.pointerStartX + horizontalScrollDelta;
-    this.drag.element.style.transform = `translate(${deltaX}px,${snappedDelta}px)`;
-  }
-
-  private resizeEdge(mode: DragState["mode"]): CalendarResizeEdge {
-    return mode === "resize-start" ? "start" : "end";
-  }
-
-  private snappedDeltaMinutes(deltaPixels: number, strategy: CalendarSnapPolicy["move"]): number {
-    if (strategy === "none") return Math.round(deltaPixels);
-    const raw = deltaPixels / this.slotMinutes;
-    const units = strategy === "floor" ? Math.floor(raw) : strategy === "ceil" ? Math.ceil(raw) : Math.round(raw);
-    return units * this.slotMinutes;
-  }
-
-  private timeAtGridMinute(
-    day: Date,
-    minute: number,
-    strategy: CalendarSnapPolicy["move"],
-    action: string,
-  ): Date | null {
-    const snapped = snapMinuteCoordinate(minute, this.slotMinutes, strategy);
-    const target = instantAtCivilMinute(day, snapped, this.timeZone, this.dstOverlapDisambiguation);
-    if (!target) this.announce(`${action} is unavailable because that local time does not exist during the time-zone transition.`);
-    return target;
-  }
-
-  private startAutoScroll(): void {
-    if (this.autoScrollFrame !== null) return;
-    const tick = () => {
-      this.autoScrollFrame = null;
-      const drag = this.drag;
-      const body = this.host.querySelector<HTMLElement>(".dc-body");
-      if (!drag || !body) return;
-      const rect = body.getBoundingClientRect();
-      let verticalVelocity = 0;
-      let horizontalVelocity = 0;
-      if (drag.lastClientY < rect.top + this.autoScrollEdgePx) {
-        const ratio = Math.min(1, (rect.top + this.autoScrollEdgePx - drag.lastClientY) / this.autoScrollEdgePx);
-        verticalVelocity = -Math.max(2, ratio * this.autoScrollMaxPxPerFrame);
-      } else if (drag.lastClientY > rect.bottom - this.autoScrollEdgePx) {
-        const ratio = Math.min(1, (drag.lastClientY - (rect.bottom - this.autoScrollEdgePx)) / this.autoScrollEdgePx);
-        verticalVelocity = Math.max(2, ratio * this.autoScrollMaxPxPerFrame);
-      }
-      if (drag.lastClientX < rect.left + this.autoScrollEdgePx) {
-        const ratio = Math.min(1, (rect.left + this.autoScrollEdgePx - drag.lastClientX) / this.autoScrollEdgePx);
-        horizontalVelocity = -Math.max(2, ratio * this.autoScrollMaxPxPerFrame);
-      } else if (drag.lastClientX > rect.right - this.autoScrollEdgePx) {
-        const ratio = Math.min(1, (drag.lastClientX - (rect.right - this.autoScrollEdgePx)) / this.autoScrollEdgePx);
-        horizontalVelocity = Math.max(2, ratio * this.autoScrollMaxPxPerFrame);
-      }
-      if (verticalVelocity || horizontalVelocity) {
-        body.scrollTop += verticalVelocity;
-        body.scrollLeft += horizontalVelocity;
-        this.moveDrag({ clientX: drag.lastClientX, clientY: drag.lastClientY } as PointerEvent);
-      }
-      this.autoScrollFrame = requestAnimationFrame(tick);
-    };
-    this.autoScrollFrame = requestAnimationFrame(tick);
-  }
-
-  private stopAutoScroll(): void {
-    if (this.autoScrollFrame === null) return;
-    cancelAnimationFrame(this.autoScrollFrame);
-    this.autoScrollFrame = null;
-  }
-
-  private restoreDragVisual(drag: DragState): void {
-    drag.element.classList.remove("is-dragging", "is-command-preview");
-    drag.element.style.transform = "";
-    drag.element.style.height = drag.originalHeightCss;
-  }
-
-  private async finishDrag(pointer: PointerEvent): Promise<void> {
-    const drag = this.drag;
-    this.drag = null;
-    this.stopAutoScroll();
-    if (!drag) return;
-    this.suppressOccurrenceClickUntil = Date.now() + 350;
-    drag.element.classList.remove("is-dragging");
-    drag.element.classList.add("is-command-preview");
-    this.setDraggingState(false);
+  private async finishDrag(pointer: PointerEvent, drag: CalendarDragState): Promise<void> {
     const body = this.host.querySelector<HTMLElement>(".dc-body");
     const scrollDelta = (body?.scrollTop ?? 0) - drag.scrollStartTop;
     const totalDelta = pointer.clientY - drag.pointerStartY + scrollDelta;
@@ -1279,78 +932,88 @@ export class CalendarUi {
     drag.element.style.pointerEvents = "none";
     const under = document.elementFromPoint(pointer.clientX, pointer.clientY) as HTMLElement | null;
     drag.element.style.pointerEvents = "";
-    try {
-      if (drag.mode !== "move") {
-        const edge = this.resizeEdge(drag.mode);
-        const targetColumn = under?.closest<HTMLElement>(".dc-time-column");
-        let target: Date;
-        if (targetColumn?.dataset.date) {
-          const day = toDate(targetColumn.dataset.date);
-          const rect = targetColumn.getBoundingClientRect();
-          const minute = this.dayStartHour * 60 + (pointer.clientY - rect.top);
-          const resolved = this.timeAtGridMinute(day, minute, this.snapPolicy.resize, "Resize");
-          if (!resolved) return;
-          target = resolved;
-        } else {
-          const delta = this.snappedDeltaMinutes(totalDelta, this.snapPolicy.resize);
-          if (!delta) return;
-          const shifted = shiftCivilMinutes(edge === "start" ? drag.originalStart : drag.originalEnd, delta, this.timeZone, this.dstOverlapDisambiguation);
-          if (!shifted) { this.announce("Resize is unavailable because the target local time does not exist."); return; }
-          target = shifted;
-        }
-        const resized = resizeInterval(drag.originalStart, drag.originalEnd, target, edge, this.slotMinutes);
-        if (resized.start.getTime() === drag.originalStart.getTime() && resized.end.getTime() === drag.originalEnd.getTime()) return;
-        if (!await this.allowPlacement(resized.start, resized.end, false, drag.occurrence, "resize")) return;
-        await this.issueTimedCommand({ type: "resize-occurrence", occurrence: drag.occurrence, start: resized.start.toISOString(), end: resized.end.toISOString(), scope: "this" }, "Resize", [edge === "start" ? "canResizeStart" : "canResizeEnd"]);
-        return;
+
+    if (drag.mode !== "move") {
+      const edge = dragResizeEdge(drag.mode);
+      const targetColumn = under?.closest<HTMLElement>(".dc-time-column");
+      let target: Date;
+      if (targetColumn?.dataset.date) {
+        const day = toDate(targetColumn.dataset.date);
+        const rect = targetColumn.getBoundingClientRect();
+        const minute = this.dayStartHour * 60 + (pointer.clientY - rect.top);
+        const resolved = this.timeAtGridMinute(day, minute, this.snapPolicy.resize, "Resize");
+        if (!resolved) return;
+        target = resolved;
+      } else {
+        const delta = snapDragDeltaMinutes(totalDelta, this.slotMinutes, this.snapPolicy.resize);
+        if (!delta) return;
+        const shifted = shiftCivilMinutes(edge === "start" ? drag.originalStart : drag.originalEnd, delta, this.timeZone, this.dstOverlapDisambiguation);
+        if (!shifted) { this.announce("Resize is unavailable because the target local time does not exist."); return; }
+        target = shifted;
       }
-      const monthTarget = under?.closest<HTMLElement>(".dc-day-cell");
-      if (monthTarget?.dataset.date) {
-        await this.moveToDay(drag.occurrence, toDate(monthTarget.dataset.date), isDateLikeOccurrence(drag.occurrence));
-        return;
-      }
-      const allDayTarget = under?.closest<HTMLElement>(".dc-all-day-col");
-      if (allDayTarget?.dataset.date) {
-        if (!this.canMoveOccurrenceToPlacement(drag.occurrence, true)) {
-          this.announce(`${drag.occurrence.title}: this move is not allowed.`);
-          return;
-        }
-        const day = toDate(allDayTarget.dataset.date);
-        const start = startOfDay(day, this.timeZone);
-        const days = calendarDaySpan(toDate(drag.occurrence.start), toDate(drag.occurrence.end), this.timeZone);
-        const end = addDays(start, days, this.timeZone);
-        if (!await this.allowPlacement(start, end, true, drag.occurrence, "move")) return;
-        await this.issueOccurrencePatch(drag.occurrence, placementTimePatch(start, end, true, this.timeZone), "Move", this.moveRequirements(drag.occurrence, true), "move");
-        return;
-      }
-      const column = under?.closest<HTMLElement>(".dc-time-column");
-      if (column?.dataset.date) {
-        if (!this.canMoveOccurrenceToPlacement(drag.occurrence, false)) {
-          this.announce(`${drag.occurrence.title}: this move is not allowed.`);
-          return;
-        }
-        const day = toDate(column.dataset.date);
-        const rect = column.getBoundingClientRect();
-        const rawMinute = this.dayStartHour * 60 + (pointer.clientY - rect.top) - drag.grabOffsetMinutes;
-        const start = this.timeAtGridMinute(day, rawMinute, this.snapPolicy.move, "Move");
-        if (!start) return;
-        const dateLike = isDateLikeOccurrence(drag.occurrence);
-        const end = new Date(start.getTime() + (dateLike ? 60 * 60_000 : durationMs(drag.occurrence)));
-        if (!await this.allowPlacement(start, end, false, drag.occurrence, "move")) return;
-        if (dateLike) await this.issueOccurrencePatch(drag.occurrence, placementTimePatch(start, end, false, this.timeZone), "Move", this.moveRequirements(drag.occurrence, false), "move");
-        else await this.issueTimedCommand({ type: "move-occurrence", occurrence: drag.occurrence, start: start.toISOString(), end: end.toISOString(), scope: "this" }, "Move", ["canMove"]);
-        return;
-      }
-      const deltaMinutes = this.snappedDeltaMinutes(totalDelta, this.snapPolicy.move);
-      if (!deltaMinutes) return;
-      const start = shiftCivilMinutes(drag.originalStart, deltaMinutes, this.timeZone, this.dstOverlapDisambiguation);
-      const end = shiftCivilMinutes(drag.originalEnd, deltaMinutes, this.timeZone, this.dstOverlapDisambiguation);
-      if (!start || !end) { this.announce("Move is unavailable because the target local time does not exist."); return; }
-      if (!await this.allowPlacement(start, end, false, drag.occurrence, "move")) return;
-      await this.issueTimedCommand({ type: "move-occurrence", occurrence: drag.occurrence, start: start.toISOString(), end: end.toISOString(), scope: "this" }, "Move", ["canMove"]);
-    } finally {
-      this.restoreDragVisual(drag);
+      const resized = resizeInterval(drag.originalStart, drag.originalEnd, target, edge, this.slotMinutes);
+      if (resized.start.getTime() === drag.originalStart.getTime() && resized.end.getTime() === drag.originalEnd.getTime()) return;
+      if (!await this.allowPlacement(resized.start, resized.end, false, drag.occurrence, "resize")) return;
+      await this.mutations.issueTimedCommand({ type: "resize-occurrence", occurrence: drag.occurrence, start: resized.start.toISOString(), end: resized.end.toISOString(), scope: "this" }, "Resize", [edge === "start" ? "canResizeStart" : "canResizeEnd"]);
+      return;
     }
+
+    const monthTarget = under?.closest<HTMLElement>(".dc-day-cell");
+    if (monthTarget?.dataset.date) {
+      await this.moveToDay(drag.occurrence, toDate(monthTarget.dataset.date), isDateLikeOccurrence(drag.occurrence));
+      return;
+    }
+    const allDayTarget = under?.closest<HTMLElement>(".dc-all-day-col");
+    if (allDayTarget?.dataset.date) {
+      if (!this.canMoveOccurrenceToPlacement(drag.occurrence, true)) {
+        this.announce(`${drag.occurrence.title}: this move is not allowed.`);
+        return;
+      }
+      const day = toDate(allDayTarget.dataset.date);
+      const start = startOfDay(day, this.timeZone);
+      const days = calendarDaySpan(toDate(drag.occurrence.start), toDate(drag.occurrence.end), this.timeZone);
+      const end = addDays(start, days, this.timeZone);
+      if (!await this.allowPlacement(start, end, true, drag.occurrence, "move")) return;
+      await this.mutations.issueOccurrencePatch(drag.occurrence, placementTimePatch(start, end, true, this.timeZone), "Move", this.mutations.moveRequirements(drag.occurrence, true), "move");
+      return;
+    }
+    const column = under?.closest<HTMLElement>(".dc-time-column");
+    if (column?.dataset.date) {
+      if (!this.canMoveOccurrenceToPlacement(drag.occurrence, false)) {
+        this.announce(`${drag.occurrence.title}: this move is not allowed.`);
+        return;
+      }
+      const day = toDate(column.dataset.date);
+      const rect = column.getBoundingClientRect();
+      const rawMinute = this.dayStartHour * 60 + (pointer.clientY - rect.top) - drag.grabOffsetMinutes;
+      const start = this.timeAtGridMinute(day, rawMinute, this.snapPolicy.move, "Move");
+      if (!start) return;
+      const dateLike = isDateLikeOccurrence(drag.occurrence);
+      const end = new Date(start.getTime() + (dateLike ? 60 * 60_000 : durationMs(drag.occurrence)));
+      if (!await this.allowPlacement(start, end, false, drag.occurrence, "move")) return;
+      if (dateLike) await this.mutations.issueOccurrencePatch(drag.occurrence, placementTimePatch(start, end, false, this.timeZone), "Move", this.mutations.moveRequirements(drag.occurrence, false), "move");
+      else await this.mutations.issueTimedCommand({ type: "move-occurrence", occurrence: drag.occurrence, start: start.toISOString(), end: end.toISOString(), scope: "this" }, "Move", ["canMove"]);
+      return;
+    }
+    const deltaMinutes = snapDragDeltaMinutes(totalDelta, this.slotMinutes, this.snapPolicy.move);
+    if (!deltaMinutes) return;
+    const start = shiftCivilMinutes(drag.originalStart, deltaMinutes, this.timeZone, this.dstOverlapDisambiguation);
+    const end = shiftCivilMinutes(drag.originalEnd, deltaMinutes, this.timeZone, this.dstOverlapDisambiguation);
+    if (!start || !end) { this.announce("Move is unavailable because the target local time does not exist."); return; }
+    if (!await this.allowPlacement(start, end, false, drag.occurrence, "move")) return;
+    await this.mutations.issueTimedCommand({ type: "move-occurrence", occurrence: drag.occurrence, start: start.toISOString(), end: end.toISOString(), scope: "this" }, "Move", ["canMove"]);
+  }
+
+  private timeAtGridMinute(
+    day: Date,
+    minute: number,
+    strategy: import("../core/types.js").CalendarSnapStrategy,
+    action: string,
+  ): Date | null {
+    const snapped = snapMinuteCoordinate(minute, this.slotMinutes, strategy);
+    const target = instantAtCivilMinute(day, snapped, this.timeZone, this.dstOverlapDisambiguation);
+    if (!target) this.announce(`${action} is unavailable because that local time does not exist during the time-zone transition.`);
+    return target;
   }
 
   private beginRangeSelection(pointer: PointerEvent, day: Date, column: HTMLElement): void {
@@ -1425,104 +1088,61 @@ export class CalendarUi {
   }
 
   private renderAgenda(): HTMLElement {
-    const container = el("div", "dc-agenda");
-    const groups = groupAgendaByDay(this.displayOccurrences(), this.visibleRange, this.timeZone);
-    if (!groups.length) {
-      container.append(el("div", "dc-empty", this.addonEmptyMessage() ?? "Nothing scheduled in this range."));
-      return container;
-    }
-    for (const group of groups) {
-      const date = toDate(group.date, this.timeZone);
-      const section = el("section", "dc-agenda-day");
-      const heading = el("div", "dc-agenda-heading");
-      heading.append(el("span", undefined, new Intl.DateTimeFormat(this.locale, { weekday: "long", day: "numeric", month: "long", timeZone: this.timeZone }).format(date)));
-      const summaries = (this.options.extensions ?? [])
-        .map((extension, index) => this.hostHook(`Calendar extension ${index + 1} agenda presentation`, () => extension.presentAgendaDay?.(group.date, group.occurrences)?.summary, undefined))
+    return renderAgendaView(this.staticRenderModel(), this.staticRenderActions());
+  }
+
+  private staticRenderModel(): CalendarStaticRenderModel {
+    return {
+      locale: this.locale,
+      timeZone: this.timeZone,
+      weekStartsOn: this.weekStartsOn,
+      anchor: this.anchor,
+      visibleRange: this.visibleRange,
+      agendaSpan: this.agendaSpan,
+      occurrences: this.displayOccurrences(),
+      backgroundRanges: this.backgroundRanges,
+      now: this.clock.now(),
+    };
+  }
+
+  private staticRenderActions(): CalendarStaticRenderActions {
+    return {
+      dateInNavigationBounds: date => this.dateInNavigationBounds(date),
+      monthInNavigationBounds: (firstDateKey, lastDateKey) =>
+        (!this.navigationBounds.min || lastDateKey >= this.navigationBounds.min)
+        && (!this.navigationBounds.max || firstDateKey <= this.navigationBounds.max),
+      openDay: date => this.openDay(date),
+      openMonth: (monthStart, firstDateKey) => {
+        const target = this.navigationBounds.min && firstDateKey < this.navigationBounds.min
+          ? toDate(this.navigationBounds.min, this.timeZone)
+          : monthStart;
+        this.anchor = clampNavigationDate(target, this.navigationBounds, this.timeZone);
+        this.setView("month");
+      },
+      monthEvent: (occurrence, allowDrag = true, bindInteractions = true) => this.monthEvent(occurrence, allowDrag, bindInteractions),
+      openMonthOverflow: (date, rows) => this.openMonthOverflow(date, rows),
+      applyBackgroundPresentation: (element, range) => this.applyBackgroundPresentation(element, range),
+      dragOccurrenceFromTransfer: transfer => this.dragOccurrenceFromTransfer(transfer),
+      canMoveOccurrence: occurrence => this.canMoveOccurrence(occurrence),
+      moveToDay: (occurrence, day, allDay) => this.moveToDay(occurrence, day, allDay),
+      canCreateItems: () => this.canCreateItems(),
+      createFromSelection: selection => this.createFromSelection(selection),
+      addonEmptyMessage: () => this.addonEmptyMessage(),
+      agendaSummaries: (date, occurrences) => (this.options.extensions ?? [])
+        .map((extension, index) => this.hostHook(
+          `Calendar extension ${index + 1} agenda presentation`,
+          () => extension.presentAgendaDay?.(date, occurrences)?.summary,
+          undefined,
+        ))
         .filter((value): value is string => typeof value === "string" && value.length > 0 && value.length <= 4_096)
-        .slice(0, 16);
-      if (summaries.length) heading.append(el("span", "dc-agenda-totals", summaries.join(" · ")));
-      section.append(heading);
-      const rows = [...group.occurrences].sort((a, b) => {
-        const aOrder = this.occurrencePresentation(a).agendaOrder;
-        const bOrder = this.occurrencePresentation(b).agendaOrder;
-        return aOrder - bOrder || toDate(a.start).getTime() - toDate(b.start).getTime() || a.title.localeCompare(b.title);
-      });
-      for (const occurrence of rows) {
-        const row = el("div", "dc-agenda-row");
-        row.dataset.kind = occurrence.kind;
-        row.dataset.emphasis = occurrence.display?.emphasis ?? "normal";
-        this.applyOccurrencePresentation(row, occurrence);
-        const startsBeforeDay = dateKey(occurrence.start, this.timeZone) < group.date;
-        const endsAfterDay = dateKey(new Date(toDate(occurrence.end).getTime() - 1), this.timeZone) > group.date;
-        const time = occurrence.allDay || occurrence.precision === "date"
-          ? "All day"
-          : startsBeforeDay && endsAfterDay
-            ? "Continues →"
-            : startsBeforeDay
-              ? `Continues · until ${formatTime(toDate(occurrence.end), this.locale, this.timeZone)}`
-              : endsAfterDay
-                ? `${formatTime(toDate(occurrence.start), this.locale, this.timeZone)} →`
-                : formatTime(toDate(occurrence.start), this.locale, this.timeZone);
-        row.append(el("div", "dc-agenda-time", time));
-        const detailWrap = el("div", "dc-agenda-detail");
-        const detail = this.monthEvent(occurrence);
-        detail.classList.add("dc-agenda-event");
-        detailWrap.append(detail);
-        const presentation = this.occurrencePresentation(occurrence);
-        const meta = presentation.agendaMeta.join(" · ");
-        if (meta) detailWrap.append(el("div", "dc-agenda-meta", meta));
-        row.append(detailWrap);
-        section.append(row);
-      }
-      container.append(section);
-    }
-    return container;
-  }
-
-  private resolveDraftTime(value: string, temporal: CalendarCreateDraft["temporal"]): Date {
-    if (temporal?.kind === "date") return toDate(value, this.timeZone);
-    if (temporal?.kind === "zoned") return toDate(value, temporal.timeZone ?? this.timeZone);
-    if (temporal?.kind === "floating") return toDate(value, this.timeZone);
-    return toDate(value);
-  }
-
-  private occurrencePatchRequirements(occurrence: CalendarOccurrence, patch: CalendarItemPatch): CalendarOccurrenceCapabilityKey[] {
-    const requirements = new Set<CalendarOccurrenceCapabilityKey>();
-    const semanticEdit = patch.calendarId !== undefined
-      || patch.title !== undefined
-      || patch.description !== undefined
-      || patch.location !== undefined
-      || patch.kind !== undefined
-      || patch.editPolicy !== undefined
-      || patch.reminders !== undefined
-      || patch.display !== undefined
-      || patch.metadata !== undefined
-      || patch.temporalForm !== undefined;
-    if (semanticEdit) requirements.add("canEdit");
-    if (patch.recurrence !== undefined) requirements.add("canChangeRecurrence");
-
-    const beforeTemporal = occurrence.temporal;
-    const afterTemporal = patch.temporal === null ? undefined : patch.temporal ?? beforeTemporal;
-    const beforeStart = this.resolveDraftTime(occurrence.start, beforeTemporal).getTime();
-    const beforeEnd = this.resolveDraftTime(occurrence.end, beforeTemporal).getTime();
-    const afterStart = this.resolveDraftTime(patch.start ?? occurrence.start, afterTemporal).getTime();
-    const afterEnd = this.resolveDraftTime(patch.end ?? occurrence.end, afterTemporal).getTime();
-    const targetDateLike = Boolean(
-      (patch.allDay ?? occurrence.allDay)
-      || (patch.precision ?? occurrence.precision) === "date"
-      || afterTemporal?.kind === "date",
-    );
-    const temporalRequirements = temporalMutationCapabilityRequirements({
-      beforeStart, beforeEnd, afterStart, afterEnd,
-      crossesAllDayBoundary: isDateLikeOccurrence(occurrence) !== targetDateLike,
-    });
-    for (const requirement of temporalRequirements) requirements.add(requirement);
-    if (temporalRequirements.length === 0 && (patch.temporal !== undefined || patch.precision !== undefined || patch.allDay !== undefined)) requirements.add("canEdit");
-    return [...requirements];
+        .slice(0, 16),
+      occurrencePresentation: occurrence => this.occurrencePresentation(occurrence),
+      applyOccurrencePresentation: (element, occurrence) => this.applyOccurrencePresentation(element, occurrence),
+    };
   }
 
   private createCalendarItem(draft: CalendarCreateDraft, purpose: CalendarItemFactoryInput["purpose"], original?: CalendarOccurrence): CalendarItem {
-    const now = new Date().toISOString();
+    const now = this.clock.now().toISOString();
     const id = `calendar:${crypto.randomUUID()}`;
     if (this.options.itemFactory) return this.options.itemFactory({ id, now, purpose, draft, ...(original ? { original } : {}) });
     return {
@@ -1535,7 +1155,7 @@ export class CalendarUi {
 
   private async createAtAnchor(): Promise<void> {
     const day = startOfDay(this.anchor, this.timeZone);
-    const now = new Date();
+    const now = this.clock.now();
     let start = this.timeAtGridMinute(day, 9 * 60, "none", "Creation");
     if (sameLocalDay(day, now, this.timeZone)) {
       const proposed = new Date(now.getTime() + 30 * 60_000);
@@ -1554,7 +1174,7 @@ export class CalendarUi {
     }
     this.hostHook("Calendar onCreate callback", () => this.options.callbacks?.onCreate?.(selection), undefined);
     const createHandler = this.options.callbacks?.handleCreate;
-    if (createHandler && await this.hostHookAsync("Calendar handleCreate callback", () => createHandler(selection), false)) return;
+    if (createHandler && await this.hostHookAsync("Calendar handleCreate callback", () => createHandler(selection, this.placementValidationPort()), false)) return;
     if (!this.options.commandHandler) {
       this.announce("Creation was not handled by the host and no built-in command handler is available.");
       return;
@@ -1576,12 +1196,8 @@ export class CalendarUi {
       ...(result.reminders ? { reminders: result.reminders } : {}),
     }, "create");
     const withSeries = result.recurrence ? { ...item, seriesId: item.id } : item;
-    if (!await this.allowPlacement(this.resolveDraftTime(withSeries.start, withSeries.temporal), this.resolveDraftTime(withSeries.end, withSeries.temporal), Boolean(withSeries.allDay), undefined, "create")) return;
-    await this.dispatch({ type: "create", item: withSeries });
-  }
-
-  private sourceItem(occurrence: CalendarOccurrence): CalendarItem | undefined {
-    return this.engine.snapshot().items.find(item => item.id === occurrence.sourceItemId);
+    if (!await this.mutations.allowDraftPlacement(withSeries, undefined, "create")) return;
+    await this.mutations.dispatch({ type: "create", item: withSeries });
   }
 
   private async openDetails(occurrence: CalendarOccurrence): Promise<void> {
@@ -1670,13 +1286,13 @@ export class CalendarUi {
   private async editOccurrence(occurrence: CalendarOccurrence): Promise<void> {
     if (this.isOccurrencePending(occurrence) || !this.canEditOccurrence(occurrence)) return;
     const editHandler = this.options.callbacks?.handleEdit;
-    if (editHandler && await this.hostHookAsync("Calendar handleEdit callback", () => editHandler(occurrence), false)) return;
+    if (editHandler && await this.hostHookAsync("Calendar handleEdit callback", () => editHandler(occurrence, this.placementValidationPort()), false)) return;
     const editCapabilities = this.occurrenceCapabilities(occurrence);
-    if (!this.commandHandlerFor(occurrence, editCapabilities)) {
+    if (!this.mutations.hasCommandPath(occurrence, editCapabilities)) {
       this.announce(`${occurrence.title}: editing was not handled by the host and no built-in command path is available.`);
       return;
     }
-    const sourceItem = this.sourceItem(occurrence);
+    const sourceItem = this.mutations.sourceItem(occurrence);
     const capabilities = editCapabilities;
     const result = await openEventEditor(
       this.host,
@@ -1715,16 +1331,16 @@ export class CalendarUi {
       if (!selected) return;
       scope = selected;
     }
-    if (!await this.allowPlacement(this.resolveDraftTime(result.start, result.temporal), this.resolveDraftTime(result.end, result.temporal), result.allDay, occurrence, "edit")) return;
-    await this.dispatchOccurrence(
+    if (!await this.mutations.allowDraftPlacement(result, occurrence, "edit")) return;
+    await this.mutations.dispatchOccurrence(
       { type: "update-occurrence", occurrence, patch, scope },
-      this.occurrencePatchRequirements(occurrence, patch),
+      this.mutations.patchRequirements(occurrence, patch),
       "edit",
     );
   }
 
   private async duplicateOccurrence(occurrence: CalendarOccurrence): Promise<void> {
-    const sourceItem = this.sourceItem(occurrence);
+    const sourceItem = this.mutations.sourceItem(occurrence);
     const result = await openEventEditor(this.host, { occurrence, ...(sourceItem ? { sourceItem } : {}), duplicate: true }, this.sources, this.defaultCalendarId, this.weekStartsOn, this.timeZone, this.kindOptions(), this.options.reminderChannelOptions, {}, this.dstOverlapDisambiguation);
     if (!result) return;
     const item = this.createCalendarItem({
@@ -1738,8 +1354,8 @@ export class CalendarUi {
       ...(result.reminders ? { reminders: result.reminders } : {}),
     }, "duplicate", occurrence);
     const withSeries = result.recurrence ? { ...item, seriesId: item.id } : item;
-    if (!await this.allowPlacement(this.resolveDraftTime(withSeries.start, withSeries.temporal), this.resolveDraftTime(withSeries.end, withSeries.temporal), Boolean(withSeries.allDay), undefined, "create")) return;
-    await this.dispatch({ type: "create", item: withSeries });
+    if (!await this.mutations.allowDraftPlacement(withSeries, undefined, "create")) return;
+    await this.mutations.dispatch({ type: "create", item: withSeries });
   }
 
   private async deleteOccurrence(occurrence: CalendarOccurrence): Promise<void> {
@@ -1751,11 +1367,7 @@ export class CalendarUi {
       scope = selected;
     }
     if (!await confirmCalendarAction(this.host, "Delete event", `Delete “${occurrence.title}”?`, "Delete", true)) return;
-    await this.dispatchOccurrence({ type: "cancel-occurrence", occurrence, scope }, ["canDelete"], "delete");
-  }
-
-  private moveRequirements(occurrence: CalendarOccurrence, allDay: boolean): CalendarOccurrenceCapabilityKey[] {
-    return isDateLikeOccurrence(occurrence) === allDay ? ["canMove"] : ["canMove", "canMoveBetweenAllDayAndTimed"];
+    await this.mutations.dispatchOccurrence({ type: "cancel-occurrence", occurrence, scope }, ["canDelete"], "delete");
   }
 
   private async moveToDay(occurrence: CalendarOccurrence, day: Date, allDay: boolean): Promise<void> {
@@ -1769,89 +1381,29 @@ export class CalendarUi {
       const days = calendarDaySpan(toDate(occurrence.start), toDate(occurrence.end), this.timeZone);
       const end = addDays(start, days, this.timeZone);
       if (!await this.allowPlacement(start, end, true, occurrence, "move")) return;
-      await this.issueOccurrencePatch(occurrence, placementTimePatch(start, end, true, this.timeZone), "Move", this.moveRequirements(occurrence, true), "move");
+      await this.mutations.issueOccurrencePatch(
+        occurrence,
+        placementTimePatch(start, end, true, this.timeZone),
+        "Move",
+        this.mutations.moveRequirements(occurrence, true),
+        "move",
+      );
       return;
     }
     const start = withLocalTime(day, originalStart, this.timeZone, this.dstOverlapDisambiguation);
-    if (!start) { this.announce("Move is unavailable because the target local time does not exist."); return; }
+    if (!start) {
+      this.announce("Move is unavailable because the target local time does not exist.");
+      return;
+    }
     const end = new Date(start.getTime() + durationMs(occurrence));
     if (!await this.allowPlacement(start, end, false, occurrence, "move")) return;
-    await this.issueOccurrencePatch(occurrence, { start: start.toISOString(), end: end.toISOString(), allDay: false, precision: "minute" }, "Move", this.moveRequirements(occurrence, false), "move");
-  }
-
-  private async issueOccurrencePatch(
-    occurrence: CalendarOccurrence,
-    patch: CalendarItemPatch,
-    action: string,
-    requirements: readonly CalendarOccurrenceCapabilityKey[] = ["canMove"],
-    operation = "edit",
-  ): Promise<OccurrenceDispatchResult> {
-    let scope: SeriesEditScope = "all";
-    if (occurrence.recurring) {
-      const selected = await chooseSeriesScope(this.host, action);
-      if (!selected) return "cancelled";
-      scope = selected;
-    }
-    return this.dispatchOccurrence({ type: "update-occurrence", occurrence, patch, scope }, requirements, operation);
-  }
-
-  private async issueTimedCommand(
-    command: Extract<CalendarCommand, { type: "move-occurrence" | "resize-occurrence" }>,
-    action: string,
-    requirements: readonly CalendarOccurrenceCapabilityKey[],
-  ): Promise<OccurrenceDispatchResult> {
-    let next = command;
-    if (command.occurrence.recurring) {
-      const scope = await chooseSeriesScope(this.host, action);
-      if (!scope) return "cancelled";
-      next = { ...command, scope };
-    }
-    const operation = command.type === "move-occurrence"
-      ? "move"
-      : requirements.includes("canResizeStart") ? "resize-start" : "resize-end";
-    return this.dispatchOccurrence(next, requirements, operation);
-  }
-
-  private async dispatchOccurrence(
-    command: CalendarOccurrenceCommand,
-    requirements: readonly CalendarOccurrenceCapabilityKey[],
-    operation: string,
-  ): Promise<CalendarCommandLifecycleStatus> {
-    const occurrence = this.authoritativeOccurrence(command.occurrence);
-    if (this.commandLifecycle.isPending(occurrence.occurrenceId)) {
-      this.announce(`${occurrence.title}: a command is already pending.`);
-      return "suppressed";
-    }
-    const previewPatch = previewPatchForCommand(command);
-    if (previewPatch) this.pendingPreviews.set(occurrence.occurrenceId, { patch: previewPatch });
-    const status = await this.commandLifecycle.run(occurrence.occurrenceId, operation, async () => {
-      const capabilities = this.occurrenceCapabilities(occurrence);
-      if (requirements.some(key => capabilities[key] !== true)) throw new Error(`${occurrence.title}: this action is no longer allowed.`);
-      const handler = this.commandHandlerFor(occurrence, capabilities);
-      if (!handler) throw new Error(`${occurrence.title}: no command path is available for this action.`);
-      await handler.execute(command, calendarOccurrenceCommandContext(command, new Date().toISOString(), this.timeZone));
-      this.hostHook("Calendar onCommand callback", () => this.options.callbacks?.onCommand?.(command), undefined);
-    }, {
-      onPendingChange: (group, pendingOperation, pending) => this.setOccurrencePending(group, pendingOperation, pending),
-      refresh: () => this.refresh(),
-      onError: error => this.announce(error instanceof Error ? error.message : "Calendar command could not be completed."),
-      onRefreshError: error => this.announce(error instanceof Error
-        ? `Calendar change was committed, but the authoritative refresh failed: ${error.message}`
-        : "Calendar change was committed, but the authoritative refresh failed. Do not retry the mutation; refresh Calendar instead."),
-    });
-    this.pendingPreviews.delete(occurrence.occurrenceId);
-    if (!this.destroyed) this.render();
-    return status;
-  }
-
-  private async dispatch(command: CalendarCommand): Promise<void> {
-    if (command.type === "update-occurrence" || command.type === "move-occurrence" || command.type === "resize-occurrence" || command.type === "cancel-occurrence") {
-      throw new Error("Occurrence commands must use the capability-aware command path");
-    }
-    if (!this.options.commandHandler) throw new Error("Calendar mutation requires a command handler");
-    await this.options.commandHandler.execute(command, { now: new Date().toISOString(), timeZone: this.timeZone });
-    this.hostHook("Calendar onCommand callback", () => this.options.callbacks?.onCommand?.(command), undefined);
-    await this.refresh();
+    await this.mutations.issueOccurrencePatch(
+      occurrence,
+      { start: start.toISOString(), end: end.toISOString(), allDay: false, precision: "minute" },
+      "Move",
+      this.mutations.moveRequirements(occurrence, false),
+      "move",
+    );
   }
 
   private setOccurrencePending(occurrenceId: string, operation: string, pending: boolean): void {
@@ -1882,25 +1434,11 @@ export class CalendarUi {
   }
 
   public async undo(): Promise<boolean> {
-    const undo = this.options.commandHandler?.undo;
-    if (!undo) return false;
-    const changed = await undo.call(this.options.commandHandler);
-    if (changed) {
-      this.announce("Calendar change undone.");
-      await this.refresh();
-    }
-    return changed;
+    return await this.mutations.undo();
   }
 
   public async redo(): Promise<boolean> {
-    const redo = this.options.commandHandler?.redo;
-    if (!redo) return false;
-    const changed = await redo.call(this.options.commandHandler);
-    if (changed) {
-      this.announce("Calendar change redone.");
-      await this.refresh();
-    }
-    return changed;
+    return await this.mutations.redo();
   }
 
   private announce(message: string): void {
@@ -1958,28 +1496,9 @@ export class CalendarUi {
     allDay: boolean,
     occurrence: CalendarOccurrence | undefined,
     action: string,
+    calendarId: CalendarId | undefined = occurrence?.calendarId,
   ): Promise<boolean> {
-    if (!placementInNavigationBounds(start, end, this.navigationBounds, this.timeZone)) {
-      this.announce(`${action} blocked because it is outside the allowed calendar date range.`);
-      return false;
-    }
-    if (this.collisionPolicy.mode === "allow") return true;
-    const queryStart = addDays(startOfDay(start, this.timeZone), -1, this.timeZone);
-    const queryEnd = addDays(startOfDay(end, this.timeZone), 2, this.timeZone);
-    const queryRange = boundProjectionRange({ start: queryStart.toISOString(), end: queryEnd.toISOString() }, this.navigationBounds, this.timeZone);
-    const allSources = new Set(this.sources.map(source => source.id));
-    const result = await this.engine.query(queryRange, { visibleSourceIds: allSources, timeZone: this.timeZone });
-    const collisions = placementCollisions(result.occurrences, start, end, allDay, this.collisionPolicy, occurrence?.occurrenceId);
-    if (!collisions.length) return true;
-    const names = [...new Set(collisions.map(row => row.occurrence.title))];
-    const summary = names.slice(0, 3).join(", ") + (names.length > 3 ? ` and ${names.length - 3} more` : "");
-    if (this.collisionPolicy.mode === "prevent") {
-      this.announce(`${action} blocked because it overlaps ${summary}.`);
-      return false;
-    }
-    const allowed = await confirmCalendarAction(this.host, "Scheduling conflict", `${action} overlaps ${summary}. Continue?`, "Continue");
-    if (!allowed) this.announce(`${action} cancelled because of an overlap.`);
-    return allowed;
+    return await this.mutations.allowPlacement(start, end, allDay, occurrence, action, calendarId);
   }
 
   private async keyboardTransformOccurrence(occurrence: CalendarOccurrence, key: string, resize: boolean): Promise<void> {
@@ -2009,8 +1528,8 @@ export class CalendarUi {
       }
       if (!await this.allowPlacement(nextStart, nextEnd, allDay, occurrence, "move")) return;
       const status = allDay
-        ? await this.issueOccurrencePatch(occurrence, placementTimePatch(nextStart, nextEnd, true, this.timeZone), "Move", ["canMove"])
-        : await this.issueTimedCommand({ type: "move-occurrence", occurrence, start: nextStart.toISOString(), end: nextEnd.toISOString(), scope: "this" }, "Move", ["canMove"]);
+        ? await this.mutations.issueOccurrencePatch(occurrence, placementTimePatch(nextStart, nextEnd, true, this.timeZone), "Move", ["canMove"])
+        : await this.mutations.issueTimedCommand({ type: "move-occurrence", occurrence, start: nextStart.toISOString(), end: nextEnd.toISOString(), scope: "this" }, "Move", ["canMove"]);
       if (status === "completed") this.announce(`${occurrence.title} moved to ${allDay ? new Intl.DateTimeFormat(this.locale, { day: "numeric", month: "long", timeZone: this.timeZone }).format(nextStart) : formatDateTime(nextStart, this.locale, this.timeZone)}.`);
       return;
     }
@@ -2038,8 +1557,8 @@ export class CalendarUi {
     }
     if (!await this.allowPlacement(start, nextEnd, allDay, occurrence, "resize")) return;
     const status = allDay
-      ? await this.issueOccurrencePatch(occurrence, placementTimePatch(start, nextEnd, true, this.timeZone), "Resize", ["canResizeEnd"])
-      : await this.issueTimedCommand({ type: "resize-occurrence", occurrence, start: start.toISOString(), end: nextEnd.toISOString(), scope: "this" }, "Resize", ["canResizeEnd"]);
+      ? await this.mutations.issueOccurrencePatch(occurrence, placementTimePatch(start, nextEnd, true, this.timeZone), "Resize", ["canResizeEnd"])
+      : await this.mutations.issueTimedCommand({ type: "resize-occurrence", occurrence, start: start.toISOString(), end: nextEnd.toISOString(), scope: "this" }, "Resize", ["canResizeEnd"]);
     if (status === "completed") this.announce(`${occurrence.title} now ends ${allDay ? new Intl.DateTimeFormat(this.locale, { day: "numeric", month: "long", timeZone: this.timeZone }).format(new Date(nextEnd.getTime() - 1)) : formatDateTime(nextEnd, this.locale, this.timeZone)}.`);
   }
 
@@ -2151,9 +1670,9 @@ export class CalendarUi {
   }
 
   private onKeyDown(event: KeyboardEvent): void {
-    if (event.key === "Escape" && this.drag) {
+    if (event.key === "Escape" && this.gestures.isDragging()) {
       event.preventDefault();
-      this.cancelActiveDrag();
+      this.gestures.cancelActiveDrag();
       return;
     }
     const target = event.target as HTMLElement;
@@ -2191,24 +1710,7 @@ export class CalendarUi {
   }
 
   private async executeSourceAction(actionId: string, occurrence: CalendarOccurrence): Promise<void> {
-    const port = this.options.sourceActions;
-    if (!port) return;
-    const authoritative = this.authoritativeOccurrence(occurrence);
-    const status = await this.commandLifecycle.run(authoritative.occurrenceId, `action:${actionId}`, async () => {
-      if (!this.occurrenceCapabilities(authoritative).canInvokeActions) throw new Error(`${authoritative.title}: this action is no longer allowed.`);
-      const current = this.sourceActionsFor(authoritative).find(action => action.id === actionId);
-      if (!current || !current.enabled || current.pending) throw new Error(`${authoritative.title}: this action is no longer available.`);
-      await port.execute(actionId, authoritative);
-    }, {
-      onPendingChange: (group, pendingOperation, pending) => this.setOccurrencePending(group, pendingOperation, pending),
-      refresh: () => this.refresh(),
-      onError: error => this.announce(error instanceof Error ? error.message : "Source action could not be completed."),
-      onRefreshError: error => this.announce(error instanceof Error
-        ? `Action was committed, but the authoritative refresh failed: ${error.message}`
-        : "Action was committed, but the authoritative refresh failed. Do not retry the action; refresh Calendar instead."),
-    });
-    if (status === "completed") this.announce(`${authoritative.title}: action completed.`);
-    else if (status === "suppressed") this.announce(`${authoritative.title}: a command is already pending.`);
+    await this.mutations.executeSourceAction(actionId, occurrence);
   }
 
   private occurrencePresentation(occurrence: CalendarOccurrence): ResolvedCalendarOccurrencePresentation {
@@ -2220,9 +1722,7 @@ export class CalendarUi {
   }
 
   private sourceActionsFor(occurrence: CalendarOccurrence): readonly ResolvedCalendarSourceAction[] {
-    const authoritative = this.authoritativeOccurrence(occurrence);
-    if (!this.canInvokeActions(authoritative)) return [];
-    return resolveSourceActions(this.options.sourceActions, authoritative);
+    return this.mutations.sourceActionsFor(occurrence);
   }
 
   private presentationTitle(occurrence: CalendarOccurrence): string {
@@ -2313,7 +1813,7 @@ export class CalendarUi {
     if (action.state !== undefined) button.dataset.state = action.state;
     button.setAttribute("aria-label", action.accessibleLabel ?? action.label);
     if (action.pressed !== undefined) button.setAttribute("aria-pressed", String(action.pressed));
-    const pending = action.pending || this.commandLifecycle.isPending(occurrence.occurrenceId);
+    const pending = action.pending || this.mutations.isPending(occurrence.occurrenceId);
     button.disabled = !action.enabled || pending;
     if (pending) button.setAttribute("aria-busy", "true");
     button.addEventListener("pointerdown", event => event.stopPropagation());
@@ -2330,6 +1830,17 @@ export class CalendarUi {
     return button;
   }
 
+  private applyBackgroundPresentation(element: HTMLElement, range: CalendarBackgroundRange): void {
+    const sourceDisplay = range.calendarId ? this.sources.find(source => source.id === range.calendarId)?.display : undefined;
+    const color = range.display?.color ?? sourceDisplay?.color;
+    const textColor = range.display?.textColor ?? sourceDisplay?.textColor;
+    if (color) element.style.setProperty("--dc-background-range-color", color);
+    if (textColor) element.style.setProperty("--dc-background-range-fg", textColor);
+    for (const token of range.display?.className?.split(/\s+/u).filter(Boolean) ?? []) {
+      if (isSafeHostClassName(token)) element.classList.add(token);
+    }
+  }
+
   private applyOccurrencePresentation(element: HTMLElement, occurrence: CalendarOccurrence): void {
     const sourceDisplay = this.sources.find(source => source.id === occurrence.calendarId)?.display;
     const display = { ...(sourceDisplay ?? {}), ...(occurrence.display ?? {}) };
@@ -2340,17 +1851,13 @@ export class CalendarUi {
     }
     const presentation = this.occurrencePresentation(occurrence);
     for (const token of presentation.classNames) element.classList.add(token);
-    for (const [key, value] of Object.entries(presentation.data)) element.setAttribute(`data-host-${this.hostDataAttributeName(key)}`, value);
-    const pendingOperation = this.commandLifecycle.pendingOperation(occurrence.occurrenceId);
+    for (const [key, value] of Object.entries(presentation.data)) element.setAttribute(`data-host-${hostDataAttributeName(key)}`, value);
+    const pendingOperation = this.mutations.pendingOperation(occurrence.occurrenceId);
     if (pendingOperation) {
       element.classList.add("is-pending");
       element.setAttribute("aria-busy", "true");
       element.dataset.pendingOperation = pendingOperation;
     }
-  }
-
-  private hostDataAttributeName(key: string): string {
-    return key.replace(/[A-Z]/gu, letter => `-${letter.toLowerCase()}`);
   }
 
   private addonEmptyMessage(): string | undefined {
@@ -2360,6 +1867,10 @@ export class CalendarUi {
       if (message) return message;
     }
     return undefined;
+  }
+
+  private placementValidationPort(): CalendarPlacementValidationPort {
+    return this.mutations.placementValidationPort();
   }
 
   private addonContext(): CalendarUiAddonContext {
@@ -2382,20 +1893,14 @@ export class CalendarUi {
       createSource: async source => { await self.engine.createSource(source); },
       createDraft: async (draft, purpose, original) => {
         const item = self.createCalendarItem(draft, purpose, original);
-        if (!await self.allowPlacement(self.resolveDraftTime(item.start, item.temporal), self.resolveDraftTime(item.end, item.temporal), Boolean(item.allDay), undefined, String(purpose))) return null;
-        await self.dispatch({ type: "create", item });
+        if (!await self.mutations.allowDraftPlacement(item, original, String(purpose))) return null;
+        await self.mutations.dispatch({ type: "create", item });
         return item;
       },
-      canPlaceDraft: async (draft, original, action = "create") => self.allowPlacement(
-        self.resolveDraftTime(draft.start, draft.temporal), self.resolveDraftTime(draft.end, draft.temporal), Boolean(draft.allDay), original, action,
-      ),
+      ...self.placementValidationPort(),
       patchOccurrence: async (occurrence, patch, label = "Edit") => {
-        const temporal = patch.temporal === null ? undefined : patch.temporal ?? occurrence.temporal;
-        const start = self.resolveDraftTime(patch.start ?? occurrence.start, temporal);
-        const end = self.resolveDraftTime(patch.end ?? occurrence.end, temporal);
-        const targetAllDay = Boolean(patch.allDay ?? occurrence.allDay);
-        if (!await self.allowPlacement(start, end, targetAllDay, occurrence, label.toLocaleLowerCase())) return false;
-        const status = await self.issueOccurrencePatch(occurrence, patch, label, self.occurrencePatchRequirements(occurrence, patch), "edit");
+        if (!await self.mutations.allowPatchPlacement(occurrence, patch, label.toLocaleLowerCase())) return false;
+        const status = await self.mutations.issueOccurrencePatch(occurrence, patch, label, self.mutations.patchRequirements(occurrence, patch), "edit");
         return mutationCommitted(status);
       },
     };

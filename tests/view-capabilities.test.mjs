@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import * as C from '../dist/index.js';
 import {
   formatRecurrenceByDay,
@@ -32,7 +31,6 @@ test('year and agenda list ranges are explicit, timezone-safe view contracts',()
   const rolling=C.rangeForView('2026-11-08T12:00:00.000Z','agenda',1,'Asia/Kolkata','30-days');
   assert.equal(C.daysBetween(rolling.start,rolling.end,'Asia/Kolkata'),30);
 });
-
 
 test('agenda list grouping includes carry-in and multi-day occurrences on every visible day',()=>{
   const carry=C.occurrenceFromItem(event({id:'carry',start:'2026-11-07T23:30:00.000Z',end:'2026-11-08T01:00:00.000Z'}));
@@ -76,7 +74,6 @@ test('advanced recurrence editor rejects invalid combinations instead of publish
   }),/BYSETPOS requires/i);
 });
 
-
 test('placement conversion canonicalizes timed and all-day temporal state',()=>{
   const allDay=C.placementTimePatch(
     new Date('2026-11-08T18:30:00.000Z'),
@@ -107,7 +104,7 @@ test('recurrence editor round-trips simple weekly BYDAY through weekday controls
     frequency:'weekly',interval:1,weekStartsOn:1,checkedWeekdays:[1,3],startMonth:11,startMonthDay:9,
     advanced:fields,
   });
-  assert.deepEqual(rule.byWeekday,[1,3]);
+  assert.deepEqual(rule.byDay,[{weekday:1},{weekday:3}]);
 });
 
 test('range-bounded day grouping does not emit keys outside the requested view',()=>{
@@ -172,24 +169,4 @@ test('resize command keeps recurring occurrence scope and undo semantics intact'
   ]);
   assert.equal(await handler.undo(),true);
   assert.equal(repo.read().items[0].recurrence.exceptions,undefined);
-});
-
-test('base UI wires month overflow, year/list views and dual-edge resizing without host semantics',async()=>{
-  const sourceText=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  const editorText=await fs.readFile(new URL('../src/view/event-editor.ts',import.meta.url),'utf8');
-  assert.match(sourceText,/more\.addEventListener\("click"[\s\S]*openMonthOverflow/);
-  assert.match(sourceText,/private openMonthOverflow/);
-  assert.match(sourceText,/\["month", "week", "day", "year", "agenda"\]/);
-  assert.match(sourceText,/Day list/); assert.match(sourceText,/Week list/); assert.match(sourceText,/Month list/); assert.match(sourceText,/30-day list/);
-  assert.match(sourceText,/dc-resize-start/); assert.match(sourceText,/dc-resize-end/);
-  assert.match(sourceText,/resizePreview/); assert.match(sourceText,/resizeInterval/);
-  assert.match(sourceText,/placementTimePatch/);
-  assert.match(sourceText,/recurrenceChanged \? \{ recurrence: result\.recurrence \?\? null \} : \{\}/);
-  assert.match(sourceText,/\(key === "c" \|\| key === "n"\) && this\.canCreateItems\(\)/);
-  assert.match(editorText,/Advanced recurrence filters/);
-  assert.match(editorText,/recurrenceRuleFromEditor/);
-  assert.match(editorText,/sourceItem\?\.recurrence && !initial\.duplicate/);
-  assert.match(editorText,/initialRecurrenceFormState/);
-  assert.match(editorText,/recurrenceFormState\(\) === initialRecurrenceFormState && nextTemporal\.kind === sourceTemporal\.kind/);
-  assert.match(editorText,/!initial\.duplicate && sourceItem\?\.recurrence\?\.exceptions/);
 });

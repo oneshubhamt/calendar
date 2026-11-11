@@ -7,6 +7,7 @@ import {
   type PlainDateTimeParts,
 } from "../core/temporal.js";
 import { calendarInteropMetadata, linkedExternalMetadata, type ExternalEventIdentity } from "./sync.js";
+import { stableHash, temporalSpec, withoutNullishEntries } from "./internal.js";
 
 const WEEKDAY_TO_ICS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"] as const;
 const ICS_TO_WEEKDAY = new Map<string, Weekday>(WEEKDAY_TO_ICS.map((value, index) => [value, index as Weekday]));
@@ -25,8 +26,6 @@ export interface IcsImportOptions {
   readonly defaultKind?: CalendarItemKind;
   readonly ownership?: CalendarOwnership;
   readonly editPolicy?: EditPolicy;
-  /** Legacy convenience. Prefer editPolicy. */
-  readonly readOnly?: boolean;
 }
 
 export interface IcsImportWarning { readonly uid?: string; readonly message: string; }
@@ -136,7 +135,7 @@ function serializeItem(item: CalendarItem, dtstamp: string, uidDomain: string): 
   const out = [...lines];
   // Replacement exceptions are encoded as detached VEVENTs keyed by UID + RECURRENCE-ID.
   for (const exception of item.recurrence?.exceptions ?? []) if (!exception.cancelled && exception.replacement) {
-    const occurrence = { ...item, ...cleanPatch(exception.replacement as unknown as Record<string, unknown>), recurrence: undefined } as CalendarItem;
+    const occurrence = { ...item, ...withoutNullishEntries(exception.replacement as unknown as Record<string, unknown>), recurrence: undefined } as CalendarItem;
     out.push("BEGIN:VEVENT", `UID:${escapeText(uid)}`, `DTSTAMP:${utcBasic(dtstamp)}`, recurrenceIdLine(exception.originalStart, item), ...serializeStartEnd(occurrence), `SUMMARY:${escapeText(occurrence.title)}`);
     if (occurrence.description) out.push(`DESCRIPTION:${escapeText(occurrence.description)}`);
     if (occurrence.location) out.push(`LOCATION:${escapeText(occurrence.location)}`);
@@ -179,7 +178,7 @@ function parsedEventToItem(event: ParsedEvent, uid: string, options: IcsImportOp
     rule: parseRRule(ruleProperty.value, start.kind, start.timeZone),
     ...(exdates.length ? { exceptions: exdates.map(originalStart => ({ originalStart, cancelled: true })) } : {}),
   } satisfies CalendarRecurrence : undefined;
-  const resolvedEditPolicy = options.editPolicy ?? (options.readOnly === false ? "full" : "readonly");
+  const resolvedEditPolicy = options.editPolicy ?? "readonly";
   const reminders: CalendarReminder[] = event.alarms.flatMap((alarm, index) => {
     const trigger = alarm.find(property => property.name === "TRIGGER")?.value;
     const minutes = trigger ? relativeTriggerMinutes(trigger) : null;
@@ -286,7 +285,7 @@ export function serializeRRule(rule: RecurrenceRule, item: CalendarItem): string
   if ((rule.interval ?? 1) !== 1) parts.push(`INTERVAL=${rule.interval}`);
   if (rule.count !== undefined) parts.push(`COUNT=${rule.count}`);
   if (rule.until) parts.push(`UNTIL=${serializeUntil(rule.until, item)}`);
-  const byDay: readonly RecurrenceByDay[] | undefined = rule.byDay ?? rule.byWeekday?.map(weekday => ({ weekday }));
+  const byDay: readonly RecurrenceByDay[] | undefined = rule.byDay;
   if (byDay?.length) parts.push(`BYDAY=${byDay.map(entry => `${entry.ordinal ?? ""}${WEEKDAY_TO_ICS[entry.weekday]}`).join(",")}`);
   if (rule.byMonthDay?.length) parts.push(`BYMONTHDAY=${rule.byMonthDay.join(",")}`);
   if (rule.byMonth?.length) parts.push(`BYMONTH=${rule.byMonth.join(",")}`);
@@ -326,7 +325,6 @@ function recurrenceIdLine(value: string, item: CalendarItem): string {
 function propertyOf(event: ParsedEvent, name: string): ParsedProperty | undefined { return event.properties.find(property => property.name === name); }
 function propertiesOf(event: ParsedEvent, name: string): readonly ParsedProperty[] { return event.properties.filter(property => property.name === name); }
 function valueOf(event: ParsedEvent, name: string): string | undefined { return propertyOf(event, name)?.value; }
-function temporalSpec(kind: CalendarTemporalKind, timeZone?: string) { return kind === "zoned" ? { kind, timeZone: timeZone ?? "UTC" } as const : { kind } as const; }
 
 function unfoldLines(text: string): string[] { return text.replace(/\r\n/g, "\n").replace(/\n[ \t]/g, "").split("\n").map(line => line.replace(/\r$/, "")).filter(Boolean); }
 function foldLines(lines: readonly string[]): string[] { return lines.flatMap(line => foldLine(line)); }
@@ -361,6 +359,4 @@ function serializeUntil(value: string, item: CalendarItem): string { return item
 function parseDurationMinutes(value: string): number { const match = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/i.exec(value); if (!match) throw new Error(`Unsupported duration: ${value}`); return Number(match[1] ?? 0) * 1440 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0) + Math.ceil(Number(match[4] ?? 0) / 60); }
 function relativeTriggerMinutes(value: string): number | null { const negative = value.startsWith("-"); const clean = value.replace(/^[+-]/, ""); try { const minutes = parseDurationMinutes(clean); return negative ? minutes : 0; } catch { return null; } }
 function safeUid(value: string): string { return value.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 180) || stableHash(value); }
-function stableHash(value: string): string { let hash = 2166136261; for (let i = 0; i < value.length; i++) { hash ^= value.charCodeAt(i); hash = Math.imul(hash, 16777619); } return (hash >>> 0).toString(36); }
 function fingerprintCalendarItemPlaceholder(uid: string, sequence: number): string { return `${uid}:${sequence}`; }
-function cleanPatch(patch: Record<string, unknown>): Record<string, unknown> { return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== null && value !== undefined)); }

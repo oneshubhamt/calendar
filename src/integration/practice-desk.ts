@@ -2,6 +2,7 @@ import type { CalendarItem, CalendarProjectionProvider, CalendarRange, CalendarR
 import { toDate } from "../core/time.js";
 import type { PracticeDeskAttempt, PracticeDeskCalendarInput, PracticeDeskDueCard } from "../adapters/practice-desk.js";
 import { PracticeDeskProjection } from "../adapters/practice-desk.js";
+import { createCalendarIntegrationId } from "./id.js";
 
 export interface PracticeDeskAttemptRecord {
   readonly recordType: "generic-attempt";
@@ -55,12 +56,6 @@ export interface PracticeMockScheduleRequest {
   readonly durationMinutes: number;
 }
 
-function randomId(): string {
-  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
 function flattenAttempt(record: PracticeDeskAttemptRecord, host: PracticeDeskCalendarHost): PracticeDeskAttempt {
   return {
     id: record.id,
@@ -106,7 +101,7 @@ export class PracticeDeskMockScheduler {
     const start = toDate(request.start);
     const end = new Date(start.getTime() + Math.max(1, request.durationMinutes) * 60_000);
     const item: CalendarItem = {
-      id: `practice-plan:${randomId()}`,
+      id: `practice-plan:${createCalendarIntegrationId()}`,
       calendarId: "practice-desk:plan",
       title: request.title,
       start: start.toISOString(),

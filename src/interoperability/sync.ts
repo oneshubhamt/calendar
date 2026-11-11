@@ -1,4 +1,5 @@
 import type { CalendarItem, CalendarItemId, CalendarMetadata, CalendarMetadataValue, ISODateTime } from "../core/types.js";
+import { canonicalValueString } from "../core/canonical-value.js";
 
 export type ExternalCalendarProvider = string;
 export type CalendarSyncMode = "overlay" | "import" | "publish" | "two-way";
@@ -67,7 +68,10 @@ export interface SyncStateStore {
 
 export class MemorySyncStateStore implements SyncStateStore {
   private readonly states = new Map<string, CalendarSyncConnectionState>();
-  public read(connectionId: string): CalendarSyncConnectionState | null { return this.states.get(connectionId) ?? null; }
+  public read(connectionId: string): CalendarSyncConnectionState | null {
+    const state = this.states.get(connectionId);
+    return state ? structuredClone(state) : null;
+  }
   public write(state: CalendarSyncConnectionState): void { this.states.set(state.connectionId, structuredClone(state)); }
   public remove(connectionId: string): void { this.states.delete(connectionId); }
 }
@@ -79,7 +83,7 @@ export interface SyncDecision {
 
 export function fingerprintCalendarItem(item: CalendarItem | undefined): string {
   if (!item) return "<deleted>";
-  return stableStringify({
+  return canonicalValueString({
     calendarId: item.calendarId,
     title: item.title,
     description: item.description ?? null,
@@ -241,12 +245,3 @@ function conflict(
   };
 }
 
-function stableStringify(value: unknown): string {
-  return JSON.stringify(sortValue(value));
-}
-
-function sortValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortValue);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, sortValue(child)]));
-}

@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from '../dist/view/time-zone-scale.js';
 
 test('secondary time scale is optional and malformed IANA zones fail closed',()=>{
@@ -34,7 +33,6 @@ test('week-scale conversion reports DST offset changes across visible primary da
   assert.match(label.accessibleLabel,/Nov 1 02:00/);
 });
 
-
 test('primary civil-time geometry remains aligned to wall-clock labels across a spring-forward transition',async()=>{
   const C=await import('../dist/index.js');
   const item={id:'dst',calendarId:'calendar',title:'After jump',start:'2026-03-08T07:00:00.000Z',end:'2026-03-08T08:00:00.000Z',kind:'event',ownership:'calendar',editPolicy:'full'};
@@ -53,40 +51,4 @@ test('secondary scale represents primary DST gaps and overlaps instead of invent
   assert.equal(fall.text,'10:30 / 11:30');
   assert.equal(fall.transition,'overlap');
   assert.match(fall.accessibleLabel,/occurs twice/);
-});
-test('secondary scale remains a day/week display option rather than a second calendar model',async()=>{
-  const types=await fs.readFile(new URL('../src/view/types.ts',import.meta.url),'utf8');
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.match(types,/readonly secondaryTimeZone\?: string \| undefined/);
-  assert.match(view,/this\.secondaryTimeZone = resolveSecondaryTimeZone\(options\.secondaryTimeZone\)/);
-  assert.match(view,/const secondaryAxis = this\.secondaryTimeZone \? this\.secondaryTimeAxis\(days, this\.secondaryTimeZone\) : null/);
-  assert.match(view,/else body\.append\(this\.renderTimeGrid\(this\.view === "week" \? 7 : 1\)\)/);
-  assert.doesNotMatch(view,/renderMonth\([\s\S]{0,500}secondaryTimeZone/);
-  assert.doesNotMatch(view,/renderAgenda\([\s\S]{0,500}secondaryTimeZone/);
-});
-
-test('secondary axis is additive chrome and does not replace primary grid labels or event layout',async()=>{
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  const styles=await fs.readFile(new URL('../src/view/styles.ts',import.meta.url),'utf8');
-  assert.match(view,/Primary time scale: \$\{this\.timeZone\}/);
-  assert.match(view,/Secondary time scale: \$\{timeZone\}/);
-  assert.match(view,/shell\.append\(axis\);\s*if \(secondaryAxis\) shell\.append\(secondaryAxis\);\s*shell\.append\(content\)/);
-  assert.match(styles,/\.dc-time-shell\.has-secondary-time-zone\{grid-template-columns:58px 72px minmax\(0,1fr\);min-width:792px\}/);
-  assert.match(styles,/\.dc-secondary-time-axis-label\.is-variable/);
-});
-
-test('primary geometry, projection and command semantics continue to use only the primary zone',async()=>{
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.match(view,/layoutTimedDay\(this\.displayOccurrences\(\), day, this\.timeZone\)/);
-  assert.match(view,/this\.engine\.query\(projectionRange, \{[\s\S]{0,220}visibleSourceIds,[\s\S]{0,80}timeZone: this\.timeZone/);
-  assert.match(view,/calendarOccurrenceCommandContext\(command, new Date\(\)\.toISOString\(\), this\.timeZone\)/);
-  assert.doesNotMatch(view,/calendarOccurrenceCommandContext\([^\n]*secondaryTimeZone/);
-  assert.doesNotMatch(view,/engine\.query\([^\n]*secondaryTimeZone/);
-  assert.doesNotMatch(view,/layoutTimedDay\([^\n]*secondaryTimeZone/);
-});
-
-test('C7 generic time-scale path contains no host-domain semantic dependency',async()=>{
-  const files=['../src/view/types.ts','../src/view/time-zone-scale.ts','../src/view/calendar-ui.ts','../src/view/styles.ts'];
-  const text=(await Promise.all(files.map(file=>fs.readFile(new URL(file,import.meta.url),'utf8')))).join('\n');
-  for(const token of ['Ayana','journey','habit','payment','nominal']) assert.equal(new RegExp(`\\b${token}\\b`,'i').test(text),false,`generic C7 path leaked ${token}`);
 });

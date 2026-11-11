@@ -1,4 +1,6 @@
 import type {
+  CalendarBackgroundProjectionProvider,
+  CalendarBackgroundRange,
   CalendarOccurrence,
   CalendarOccurrenceProjectionProvider,
   CalendarProjectionProvider,
@@ -6,15 +8,25 @@ import type {
   CalendarEngineRepository,
   CalendarSnapshot, CalendarSource, CalendarSourcePatch,
 } from "./types.js";
-import { expandItems } from "./recurrence.js";
+import { expandItems } from "./event-series.js";
 import { sortOccurrences } from "./layout.js";
-import { assertCalendarOccurrenceIntegrity, assertCalendarStateIntegrity } from "./store.js";
-import { hasExplicitOffset, intersectsRange, toDate } from "./time.js";
+import { assertCalendarBackgroundRangeIntegrity, assertCalendarOccurrenceIntegrity, assertCalendarStateIntegrity } from "./store.js";
+import { intersectsRange, parseAbsoluteDateTime, toDate } from "./time.js";
+import { notifyObservers } from "./notifications.js";
 
 export interface CalendarQueryResult {
   readonly range: CalendarRange;
   readonly occurrences: readonly CalendarOccurrence[];
-  readonly revision: number;
+  readonly backgroundRanges: readonly CalendarBackgroundRange[];
+  /** Durable repository concurrency token captured when the query began. */
+  readonly repositoryRevision: number;
+  /** Combined engine invalidation generation captured when the query began. */
+  readonly generation: number;
+}
+
+export interface CalendarEngineInvalidation {
+  readonly repositoryRevision: number;
+  readonly generation: number;
 }
 
 export interface CalendarQueryOptions {
@@ -22,14 +34,13 @@ export interface CalendarQueryOptions {
   readonly timeZone?: string | undefined;
   /** Host/feature-neutral occurrence predicate applied after recurrence expansion/projection. */
   readonly predicate?: ((occurrence: CalendarOccurrence) => boolean) | undefined;
+  /** False for event-only queries such as collision checks; passive providers are then not invoked at all. */
+  readonly includeBackgroundRanges?: boolean | undefined;
 }
 
 
 function canonicalAbsolute(value: string, label: string): string {
-  if (!hasExplicitOffset(value)) throw new Error(`${label} must be an absolute ISO date-time`);
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) throw new Error(`${label} must be an absolute ISO date-time`);
-  return date.toISOString();
+  return parseAbsoluteDateTime(value, label).toISOString();
 }
 
 /** Canonicalize the provider boundary once so all downstream occurrence mechanics consume absolute instants. */
@@ -42,27 +53,82 @@ function normalizeProjectedOccurrence(occurrence: CalendarOccurrence): CalendarO
   };
 }
 
+function normalizeProjectedBackgroundRange(range: CalendarBackgroundRange): CalendarBackgroundRange {
+  return {
+    ...range,
+    start: canonicalAbsolute(range.start, `Calendar background range ${range.id} start`),
+    end: canonicalAbsolute(range.end, `Calendar background range ${range.id} end`),
+  };
+}
+
 function assertRange(range: CalendarRange): void {
   if (toDate(range.end).getTime() <= toDate(range.start).getTime()) throw new RangeError("Calendar range end must be after start");
 }
 
 export class CalendarEngine {
+  private generationValue = 0;
+  private readonly invalidationListeners = new Set<(invalidation: CalendarEngineInvalidation) => void>();
+  private inputUnsubscribers: Array<() => void> = [];
+
   public constructor(
     private readonly repository: CalendarEngineRepository,
     private readonly projections: readonly CalendarProjectionProvider[] = [],
     private readonly occurrenceProjections: readonly CalendarOccurrenceProjectionProvider[] = [],
+    private readonly backgroundProjections: readonly CalendarBackgroundProjectionProvider[] = [],
   ) {}
 
   public snapshot(): CalendarSnapshot { return this.repository.read(); }
+  public generation(): number { return this.generationValue; }
 
-  /** Observe repository changes and invalidations from either host projection boundary. */
-  public subscribe(listener: (snapshot: CalendarSnapshot) => void): () => void {
-    const unsubscribers: Array<() => void> = [];
-    if (this.repository.subscribe) unsubscribers.push(this.repository.subscribe(listener));
-    for (const projection of [...this.projections, ...this.occurrenceProjections]) {
-      if (projection.subscribe) unsubscribers.push(projection.subscribe(() => listener(this.repository.read())));
+  /**
+   * Observe the combined repository/projection invalidation stream. Upstream inputs are
+   * subscribed once per engine and fanned out, so one source invalidation advances one generation.
+   */
+  public subscribe(listener: (invalidation: CalendarEngineInvalidation) => void): () => void {
+    this.invalidationListeners.add(listener);
+    if (this.invalidationListeners.size === 1) {
+      try {
+        this.attachInputs();
+      } catch (error) {
+        this.invalidationListeners.delete(listener);
+        throw error;
+      }
     }
-    return () => { for (const unsubscribe of unsubscribers.splice(0)) unsubscribe(); };
+    return () => {
+      this.invalidationListeners.delete(listener);
+      if (this.invalidationListeners.size === 0) this.detachInputs();
+    };
+  }
+
+  private attachInputs(): void {
+    const unsubscribers: Array<() => void> = [];
+    try {
+      if (this.repository.subscribe) {
+        unsubscribers.push(this.repository.subscribe(snapshot => this.publishInvalidation(snapshot.revision)));
+      }
+      for (const projection of [...this.projections, ...this.occurrenceProjections, ...this.backgroundProjections]) {
+        if (projection.subscribe) {
+          unsubscribers.push(projection.subscribe(() => this.publishInvalidation(this.repository.read().revision)));
+        }
+      }
+      this.inputUnsubscribers = unsubscribers;
+    } catch (error) {
+      for (const unsubscribe of unsubscribers.splice(0)) unsubscribe();
+      throw error;
+    }
+  }
+
+  private detachInputs(): void {
+    for (const unsubscribe of this.inputUnsubscribers.splice(0)) unsubscribe();
+  }
+
+  private publishInvalidation(repositoryRevision: number): void {
+    this.generationValue += 1;
+    const invalidation: CalendarEngineInvalidation = Object.freeze({
+      repositoryRevision,
+      generation: this.generationValue,
+    });
+    notifyObservers(this.invalidationListeners, invalidation);
   }
 
   public canManageSources(): boolean {
@@ -86,11 +152,18 @@ export class CalendarEngine {
 
   public async query(range: CalendarRange, options: CalendarQueryOptions = {}): Promise<CalendarQueryResult> {
     assertRange(range);
+    const generation = this.generationValue;
     const snapshot = this.repository.read();
     assertCalendarStateIntegrity(snapshot.sources, snapshot.items);
     const visible = options.visibleSourceIds ?? new Set(snapshot.sources.filter(source => source.visible).map(source => source.id));
 
-    const projectedItems = (await Promise.all(this.projections.map(provider => provider.project(range)))).flat();
+    const projectedItemsPromise = Promise.all(this.projections.map(provider => provider.project(range)));
+    const projectedOccurrencesPromise = Promise.all(this.occurrenceProjections.map(provider => provider.projectOccurrences(range)));
+    const projectedBackgroundRangesPromise = options.includeBackgroundRanges === false
+      ? Promise.resolve([] as readonly (readonly CalendarBackgroundRange[])[])
+      : Promise.all(this.backgroundProjections.map(provider => provider.projectBackgroundRanges(range)));
+
+    const projectedItems = (await projectedItemsPromise).flat();
     assertCalendarStateIntegrity(snapshot.sources, [...snapshot.items, ...projectedItems]);
     const itemOccurrences = expandItems(
       [...snapshot.items, ...projectedItems].filter(item => visible.has(item.calendarId)),
@@ -98,7 +171,7 @@ export class CalendarEngine {
       { timeZone: options.timeZone },
     );
 
-    const projectedOccurrences = (await Promise.all(this.occurrenceProjections.map(provider => provider.projectOccurrences(range))))
+    const projectedOccurrences = (await projectedOccurrencesPromise)
       .flat()
       .map(normalizeProjectedOccurrence);
     assertCalendarOccurrenceIntegrity(snapshot.sources, projectedOccurrences);
@@ -111,10 +184,28 @@ export class CalendarEngine {
     );
 
     const occurrences = [...itemOccurrences, ...visibleProjectedOccurrences].sort(sortOccurrences);
+
+    let backgroundRanges: readonly CalendarBackgroundRange[] = [];
+    if (options.includeBackgroundRanges !== false) {
+      const projectedBackgroundRanges = (await projectedBackgroundRangesPromise)
+        .flat()
+        .map(normalizeProjectedBackgroundRange);
+      assertCalendarBackgroundRangeIntegrity(snapshot.sources, projectedBackgroundRanges);
+      backgroundRanges = projectedBackgroundRanges
+        .filter(background => (background.calendarId === undefined || visible.has(background.calendarId))
+          && intersectsRange(background.start, background.end, range.start, range.end, false))
+        .sort((left, right) =>
+          toDate(left.start).getTime() - toDate(right.start).getTime()
+          || toDate(left.end).getTime() - toDate(right.end).getTime()
+          || left.id.localeCompare(right.id));
+    }
+
     return {
       range,
       occurrences: options.predicate ? occurrences.filter(options.predicate) : occurrences,
-      revision: snapshot.revision,
+      backgroundRanges,
+      repositoryRevision: snapshot.revision,
+      generation,
     };
   }
 }

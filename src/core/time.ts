@@ -31,6 +31,16 @@ export function toDate(value: ISODateTime | Date, timeZone?: string): Date {
   return checkedDate(new Date(value));
 }
 
+/** Parse an absolute ISO date-time with an explicit UTC/offset suffix. */
+export function parseAbsoluteDateTime(value: unknown, label = "Date-time"): Date {
+  if (typeof value !== "string" || !hasExplicitOffset(value)) {
+    throw new RangeError(`${label} must be an absolute ISO date-time`);
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) throw new RangeError(`${label} must be a valid absolute ISO date-time`);
+  return date;
+}
+
 export function toIso(value: ISODateTime | Date, timeZone?: string): ISODateTime {
   return toDate(value, timeZone).toISOString();
 }

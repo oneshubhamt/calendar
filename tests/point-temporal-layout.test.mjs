@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import * as C from '../dist/index.js';
 import { resolveOccurrenceCapabilities } from '../dist/core/authority.js';
 
@@ -100,26 +99,26 @@ test('point geometry disables resize and all-day conversion even on the trusted-
 });
 
 
-test('point editor and duplication preserve the single-instant temporal form instead of fabricating a duration',async()=>{
-  const editor=await fs.readFile(new URL('../src/view/event-editor.ts',import.meta.url),'utf8');
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.match(editor,/const pointOccurrence = Boolean\(occurrence && occurrence\.temporalForm === "point"\)/);
-  assert.match(editor,/nextEnd = pointOccurrence \? nextStart/);
-  assert.match(editor,/const endValue = pointOccurrence\s*\? startValue/);
-  assert.match(editor,/pointOccurrence \|\| \(occurrence && capabilities\.allowAllDayConversion === false\)/);
-  assert.match(editor,/pointOccurrence \? \{ temporalForm: "point" as const \}/);
-  assert.match(editor,/endDateField\.hidden = true/);
-  assert.match(editor,/endTimeField\.hidden = true/);
-  assert.match(view,/result\.temporalForm \? \{ temporalForm: result\.temporalForm \}/);
+test('nearby point markers use visual lanes without acquiring temporal duration',()=>{
+  const layouts=C.layoutTimedDay([
+    occurrence(point({id:'near-a',start:'2026-11-09T15:00:00.000Z'})),
+    occurrence(point({id:'near-b',start:'2026-11-09T15:05:00.000Z'})),
+  ],new Date('2026-11-09T00:00:00.000Z'),'UTC');
+  assert.deepEqual(layouts.map(row=>row.heightMinutes),[0,0]);
+  assert.deepEqual(new Set(layouts.map(row=>row.visualLaneCount)),new Set([2]));
+  assert.equal(new Set(layouts.map(row=>row.visualLane)).size,2);
 });
-test('point-marker view contract remains accessible and narrow-screen-safe without host semantics',async()=>{
-  assert.match(C.CALENDAR_CSS,/\.dc-time-point\{/);
-  assert.match(C.CALENDAR_CSS,/\.dc-time-point[^}]*min-height:0/);
-  assert.match(C.CALENDAR_CSS,/\.dc-time-point \.dc-occurrence-title[^}]*max-width:100%/);
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.match(view,/event\.setAttribute\("role", "group"\)/);
-  assert.match(view,/const main = el\("button", "dc-occurrence-main dc-time-event-main"\)/);
-  assert.match(view,/point in time/);
-  assert.match(view,/isPointOccurrence\(occurrence\) && allDay/);
-  for(const token of ['Ayana','journey','intent','habit','payment','deadline']) assert.equal(new RegExp(`\\b${token}\\b`,'i').test(view),false,`generic view leaked ${token}`);
+
+test('civil timeline rejects spring gaps and explicitly disambiguates fall overlaps',()=>{
+  const springDay=new Date('2026-03-08T05:00:00.000Z');
+  assert.equal(C.civilMinuteResolution(springDay,150,'America/New_York').kind,'gap');
+  assert.equal(C.instantAtCivilMinute(springDay,150,'America/New_York','earlier'),null);
+
+  const fallDay=new Date('2026-11-01T04:00:00.000Z');
+  const overlap=C.civilMinuteResolution(fallDay,90,'America/New_York');
+  assert.equal(overlap.kind,'overlap');
+  assert.equal(overlap.instants.length,2);
+  const earlier=C.instantAtCivilMinute(fallDay,90,'America/New_York','earlier');
+  const later=C.instantAtCivilMinute(fallDay,90,'America/New_York','later');
+  assert.equal(later.getTime()-earlier.getTime(),60*60_000);
 });

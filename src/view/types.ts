@@ -1,3 +1,4 @@
+import type { CalendarClock } from "../core/time.js";
 import type {
   CalendarAgendaSpan,
   CalendarCommand,
@@ -8,9 +9,11 @@ import type {
   CalendarItemId,
   CalendarItemKind,
   CalendarItemPatch,
+  CalendarNavigationBounds,
   CalendarOccurrence,
   CalendarOccurrenceCapabilityProvider,
   CalendarOverlapDisambiguation,
+  CalendarPlacementGuard,
   CalendarOwnership,
   CalendarRange,
   CalendarRecurrence,
@@ -58,12 +61,12 @@ export interface CalendarSourceActionPort {
 }
 
 export interface CalendarUiCallbacks {
-  /** Return true when the host handled creation and the built-in editor must not open. */
-  readonly handleCreate?: (selection: CalendarSelection) => boolean | Promise<boolean>;
+  /** Return true when the host handled creation and the built-in editor must not open. Custom editors can validate their final draft through placement.canPlaceDraft(). */
+  readonly handleCreate?: (selection: CalendarSelection, placement: CalendarPlacementValidationPort) => boolean | Promise<boolean>;
   /** Return true when the host handled opening/details and the built-in details dialog must not open. */
   readonly handleOpen?: (occurrence: CalendarOccurrence) => boolean | Promise<boolean>;
-  /** Return true when the host handled editing and the built-in editor must not open. */
-  readonly handleEdit?: (occurrence: CalendarOccurrence) => boolean | Promise<boolean>;
+  /** Return true when the host handled editing and the built-in editor must not open. Custom editors can validate their final draft through placement.canPlaceDraft(). */
+  readonly handleEdit?: (occurrence: CalendarOccurrence, placement: CalendarPlacementValidationPort) => boolean | Promise<boolean>;
   readonly onCreate?: (selection: CalendarSelection) => void;
   readonly onOpen?: (occurrence: CalendarOccurrence) => void;
   readonly onCommand?: (command: CalendarCommand) => void;
@@ -99,6 +102,10 @@ export interface CalendarCreateDraft {
   readonly reminders?: readonly CalendarReminder[];
   readonly display?: CalendarDisplay;
   readonly metadata?: CalendarItem["metadata"];
+}
+
+export interface CalendarPlacementValidationPort {
+  canPlaceDraft(draft: CalendarCreateDraft, original?: CalendarOccurrence, action?: string): Promise<boolean>;
 }
 
 export interface CalendarItemFactoryInput {
@@ -171,7 +178,7 @@ export interface CalendarUiAction {
 }
 
 /** Narrow capability surface exposed to optional UI add-ons. */
-export interface CalendarUiAddonContext {
+export interface CalendarUiAddonContext extends CalendarPlacementValidationPort {
   readonly host: HTMLElement;
   readonly locale: string;
   readonly timeZone: string;
@@ -189,7 +196,6 @@ export interface CalendarUiAddonContext {
   announce(message: string): void;
   createSource(source: CalendarSource): Promise<void>;
   createDraft(draft: CalendarCreateDraft, purpose: CalendarItemFactoryInput["purpose"], original?: CalendarOccurrence): Promise<CalendarItem | null>;
-  canPlaceDraft(draft: CalendarCreateDraft, original?: CalendarOccurrence, action?: string): Promise<boolean>;
   patchOccurrence(occurrence: CalendarOccurrence, patch: CalendarItemPatch, label?: string): Promise<boolean>;
 }
 
@@ -217,13 +223,9 @@ export interface CalendarUiChromeOptions {
   readonly createControls?: boolean;
 }
 
-/** Inclusive local calendar-date limits for Calendar navigation and placement. */
-export interface CalendarNavigationBounds {
-  readonly min?: ISODate;
-  readonly max?: ISODate;
-}
-
 export interface CalendarUiOptions {
+  /** Semantic clock for now/today behavior and deterministic hosts/tests. Interaction throttling remains wall-clock based. */
+  readonly clock?: CalendarClock;
   readonly locale?: string;
   readonly timeZone?: string | undefined;
   /** Optional reference IANA zone shown as a second time scale in day/week views only. Primary geometry remains unchanged. */
@@ -247,6 +249,8 @@ export interface CalendarUiOptions {
   readonly slotMinutes?: 5 | 10 | 15 | 20 | 30 | 60;
   readonly snapPolicy?: import("../core/types.js").CalendarSnapPolicy;
   readonly collisionPolicy?: import("../core/types.js").CalendarCollisionPolicy;
+  /** Optional generic scheduling policies. Background visualization remains non-enforcing unless a guard is supplied. */
+  readonly placementGuards?: readonly CalendarPlacementGuard[];
   readonly longPressMs?: number;
   readonly autoScrollEdgePx?: number;
   readonly autoScrollMaxPxPerFrame?: number;

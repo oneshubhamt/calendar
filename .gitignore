@@ -5,3 +5,5 @@ dist/
 coverage/
 ci-artifacts/
 .DS_Store
+playwright-report/
+test-results/

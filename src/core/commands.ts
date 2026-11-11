@@ -7,15 +7,23 @@ import type {
   CalendarOccurrence,
   CalendarRecurrence,
   CalendarRepository,
+  CalendarSnapshot,
   CalendarSource,
   RecurrenceException,
 } from "./types.js";
-import { occurrenceIdentityAtOrdinal, projectOccurrencePatchToSeries, rebaseRecurrenceExceptions, recurrenceOrdinal, sameRecurrence } from "./recurrence.js";
+import { projectTemporalPatchToSeries, rebaseTemporalSeriesExceptions, sameRecurrence, temporalSeriesIdentityAtOrdinal, temporalSeriesOrdinal } from "./recurrence.js";
+import { assertCalendarStateIntegrity, materializeCalendarSnapshot } from "./store.js";
+import {
+  createCalendarItemInState,
+  removeCalendarItemFromState,
+  updateCalendarItemInState,
+  type CalendarStateCollections,
+} from "./state-transitions.js";
+import { CalendarStaleError } from "./revision.js";
+import { canonicalValueString, sameCanonicalValue } from "./canonical-value.js";
 
-/** Host/repository command rejection caused by an obsolete authoritative revision. */
-export class CalendarCommandStaleError extends Error {
-  public readonly code = "stale" as const;
-
+/** Host command rejection caused by obsolete authoritative state. */
+export class CalendarCommandStaleError extends CalendarStaleError {
   public constructor(message = "Calendar command rejected because the authoritative state changed") {
     super(message);
     this.name = "CalendarCommandStaleError";
@@ -98,7 +106,7 @@ function seriesPatch(
   context: CalendarCommandContext,
 ): CalendarItemPatch {
   if (!item.recurrence) return patch;
-  const temporalPatch = projectOccurrencePatchToSeries(item, occurrence, patch, { timeZone: context.timeZone });
+  const temporalPatch = projectTemporalPatchToSeries(item, occurrence, patch, { timeZone: context.timeZone });
   const nextRecurrence = temporalPatch.recurrence === null ? undefined : temporalPatch.recurrence ?? item.recurrence;
   if (!nextRecurrence) return temporalPatch;
   const nextItem = {
@@ -107,7 +115,13 @@ function seriesPatch(
     end: temporalPatch.end ?? item.end,
     recurrence: nextRecurrence,
   };
-  const rebased = rebaseRecurrenceExceptions(item, nextItem, { timeZone: context.timeZone });
+  const rebased = rebaseTemporalSeriesExceptions(
+    item,
+    item.recurrence,
+    nextItem,
+    nextItem.recurrence,
+    { timeZone: context.timeZone },
+  );
   return { ...temporalPatch, recurrence: rebased ?? null };
 }
 
@@ -118,12 +132,12 @@ function splitSeries(
   context: CalendarCommandContext,
 ): readonly CalendarItem[] {
   if (!item.recurrence) throw new Error("Cannot split a non-recurring item");
-  const ordinal = recurrenceOrdinal(item, occurrence.originalStart, { timeZone: context.timeZone });
+  const ordinal = temporalSeriesOrdinal(item, item.recurrence?.rule, occurrence.originalStart, { timeZone: context.timeZone });
   const beforeExceptions: RecurrenceException[] = [];
   const afterExceptions: Array<{ readonly ordinal: number; readonly exception: RecurrenceException }> = [];
   for (const exception of item.recurrence.exceptions ?? []) {
     try {
-      const position = recurrenceOrdinal(item, exception.originalStart, { timeZone: context.timeZone });
+      const position = temporalSeriesOrdinal(item, item.recurrence?.rule, exception.originalStart, { timeZone: context.timeZone });
       if (position < ordinal) beforeExceptions.push(exception);
       else afterExceptions.push({ ordinal: position, exception });
     } catch {
@@ -139,14 +153,14 @@ function splitSeries(
     },
     updatedAt: context.now,
   };
-  const tailPatch = projectOccurrencePatchToSeries(item, occurrence, { ...patch, start: patch.start ?? occurrence.start }, { timeZone: context.timeZone });
+  const tailPatch = projectTemporalPatchToSeries(item, occurrence, { ...patch, start: patch.start ?? occurrence.start }, { timeZone: context.timeZone });
   const nextStart = tailPatch.start ?? item.start;
   const nextEnd = tailPatch.end ?? item.end;
   const remainingCount = item.recurrence.rule.count === undefined ? undefined : Math.max(1, item.recurrence.rule.count - ordinal + 1);
   const secondId = `${item.id}:split:${Date.parse(occurrence.start)}`;
   const recurrencePatch = patch.recurrence;
   const recurrenceRuleChanged = recurrencePatch !== undefined && recurrencePatch !== null
-    && JSON.stringify(recurrencePatch.rule) !== JSON.stringify(item.recurrence.rule);
+    && !sameCanonicalValue(recurrencePatch.rule, item.recurrence.rule);
   const baseSecondRecurrence = recurrencePatch === null
     ? undefined
     : recurrencePatch && recurrenceRuleChanged
@@ -171,7 +185,7 @@ function splitSeries(
     const mapped: RecurrenceException[] = [];
     for (const row of afterExceptions) {
       try {
-        const originalStart = occurrenceIdentityAtOrdinal(second, row.ordinal - ordinal + 1, { timeZone: context.timeZone });
+        const originalStart = temporalSeriesIdentityAtOrdinal(second, second.recurrence?.rule, row.ordinal - ordinal + 1, { timeZone: context.timeZone });
         mapped.push({ ...row.exception, originalStart });
       } catch {
         // The replacement rule can legitimately be shorter than the old tail.
@@ -195,7 +209,7 @@ async function applyOccurrencePatch(
   assertPatchAllowed(item, patch);
   assertPatchSourceAllowed(repository, item, patch);
   if (!item.recurrence) {
-    await repository.update(item.id, projectOccurrencePatchToSeries(item, occurrence, patch, { timeZone: context.timeZone }));
+    await repository.update(item.id, projectTemporalPatchToSeries(item, occurrence, patch, { timeZone: context.timeZone }));
     return;
   }
   if (scope === "all") {
@@ -207,7 +221,7 @@ async function applyOccurrencePatch(
     await repository.update(item.id, { recurrence: withException(item, occurrence, withoutRecurrence(patch)) });
     return;
   }
-  if (recurrenceOrdinal(item, occurrence.originalStart, { timeZone: context.timeZone }) === 1) {
+  if (temporalSeriesOrdinal(item, item.recurrence?.rule, occurrence.originalStart, { timeZone: context.timeZone }) === 1) {
     await repository.update(item.id, seriesPatch(item, occurrence, patch, context));
     return;
   }
@@ -216,26 +230,198 @@ async function applyOccurrencePatch(
   await repository.create(second!);
 }
 
+/**
+ * Command-local copy-on-write staging repository. It starts from the immutable authoritative
+ * snapshot, structurally shares unchanged entities, and owns every changed/new value before
+ * command execution yields. Nothing is published or persisted until the final guarded commit.
+ */
+class CommandStagingRepository implements CalendarRepository {
+  private snapshotValue: CalendarSnapshot;
+
+  public constructor(snapshot: CalendarSnapshot) {
+    this.snapshotValue = snapshot;
+  }
+
+  public read(): CalendarSnapshot {
+    return this.snapshotValue;
+  }
+
+  public create(item: CalendarItem): void {
+    this.stage(createCalendarItemInState(this.snapshotValue, item));
+  }
+
+  public update(id: string, patch: CalendarItemPatch): void {
+    this.stage(updateCalendarItemInState(this.snapshotValue, id, patch));
+  }
+
+  public remove(id: string): void {
+    this.stage(removeCalendarItemFromState(this.snapshotValue, id));
+  }
+
+  public replace(items: readonly CalendarItem[]): void {
+    this.stage({ sources: this.snapshotValue.sources, items });
+  }
+
+  public replaceAtRevision(items: readonly CalendarItem[], expectedRevision: number): void {
+    if (expectedRevision !== this.snapshotValue.revision) {
+      throw new Error(`Staging revision mismatch: expected ${expectedRevision}, found ${this.snapshotValue.revision}`);
+    }
+    this.stage({ sources: this.snapshotValue.sources, items });
+  }
+
+  private stage(state: CalendarStateCollections): void {
+    this.snapshotValue = materializeCalendarSnapshot(
+      this.snapshotValue,
+      state.sources,
+      state.items,
+      this.snapshotValue.revision,
+    );
+  }
+}
+
+interface HistoryItemChange {
+  readonly id: string;
+  readonly before?: CalendarItem | undefined;
+  readonly after?: CalendarItem | undefined;
+}
+
+interface HistoryRun {
+  readonly items: readonly CalendarItem[];
+  readonly index: number;
+  readonly previousUnchangedId?: string | undefined;
+  readonly nextUnchangedId?: string | undefined;
+}
+
 interface HistoryEntry {
-  readonly before: readonly CalendarItem[];
-  readonly after: readonly CalendarItem[];
-  readonly sources: readonly CalendarSource[];
+  readonly changes: readonly HistoryItemChange[];
+  readonly beforeRuns: readonly HistoryRun[];
+  readonly afterRuns: readonly HistoryRun[];
+  readonly sourceSignature: string;
 }
 
-function cloneItems(items: readonly CalendarItem[]): readonly CalendarItem[] {
-  return items.map(item => structuredClone(item));
+function sameItem(left: CalendarItem | undefined, right: CalendarItem | undefined): boolean {
+  return sameCanonicalValue(left, right);
 }
 
-function cloneSources(sources: readonly CalendarSource[]): readonly CalendarSource[] {
-  return sources.map(source => structuredClone(source));
+function sourceSignature(sources: readonly CalendarSource[]): string {
+  return canonicalValueString(sources);
 }
 
-function sameItems(a: readonly CalendarItem[], b: readonly CalendarItem[]): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+function changedItemIds(
+  before: readonly CalendarItem[],
+  after: readonly CalendarItem[],
+): readonly string[] {
+  const beforeById = new Map(before.map(item => [item.id, item] as const));
+  const afterById = new Map(after.map(item => [item.id, item] as const));
+  const ids: string[] = [];
+  for (const item of before) {
+    if (!sameItem(item, afterById.get(item.id))) ids.push(item.id);
+  }
+  for (const item of after) {
+    if (!beforeById.has(item.id)) ids.push(item.id);
+  }
+  return ids;
 }
 
-function sameSources(a: readonly CalendarSource[], b: readonly CalendarSource[]): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+function historyRuns(
+  items: readonly CalendarItem[],
+  affectedIds: ReadonlySet<string>,
+): readonly HistoryRun[] {
+  const runs: HistoryRun[] = [];
+  let index = 0;
+  while (index < items.length) {
+    if (!affectedIds.has(items[index]!.id)) {
+      index += 1;
+      continue;
+    }
+    const start = index;
+    const runItems: CalendarItem[] = [];
+    while (index < items.length && affectedIds.has(items[index]!.id)) {
+      runItems.push(items[index]!);
+      index += 1;
+    }
+    const previous = start > 0 ? items[start - 1] : undefined;
+    const next = index < items.length ? items[index] : undefined;
+    runs.push(Object.freeze({
+      items: Object.freeze(runItems),
+      index: start,
+      ...(previous ? { previousUnchangedId: previous.id } : {}),
+      ...(next ? { nextUnchangedId: next.id } : {}),
+    }));
+  }
+  return Object.freeze(runs);
+}
+
+function buildHistoryEntry(
+  before: readonly CalendarItem[],
+  after: readonly CalendarItem[],
+  sources: readonly CalendarSource[],
+): HistoryEntry | undefined {
+  const ids = changedItemIds(before, after);
+  if (!ids.length) return undefined;
+  const affectedIds = new Set(ids);
+  const beforeById = new Map(before.map(item => [item.id, item] as const));
+  const afterById = new Map(after.map(item => [item.id, item] as const));
+  return Object.freeze({
+    changes: Object.freeze(ids.map(id => Object.freeze({
+      id,
+      ...(beforeById.has(id) ? { before: beforeById.get(id)! } : {}),
+      ...(afterById.has(id) ? { after: afterById.get(id)! } : {}),
+    }))),
+    beforeRuns: historyRuns(before, affectedIds),
+    afterRuns: historyRuns(after, affectedIds),
+    sourceSignature: sourceSignature(sources),
+  });
+}
+
+function insertHistoryRun(next: CalendarItem[], run: HistoryRun, label: string): void {
+  const previousIndex = run.previousUnchangedId === undefined
+    ? -1
+    : next.findIndex(item => item.id === run.previousUnchangedId);
+  const followingIndex = run.nextUnchangedId === undefined
+    ? -1
+    : next.findIndex(item => item.id === run.nextUnchangedId);
+
+  if (run.previousUnchangedId !== undefined && run.nextUnchangedId !== undefined) {
+    if (previousIndex < 0 && followingIndex < 0) {
+      throw new Error(`Calendar order changed around ${label}; refusing to guess item placement`);
+    }
+    if (previousIndex >= 0 && followingIndex >= 0 && previousIndex >= followingIndex) {
+      throw new Error(`Calendar order changed around ${label}; refusing to reorder unrelated items`);
+    }
+  }
+
+  let insertionIndex: number;
+  if (previousIndex >= 0) insertionIndex = previousIndex + 1;
+  else if (followingIndex >= 0) insertionIndex = followingIndex;
+  else if (run.previousUnchangedId !== undefined || run.nextUnchangedId !== undefined) {
+    throw new Error(`Calendar order changed around ${label}; refusing to guess item placement`);
+  } else insertionIndex = Math.min(run.index, next.length);
+
+  next.splice(insertionIndex, 0, ...run.items);
+}
+
+function applyHistoryEntry(
+  currentItems: readonly CalendarItem[],
+  entry: HistoryEntry,
+  direction: "undo" | "redo",
+): readonly CalendarItem[] {
+  const expectedKey = direction === "undo" ? "after" : "before";
+  const runs = direction === "undo" ? entry.beforeRuns : entry.afterRuns;
+  const currentById = new Map(currentItems.map(item => [item.id, item] as const));
+  const affectedIds = new Set(entry.changes.map(change => change.id));
+
+  for (const change of entry.changes) {
+    const expected = change[expectedKey];
+    const actual = currentById.get(change.id);
+    if (!sameItem(actual, expected)) {
+      throw new Error(`Calendar item ${change.id} changed outside ${direction} history; refusing to overwrite newer state`);
+    }
+  }
+
+  const next = currentItems.filter(item => !affectedIds.has(item.id));
+  for (const run of runs) insertHistoryRun(next, run, direction);
+  return next;
 }
 
 export class RepositoryCommandHandler implements CalendarCommandHandler {
@@ -256,8 +442,12 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
     if (!entry) return false;
     try {
       const current = this.repository.read();
-      if (!sameItems(current.items, entry.after) || !sameSources(current.sources, entry.sources)) throw new Error("Calendar changed outside undo history; refusing to overwrite newer state");
-      await this.repository.replace(cloneItems(entry.before));
+      if (sourceSignature(current.sources) !== entry.sourceSignature) {
+        throw new Error("Calendar sources changed outside undo history; refusing to apply an item delta against different source state");
+      }
+      const next = applyHistoryEntry(current.items, entry, "undo");
+      assertCalendarStateIntegrity(current.sources, next);
+      await this.repository.replaceAtRevision(next, current.revision);
       this.redoStack.push(entry);
       return true;
     } catch (error) {
@@ -271,8 +461,12 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
     if (!entry) return false;
     try {
       const current = this.repository.read();
-      if (!sameItems(current.items, entry.before) || !sameSources(current.sources, entry.sources)) throw new Error("Calendar changed outside redo history; refusing to overwrite newer state");
-      await this.repository.replace(cloneItems(entry.after));
+      if (sourceSignature(current.sources) !== entry.sourceSignature) {
+        throw new Error("Calendar sources changed outside redo history; refusing to apply an item delta against different source state");
+      }
+      const next = applyHistoryEntry(current.items, entry, "redo");
+      assertCalendarStateIntegrity(current.sources, next);
+      await this.repository.replaceAtRevision(next, current.revision);
       this.undoStack.push(entry);
       return true;
     } catch (error) {
@@ -283,57 +477,60 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
 
   public async execute(command: CalendarCommand, context: CalendarCommandContext): Promise<void> {
     const beforeSnapshot = this.repository.read();
-    const before = cloneItems(beforeSnapshot.items);
-    const beforeSources = cloneSources(beforeSnapshot.sources);
-    await this.executeAtomic(command, context);
-    const afterSnapshot = this.repository.read();
-    const after = cloneItems(afterSnapshot.items);
-    const afterSources = cloneSources(afterSnapshot.sources);
-    if (sameItems(before, after)) return;
-    if (!sameSources(beforeSources, afterSources)) return;
-    this.undoStack.push({ before, after, sources: afterSources });
+    const staged = new CommandStagingRepository(beforeSnapshot);
+    await this.applyCommandToStaging(staged, command, context);
+    const stagedItems = staged.read().items;
+    if (!changedItemIds(beforeSnapshot.items, stagedItems).length) return;
+
+    // One authoritative repository mutation per logical Calendar command. This makes
+    // multi-record operations such as recurrence splitting durable atomically.
+    await this.repository.replaceAtRevision(stagedItems, beforeSnapshot.revision);
+
+    const history = buildHistoryEntry(beforeSnapshot.items, stagedItems, beforeSnapshot.sources);
+    if (!history) return;
+    this.undoStack.push(history);
     if (this.undoStack.length > Math.max(1, this.historyLimit)) this.undoStack.shift();
     this.redoStack.length = 0;
   }
 
-  private async executeAtomic(command: CalendarCommand, context: CalendarCommandContext): Promise<void> {
+  private async applyCommandToStaging(repository: CalendarRepository, command: CalendarCommand, context: CalendarCommandContext): Promise<void> {
     if (command.type === "create") {
-      assertSourceAllowsCreate(this.repository, command.item.calendarId);
-      await this.repository.create(command.item);
+      assertSourceAllowsCreate(repository, command.item.calendarId);
+      await repository.create(command.item);
       return;
     }
     if (command.type === "update") {
-      const item = itemById(this.repository, command.id);
+      const item = itemById(repository, command.id);
       assertEditableItem(item);
       assertPatchAllowed(item, command.patch);
-      assertPatchSourceAllowed(this.repository, item, command.patch);
-      await this.repository.update(command.id, command.patch);
+      assertPatchSourceAllowed(repository, item, command.patch);
+      await repository.update(command.id, command.patch);
       return;
     }
     if (command.type === "remove") {
-      const item = itemById(this.repository, command.id);
+      const item = itemById(repository, command.id);
       assertEditableItem(item);
-      assertSourceMutable(this.repository, item.calendarId);
-      await this.repository.remove(command.id);
+      assertSourceMutable(repository, item.calendarId);
+      await repository.remove(command.id);
       return;
     }
     if (command.type === "update-occurrence") {
-      await applyOccurrencePatch(this.repository, command.occurrence, command.patch, command.scope, context);
+      await applyOccurrencePatch(repository, command.occurrence, command.patch, command.scope, context);
       return;
     }
 
     assertEditable(command.occurrence);
-    const item = itemById(this.repository, command.occurrence.sourceItemId);
+    const item = itemById(repository, command.occurrence.sourceItemId);
     assertEditableItem(item);
-    assertSourceMutable(this.repository, item.calendarId);
+    assertSourceMutable(repository, item.calendarId);
     if (!item.recurrence) {
-      if (command.type === "cancel-occurrence") await this.repository.remove(item.id);
-      else await this.repository.update(item.id, projectOccurrencePatchToSeries(item, command.occurrence, movedPatch(command.start, command.end), { timeZone: context.timeZone }));
+      if (command.type === "cancel-occurrence") await repository.remove(item.id);
+      else await repository.update(item.id, projectTemporalPatchToSeries(item, command.occurrence, movedPatch(command.start, command.end), { timeZone: context.timeZone }));
       return;
     }
     if (command.scope === "all") {
-      if (command.type === "cancel-occurrence") await this.repository.remove(item.id);
-      else await this.repository.update(item.id, seriesPatch(item, command.occurrence, movedPatch(command.start, command.end), context));
+      if (command.type === "cancel-occurrence") await repository.remove(item.id);
+      else await repository.update(item.id, seriesPatch(item, command.occurrence, movedPatch(command.start, command.end), context));
       return;
     }
 
@@ -341,26 +538,26 @@ export class RepositoryCommandHandler implements CalendarCommandHandler {
       const recurrence = command.type === "cancel-occurrence"
         ? withException(item, command.occurrence, null)
         : withException(item, command.occurrence, movedPatch(command.start, command.end));
-      await this.repository.update(item.id, { recurrence });
+      await repository.update(item.id, { recurrence });
       return;
     }
 
     if (command.type === "cancel-occurrence") {
-      if (recurrenceOrdinal(item, command.occurrence.originalStart, { timeZone: context.timeZone }) === 1) {
-        await this.repository.remove(item.id);
+      if (temporalSeriesOrdinal(item, item.recurrence?.rule, command.occurrence.originalStart, { timeZone: context.timeZone }) === 1) {
+        await repository.remove(item.id);
         return;
       }
       const first = splitSeries(item, command.occurrence, {}, context)[0]!;
-      await this.repository.update(item.id, { start: first.start, end: first.end, recurrence: first.recurrence ?? null });
+      await repository.update(item.id, { start: first.start, end: first.end, recurrence: first.recurrence ?? null });
       return;
     }
 
-    if (recurrenceOrdinal(item, command.occurrence.originalStart, { timeZone: context.timeZone }) === 1) {
-      await this.repository.update(item.id, seriesPatch(item, command.occurrence, movedPatch(command.start, command.end), context));
+    if (temporalSeriesOrdinal(item, item.recurrence?.rule, command.occurrence.originalStart, { timeZone: context.timeZone }) === 1) {
+      await repository.update(item.id, seriesPatch(item, command.occurrence, movedPatch(command.start, command.end), context));
       return;
     }
     const [first, second] = splitSeries(item, command.occurrence, movedPatch(command.start, command.end), context);
-    await this.repository.update(item.id, { start: first!.start, end: first!.end, recurrence: first!.recurrence ?? null });
-    await this.repository.create(second!);
+    await repository.update(item.id, { start: first!.start, end: first!.end, recurrence: first!.recurrence ?? null });
+    await repository.create(second!);
   }
 }

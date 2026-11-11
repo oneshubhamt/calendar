@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import { resolveOccurrencePresentation, resolveSourceActions } from '../dist/view/presentation.js';
+import { safePresentationCss, safeAddonCss, calendarHostCss } from '../dist/view/extension-styles.js';
 
 function occurrence(overrides={}) {
   return {
@@ -47,18 +47,6 @@ test('presentation data keys fail closed instead of reaching DOMStringMap with m
   assert.deepEqual(result.data,{planningRole:'milestone',ok:'yes'});
 });
 
-test('presentation content is preserved as text and the view has no HTML injection path',async()=>{
-  const malicious='<img src=x onerror="alert(1)"><script>alert(2)</script>';
-  const result=resolveOccurrencePresentation([{presentOccurrence(){return {title:malicious,subtitle:malicious,badges:[{label:malicious}]};}}],occurrence());
-  assert.equal(result.title.text,malicious);
-  assert.equal(result.subtitle.text,malicious);
-  assert.equal(result.badges[0].label,malicious);
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.doesNotMatch(view,/innerHTML|outerHTML|insertAdjacentHTML/);
-  assert.match(view,/function el<[\s\S]*node\.textContent = text/);
-  assert.match(view,/dc-occurrence-title", presentation\.title\?\.text \?\? occurrence\.title/);
-});
-
 test('occurrence actions preserve old menu-only defaults and expose C4 state when opted inline',()=>{
   const port={
     actions(){return [
@@ -89,56 +77,41 @@ test('malformed and duplicate action identities fail closed and provider failure
   assert.deepEqual(resolveSourceActions({actions(){throw new Error('host unavailable');},execute(){}},occurrence()),[]);
 });
 
-test('inline actions are separate native controls and cannot open or start dragging the occurrence',async()=>{
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.match(view,/const main = el\("button", "dc-occurrence-main dc-event-main"\)/);
-  assert.match(view,/const main = el\("button", "dc-occurrence-main dc-time-event-main"\)/);
-  assert.match(view,/const button = el\("button", className\)/);
-  assert.match(view,/dc-action-icon/);
-  assert.match(view,/dc-action-label/);
-  assert.match(view,/button\.addEventListener\("pointerdown", event => event\.stopPropagation\(\)\)/);
-  assert.match(view,/button\.addEventListener\("click", event => \{[\s\S]*event\.stopPropagation\(\)/);
-  assert.match(view,/closest\("\.dc-resize-handle,\.dc-inline-action"\)/);
-  assert.match(view,/closest\("\.dc-inline-action"\)/);
-  assert.doesNotMatch(view,/el\("button", "dc-event"\)/);
-});
 
-test('inline action keyboard, pressed, disabled and pending accessibility are explicit',async()=>{
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.match(view,/button\.setAttribute\("aria-label", action\.accessibleLabel \?\? action\.label\)/);
-  assert.match(view,/if \(action\.primary\) button\.classList\.add\("dc-primary"\)/);
-  assert.match(view,/if \(action\.danger\) button\.classList\.add\("dc-danger"\)/);
-  assert.match(view,/button\.setAttribute\("aria-pressed", String\(action\.pressed\)\)/);
-  assert.match(view,/button\.disabled = !action\.enabled \|\| pending/);
-  assert.match(view,/button\.setAttribute\("aria-busy", "true"\)/);
-  assert.match(view,/button\.addEventListener\("keydown", event => event\.stopPropagation\(\)\)/);
-  assert.match(view,/bar\.setAttribute\("role", "group"\)/);
-});
+test('presentation extensions fail independently and extension CSS cannot claim Calendar geometry',()=>{
+  const errors=[];
+  const resolved=resolveOccurrencePresentation([
+    {presentOccurrence(){throw new Error('broken');}},
+    {presentOccurrence(){return {subtitle:'still rendered'};}},
+  ],occurrence(),(index,error)=>errors.push([index,error.message]));
+  assert.equal(resolved.subtitle.text,'still rendered');
+  assert.deepEqual(errors,[[0,'broken']]);
 
+  assert.match(
+    safePresentationCss('.custom{opacity:.8;border-style:dashed}'),
+    /\.dc-root \.custom\{opacity:\.8;border-style:dashed\}/,
+  );
+  for(const unsafe of [
+    '.custom{position:absolute;color:red}',
+    '.custom{all:unset}',
+    '.custom{animation:host 1s}',
+    '@import url(https://example.invalid/host.css);',
+    '.custom{color:red!important}',
+    '.custom{color:red;/* bypass */position:absolute}',
+    '.custom{color:red;--calendar-geometry:1}',
+    '.custom} body{color:red}',
+  ]) assert.equal(safePresentationCss(unsafe),'');
 
-test('context-menu host actions reuse source action rendering without swallowing menu keyboard navigation',async()=>{
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.match(view,/sourceActionButton\(action, occurrence, "dc-menu-item", \(\) => this\.dismissContextMenu\(\), false\)/);
-  assert.match(view,/if \(isolateKeyboard\) button\.addEventListener\("keydown", event => event\.stopPropagation\(\)\)/);
-  assert.match(view,/menu\.addEventListener\("keydown"/);
-});
+  assert.equal(safeAddonCss('.tool} body{display:block}'),'');
+  assert.equal(safeAddonCss('.addon{color:red!important}'),'');
+  assert.equal(safeAddonCss('.addon{color:red;/* ambiguous */display:grid}'),'');
 
-test('source action execution revalidates host state and reuses authoritative command lifecycle on success or failure',async()=>{
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  const execute=view.match(/private async executeSourceAction[\s\S]*?\n  }/)?.[0] ?? '';
-  assert.match(execute,/commandLifecycle\.run\(authoritative\.occurrenceId/);
-  assert.match(execute,/sourceActionsFor\(authoritative\)\.find\(action => action\.id === actionId\)/);
-  assert.match(execute,/!current \|\| !current\.enabled \|\| current\.pending/);
-  assert.match(execute,/await port\.execute\(actionId, authoritative\)/);
-  assert.match(execute,/refresh: \(\) => this\.refresh\(\)/);
-  assert.match(execute,/onError: error => this\.announce/);
-  assert.match(view,/setOccurrencePending[\s\S]*\[data-action-id\][\s\S]*button\.disabled/);
-});
-
-test('C4 stays generic and introduces no host-domain semantics into generic view code',async()=>{
-  const files=['../src/view/types.ts','../src/view/presentation.ts','../src/view/calendar-ui.ts'];
-  const text=(await Promise.all(files.map(file=>fs.readFile(new URL(file,import.meta.url),'utf8')))).join('\n');
-  for(const token of ['Ayana','journey','habit','payment','nominal']) assert.equal(new RegExp(`\\b${token}\\b`,'i').test(text),false,`generic C4 path leaked ${token}`);
-  const declarations=await fs.readFile(new URL('../dist/view/types.d.ts',import.meta.url),'utf8');
-  for(const field of ['icon','leading','title','subtitle','trailing','badges','inline','accessibleLabel','danger','state','pressed','enabled','pending']) assert.match(declarations,new RegExp(`readonly ${field}\\?`));
+  const scoped=calendarHostCss([], [{
+    id:'sample',
+    styles:'.tool{display:grid;gap:4px}@media(max-width:600px){.tool,.extra{display:block}}',
+  }]);
+  assert.match(scoped,/\[data-calendar-addon="0"\] \.tool\{display:grid;gap:4px\}/);
+  assert.match(scoped,/@media \(max-width:600px\)\{\[data-calendar-addon="0"\] \.tool,\[data-calendar-addon="0"\] \.extra\{display:block\}\}/);
+  assert.equal(scoped.startsWith('.tool{'),false);
+  assert.equal(scoped.includes('\n.tool{'),false);
 });

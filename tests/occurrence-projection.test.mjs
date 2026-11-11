@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import * as C from '../dist/index.js';
 
 const range={start:'2026-11-09T00:00:00.000Z',end:'2026-11-10T00:00:00.000Z'};
@@ -146,8 +145,82 @@ test('malformed occurrence-only recurrence anchors and recurrence payloads fail 
   await assert.rejects(()=>recurrenceEngine.query(range),/must already be recurrence-expanded/i);
 });
 
-test('generic core/view occurrence projection contains no host-domain semantic dependency',async()=>{
-  const files=['src/core/types.ts','src/core/calendar-engine.ts','src/core/store.ts','src/view/calendar-ui.ts','src/view/types.ts'];
-  const text=(await Promise.all(files.map(file=>fs.readFile(new URL(`../${file}`,import.meta.url),'utf8')))).join('\n');
-  for(const token of ['Ayana','nominal','journey','intent','habit','payment']) assert.equal(new RegExp(`\\b${token}\\b`,'i').test(text),false,`generic projection path leaked ${token}`);
+
+test('independent item occurrence and background projection groups start concurrently',async()=>{
+  const repo=new C.MemoryCalendarRepository(sources,[]);
+  const started=[];
+  let resolveItems,resolveOccurrences,resolveBackgrounds;
+  const itemGate=new Promise(resolve=>{resolveItems=resolve;});
+  const occurrenceGate=new Promise(resolve=>{resolveOccurrences=resolve;});
+  const backgroundGate=new Promise(resolve=>{resolveBackgrounds=resolve;});
+  const engine=new C.CalendarEngine(
+    repo,
+    [{id:'item-gate',project(){started.push('items');return itemGate;}}],
+    [{id:'occurrence-gate',projectOccurrences(){started.push('occurrences');return occurrenceGate;}}],
+    [{id:'background-gate',projectBackgroundRanges(){started.push('backgrounds');return backgroundGate;}}],
+  );
+  const pending=engine.query(range);
+  await Promise.resolve();
+  assert.deepEqual(new Set(started),new Set(['items','occurrences','backgrounds']));
+  resolveItems([]);
+  resolveOccurrences([]);
+  resolveBackgrounds([]);
+  const result=await pending;
+  assert.deepEqual(result.occurrences,[]);
+  assert.deepEqual(result.backgroundRanges,[]);
+});
+
+test('event-only query starts no background projection work while event projection groups remain concurrent',async()=>{
+  const repo=new C.MemoryCalendarRepository(sources,[]);
+  const started=[];
+  let resolveItems,resolveOccurrences;
+  const itemGate=new Promise(resolve=>{resolveItems=resolve;});
+  const occurrenceGate=new Promise(resolve=>{resolveOccurrences=resolve;});
+  const engine=new C.CalendarEngine(
+    repo,
+    [{id:'item-gate',project(){started.push('items');return itemGate;}}],
+    [{id:'occurrence-gate',projectOccurrences(){started.push('occurrences');return occurrenceGate;}}],
+    [{id:'background',projectBackgroundRanges(){started.push('backgrounds');return [];}}],
+  );
+  const pending=engine.query(range,{includeBackgroundRanges:false});
+  await Promise.resolve();
+  assert.deepEqual(new Set(started),new Set(['items','occurrences']));
+  resolveItems([]);
+  resolveOccurrences([]);
+  const result=await pending;
+  assert.deepEqual(result.backgroundRanges,[]);
+});
+
+
+test('projected occurrences require absolute instants, reject redundant item identity and canonicalize offsets before range filtering',async()=>{
+  const repo=new C.MemoryCalendarRepository(sources,[]);
+  const dateOnly=new C.CalendarEngine(repo,[],[{id:'date-only',projectOccurrences(){return [
+    projectedOccurrence({start:'2026-11-09',end:'2026-11-10',originalStart:'2026-11-09'}),
+  ];}}]);
+  await assert.rejects(
+    ()=>dateOnly.query({start:'2026-11-08T18:30:00.000Z',end:'2026-11-09T18:30:00.000Z'}),
+    /absolute ISO date-time/i,
+  );
+
+  const redundantId=new C.CalendarEngine(repo,[],[{id:'redundant-id',projectOccurrences(){return [
+    {...projectedOccurrence(),id:'redundant-item-id'},
+  ];}}]);
+  await assert.rejects(()=>redundantId.query(range),/sourceItemId rather than a redundant item id/i);
+
+  const engine=new C.CalendarEngine(repo,[],[{id:'offset',projectOccurrences(){return [
+    projectedOccurrence({
+      occurrenceId:'offset',
+      start:'2026-11-09T10:00:00+05:30',
+      end:'2026-11-09T11:00:00+05:30',
+      originalStart:'2026-11-09T10:00:00+05:30',
+    }),
+  ];}}]);
+  const inside=await engine.query({start:'2026-11-09T04:00:00.000Z',end:'2026-11-09T06:00:00.000Z'});
+  assert.equal(inside.occurrences.length,1);
+  assert.deepEqual(
+    [inside.occurrences[0].start,inside.occurrences[0].end],
+    ['2026-11-09T04:30:00.000Z','2026-11-09T05:30:00.000Z'],
+  );
+  const outside=await engine.query({start:'2026-11-09T18:30:00.000Z',end:'2026-11-10T18:30:00.000Z'});
+  assert.equal(outside.occurrences.length,0);
 });

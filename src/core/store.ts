@@ -1,7 +1,22 @@
-import type { CalendarEventFields, CalendarItem, CalendarItemId, CalendarItemPatch, CalendarOccurrence, CalendarRepository, CalendarSnapshot, CalendarSource, CalendarSourcePatch } from "./types.js";
-import { occurrenceFromItem, validateRecurrenceRule } from "./recurrence.js";
+import type { CalendarBackgroundRange, CalendarEventFields, CalendarItem, CalendarItemId, CalendarItemPatch, CalendarOccurrence, CalendarRepository, CalendarSnapshot, CalendarSource, CalendarSourcePatch } from "./types.js";
+import { occurrenceFromItem } from "./event-series.js";
+import { validateRecurrenceRule } from "./recurrence.js";
 import { parsePlainDate } from "./temporal.js";
 import { hasExplicitOffset } from "./time.js";
+import { CalendarStaleRevisionError } from "./revision.js";
+import { notifyObservers } from "./notifications.js";
+import {
+  applyCalendarItemPatch,
+  createCalendarItemInState,
+  createCalendarSourceInState,
+  removeCalendarItemFromState,
+  removeCalendarSourceFromState,
+  updateCalendarItemInState,
+  updateCalendarSourceInState,
+  type CalendarStateCollections,
+} from "./state-transitions.js";
+
+export { applyCalendarItemPatch, applyCalendarSourcePatch } from "./state-transitions.js";
 
 const EDIT_POLICIES = new Set(["full", "schedule-only", "readonly", "generated"]);
 const TEMPORAL_KINDS = new Set(["instant", "zoned", "floating", "date"]);
@@ -65,6 +80,11 @@ function assertJsonLike(value: unknown, label: string, requireObject: boolean, a
 
 function assertMetadata(value: unknown, label: string): void {
   assertJsonLike(value, label, true, true);
+}
+
+/** Validate a generic Calendar metadata envelope without assigning semantic meaning to its keys. */
+export function assertCalendarMetadataIntegrity(value: unknown, label = "Calendar metadata"): void {
+  assertMetadata(value, label);
 }
 
 function assertSourceIntegrity(source: CalendarSource): void {
@@ -207,108 +227,157 @@ export function assertCalendarOccurrenceIntegrity(sources: readonly CalendarSour
   }
 }
 
-export function applyCalendarItemPatch(item: CalendarItem, patch: CalendarItemPatch): CalendarItem {
-  const description = patch.description === null ? undefined : patch.description ?? item.description;
-  const location = patch.location === null ? undefined : patch.location ?? item.location;
-  const recurrence = patch.recurrence === null ? undefined : patch.recurrence ?? item.recurrence;
-  const temporal = patch.temporal === null ? undefined : patch.temporal ?? item.temporal;
-  const display = patch.display === null ? undefined : patch.display ?? item.display;
-  const metadata = patch.metadata === null ? undefined : patch.metadata ?? item.metadata;
-  const reminders = patch.reminders === null ? undefined : patch.reminders ?? item.reminders;
-  return {
-    ...item,
-    ...(patch.calendarId !== undefined ? { calendarId: patch.calendarId } : {}),
-    ...(patch.title !== undefined ? { title: patch.title } : {}),
-    ...(description !== undefined ? { description } : { description: undefined }),
-    ...(location !== undefined ? { location } : { location: undefined }),
-    ...(patch.start !== undefined ? { start: patch.start } : {}),
-    ...(patch.end !== undefined ? { end: patch.end } : {}),
-    ...(patch.allDay !== undefined ? { allDay: patch.allDay } : {}),
-    ...(patch.precision !== undefined ? { precision: patch.precision } : {}),
-    ...(temporal !== undefined ? { temporal } : { temporal: undefined }),
-    ...(patch.temporalForm !== undefined ? { temporalForm: patch.temporalForm } : {}),
-    ...(patch.kind !== undefined ? { kind: patch.kind } : {}),
-    ...(patch.editPolicy !== undefined ? { editPolicy: patch.editPolicy } : {}),
-    ...(recurrence !== undefined ? { recurrence } : { recurrence: undefined }),
-    ...(reminders !== undefined ? { reminders } : { reminders: undefined }),
-    ...(display !== undefined ? { display } : { display: undefined }),
-    ...(metadata !== undefined ? { metadata } : { metadata: undefined }),
-  } as CalendarItem;
+
+/** Validate passive, already-resolved background ranges without treating them as calendar events. */
+export function assertCalendarBackgroundRangeIntegrity(
+  sources: readonly CalendarSource[],
+  ranges: readonly CalendarBackgroundRange[],
+): void {
+  if (!Array.isArray(sources) || !Array.isArray(ranges)) throw new Error("Calendar background range collections are invalid");
+  const sourceIds = new Set<string>();
+  for (const source of sources) {
+    assertSourceIntegrity(source);
+    if (sourceIds.has(source.id)) throw new Error(`Duplicate calendar source: ${source.id}`);
+    sourceIds.add(source.id);
+  }
+
+  const rangeIds = new Set<string>();
+  for (const range of ranges) {
+    const raw = record(range, "Calendar background range");
+    const id = requiredText(raw.id, "Calendar background range id");
+    const label = `Calendar background range ${id}`;
+    const start = assertAbsoluteInstant(raw.start, `${label} start`);
+    const end = assertAbsoluteInstant(raw.end, `${label} end`);
+    if (Date.parse(end) <= Date.parse(start)) throw new Error(`${label} must end after it starts`);
+
+    if (raw.allDay !== undefined && typeof raw.allDay !== "boolean") throw new Error(`${label} allDay flag is invalid`);
+    if (raw.calendarId !== undefined) {
+      const calendarId = requiredText(raw.calendarId, `${label} calendar id`);
+      if (!sourceIds.has(calendarId)) throw new Error(`Unknown calendar source: ${calendarId}`);
+    }
+    if (raw.label !== undefined) {
+      if (typeof raw.label !== "string" || !raw.label.trim() || raw.label.length > 2048) throw new Error(`${label} label is invalid`);
+    }
+    if (raw.display !== undefined) {
+      const display = record(raw.display, `${label} display`);
+      for (const key of ["color", "textColor", "className"] as const) {
+        const value = display[key];
+        if (value !== undefined && (typeof value !== "string" || !value.trim() || value.length > 2048)) {
+          throw new Error(`${label} display ${key} is invalid`);
+        }
+      }
+    }
+    if (raw.metadata !== undefined) assertMetadata(raw.metadata, `${label} metadata`);
+
+    if (rangeIds.has(id)) throw new Error(`Duplicate calendar background range: ${id}`);
+    rangeIds.add(id);
+  }
 }
 
-export function applyCalendarSourcePatch(source: CalendarSource, patch: CalendarSourcePatch): CalendarSource {
-  const display = patch.display === null ? undefined : patch.display ?? source.display;
-  const metadata = patch.metadata === null ? undefined : patch.metadata ?? source.metadata;
-  return {
-    ...source,
-    ...(patch.title !== undefined ? { title: patch.title } : {}),
-    ...(patch.visible !== undefined ? { visible: patch.visible } : {}),
-    ...(display !== undefined ? { display } : { display: undefined }),
-    ...(metadata !== undefined ? { metadata } : { metadata: undefined }),
+function deepFreezeCalendarValue<T>(value: T, seen = new WeakSet<object>()): T {
+  if (!value || typeof value !== "object") return value;
+  const object = value as object;
+  if (seen.has(object)) return value;
+  seen.add(object);
+  for (const child of Object.values(object as Record<string, unknown>)) deepFreezeCalendarValue(child, seen);
+  return Object.freeze(value);
+}
+
+function cloneFrozenCalendarValue<T>(value: T): T {
+  return deepFreezeCalendarValue(structuredClone(value));
+}
+
+function ownCalendarCollection<T extends { readonly id: string }>(
+  current: readonly T[] | undefined,
+  next: readonly T[],
+): readonly T[] {
+  const currentById = new Map((current ?? []).map(value => [value.id, value] as const));
+  const owned = next.map(value => {
+    const existing = currentById.get(value.id);
+    return existing === value && Object.isFrozen(value) ? value : cloneFrozenCalendarValue(value);
+  });
+  return Object.freeze(owned);
+}
+
+/**
+ * Build a runtime-immutable repository snapshot. Unchanged already-owned entities are
+ * structurally shared; external/new values are cloned exactly once and deeply frozen.
+ */
+export function materializeCalendarSnapshot(
+  current: CalendarSnapshot | undefined,
+  sources: readonly CalendarSource[],
+  items: readonly CalendarItem[],
+  revision: number,
+): CalendarSnapshot {
+  if (!Number.isInteger(revision) || revision < 0) throw new RangeError("Calendar revision must be a non-negative integer");
+  assertCalendarStateIntegrity(sources, items);
+  const snapshot: CalendarSnapshot = {
+    sources: ownCalendarCollection(current?.sources, sources),
+    items: ownCalendarCollection(current?.items, items),
+    revision,
   };
+  return Object.freeze(snapshot);
 }
 
 export class MemoryCalendarRepository implements CalendarRepository {
-  private items: CalendarItem[];
-  private sources: CalendarSource[];
-  private revision = 0;
+  private snapshotValue: CalendarSnapshot;
   private readonly listeners = new Set<(snapshot: CalendarSnapshot) => void>();
 
   public constructor(initialSources: readonly CalendarSource[], initialItems: readonly CalendarItem[] = []) {
-    assertCalendarStateIntegrity(initialSources, initialItems);
-    this.sources = [...initialSources];
-    this.items = [...initialItems];
+    this.snapshotValue = materializeCalendarSnapshot(undefined, initialSources, initialItems, 0);
   }
 
   public read(): CalendarSnapshot {
-    return { sources: this.sources, items: this.items, revision: this.revision };
+    return this.snapshotValue;
   }
 
   public create(item: CalendarItem): void {
-    const next = [...this.items, item];
-    assertCalendarStateIntegrity(this.sources, next);
-    this.items = next; this.changed();
+    this.commit(createCalendarItemInState(this.snapshotValue, item));
   }
 
   public update(id: CalendarItemId, patch: CalendarItemPatch): void {
-    const index = this.items.findIndex(item => item.id === id);
-    if (index < 0) throw new Error(`Calendar item not found: ${id}`);
-    const updated = applyCalendarItemPatch(this.items[index]!, patch);
-    const next = this.items.map((item, i) => i === index ? updated : item);
-    assertCalendarStateIntegrity(this.sources, next);
-    this.items = next; this.changed();
+    this.commit(updateCalendarItemInState(this.snapshotValue, id, patch));
   }
 
   public remove(id: CalendarItemId): void {
-    const next = this.items.filter(item => item.id !== id);
-    if (next.length === this.items.length) throw new Error(`Calendar item not found: ${id}`);
-    this.items = next; this.changed();
+    this.commit(removeCalendarItemFromState(this.snapshotValue, id));
   }
 
-  public replace(items: readonly CalendarItem[]): void { assertCalendarStateIntegrity(this.sources, items); this.items = [...items]; this.changed(); }
+  public replace(items: readonly CalendarItem[]): void {
+    this.commit({ sources: this.snapshotValue.sources, items });
+  }
+
+  public replaceAtRevision(items: readonly CalendarItem[], expectedRevision: number): void {
+    if (this.snapshotValue.revision !== expectedRevision) {
+      throw new CalendarStaleRevisionError(expectedRevision, this.snapshotValue.revision);
+    }
+    this.commit({ sources: this.snapshotValue.sources, items });
+  }
 
   public createSource(source: CalendarSource): void {
-    const next = [...this.sources, source];
-    assertCalendarStateIntegrity(next, this.items);
-    this.sources = next; this.changed();
+    this.commit(createCalendarSourceInState(this.snapshotValue, source));
   }
 
   public updateSource(id: string, patch: CalendarSourcePatch): void {
-    const index = this.sources.findIndex(source => source.id === id);
-    if (index < 0) throw new Error(`Calendar source not found: ${id}`);
-    const next = this.sources.map((source, i) => i === index ? applyCalendarSourcePatch(source, patch) : source);
-    assertCalendarStateIntegrity(next, this.items);
-    this.sources = next; this.changed();
+    this.commit(updateCalendarSourceInState(this.snapshotValue, id, patch));
   }
 
   public removeSource(id: string): void {
-    const source = this.sources.find(row => row.id === id);
-    if (!source) throw new Error(`Calendar source not found: ${id}`);
-    if (source.removable !== true) throw new Error("Calendar source is not removable");
-    if (this.items.some(item => item.calendarId === id)) throw new Error("Move or delete events from this calendar before removing it");
-    this.sources = this.sources.filter(row => row.id !== id); this.changed();
+    this.commit(removeCalendarSourceFromState(this.snapshotValue, id));
   }
 
-  public subscribe(listener: (snapshot: CalendarSnapshot) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  private changed(): void { this.revision += 1; const snapshot = this.read(); for (const listener of this.listeners) listener(snapshot); }
+  public subscribe(listener: (snapshot: CalendarSnapshot) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private commit(state: CalendarStateCollections): void {
+    this.snapshotValue = materializeCalendarSnapshot(
+      this.snapshotValue,
+      state.sources,
+      state.items,
+      this.snapshotValue.revision + 1,
+    );
+    notifyObservers(this.listeners, this.snapshotValue);
+  }
 }

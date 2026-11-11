@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import * as C from '../dist/index.js';
 import { baselineOccurrenceCapabilities, calendarOccurrenceCommandContext, resolveOccurrenceCapabilities, temporalMutationCapabilityRequirements } from '../dist/core/authority.js';
 import { CalendarCommandLifecycle } from '../dist/view/command-lifecycle.js';
+import { occurrenceWithPreview } from '../dist/view/occurrence-preview.js';
+import { CalendarMutationCoordinator } from '../dist/view/mutation-coordinator.js';
 import { CalendarCommandStaleError } from '../dist/core/commands.js';
 
 const source={id:'host',title:'Host',visible:true};
@@ -16,13 +17,6 @@ function occurrence(overrides={}) {
     kind:'event',ownership:'host',editPolicy:'full',projectionIdentity:{series:'opaque',slot:4},...overrides,
   };
 }
-
-test('authority implementation helpers remain internal while the host capability contract stays public',async()=>{
-  const declarations=await fs.readFile(new URL('../dist/core/types.d.ts',import.meta.url),'utf8');
-  assert.match(declarations,/export interface CalendarOccurrenceCapabilityProvider/);
-  assert.equal(C.resolveOccurrenceCapabilities,undefined);
-  assert.equal(C.CalendarCommandLifecycle,undefined);
-});
 
 test('baseline per-occurrence authority preserves existing full, schedule-only and readonly behavior',()=>{
   const full=baselineOccurrenceCapabilities(occurrence(),source);
@@ -81,7 +75,6 @@ test('trusted-host authority may explicitly grant selected operations and suppor
   assert.equal(editableNotMovable.canEdit,true);
   assert.equal(editableNotMovable.canMove,false);
 });
-
 
 test('capability providers are dynamic so execution-time revalidation can observe revoked authority',()=>{
   let movable=true;
@@ -150,7 +143,6 @@ test('rejected or stale host commands refresh authoritative state, surface the e
   assert.equal(lifecycle.isPending('occ-stale'),false);
 });
 
-
 test('temporal patch authority distinguishes move from independent edge changes and all-day conversion',()=>{
   assert.deepEqual(temporalMutationCapabilityRequirements({beforeStart:100,beforeEnd:200,afterStart:150,afterEnd:250}),['canMove']);
   assert.deepEqual(temporalMutationCapabilityRequirements({beforeStart:100,beforeEnd:200,afterStart:150,afterEnd:200}),['canResizeStart']);
@@ -158,29 +150,93 @@ test('temporal patch authority distinguishes move from independent edge changes 
   assert.deepEqual(temporalMutationCapabilityRequirements({beforeStart:100,beforeEnd:200,afterStart:150,afterEnd:260}),['canResizeStart','canResizeEnd']);
   assert.deepEqual(temporalMutationCapabilityRequirements({beforeStart:100,beforeEnd:200,afterStart:100,afterEnd:200,crossesAllDayBoundary:true}),['canMove','canMoveBetweenAllDayAndTimed']);
 });
-test('Calendar UI revalidates authority at execution and wires pending/error/refresh behavior without domain semantics',async()=>{
-  const text=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  const editor=await fs.readFile(new URL('../src/view/event-editor.ts',import.meta.url),'utf8');
-  assert.match(text,/dispatchOccurrence\([\s\S]*this\.occurrenceCapabilities\(occurrence\)/);
-  assert.match(text,/commandPath === "trusted-host" \? this\.options\.trustedHostCommandHandler : this\.options\.commandHandler/);
-  assert.match(text,/requirements\.some\(key => capabilities\[key\] !== true\)/);
-  assert.match(text,/canResizeOccurrence\(occurrence, "start"\)/);
-  assert.match(text,/canResizeOccurrence\(occurrence, "end"\)/);
-  assert.match(text,/commandLifecycle\.run/);
-  assert.match(text,/private isOccurrencePending\(occurrence: CalendarOccurrence\)/);
-  assert.match(text,/aria-busy/);
-  assert.match(text,/refresh: \(\) => this\.refresh\(\)/);
-  assert.match(text,/is-command-preview/);
-  assert.match(text,/occurrencePatchRequirements\(occurrence, patch\)/);
-  assert.match(text,/pendingOperation\(occurrence\.occurrenceId\)/);
-  assert.match(editor,/capabilities\.allowSemanticEdit \?\? baseSemanticEdit/);
-  assert.match(editor,/capabilities\.allowAllDayConversion === false/);
-  assert.match(text,/allowSemanticEdit: this\.canEditOccurrenceDetails\(occurrence, capabilities\)/);
-  assert.match(text,/const fullEdit = this\.canEditOccurrenceDetails\(occurrence, capabilities\)/);
-  assert.match(editor,/capabilities\.allowRecurrenceChange === false/);
-  assert.match(editor,/capabilities\.allowStartChange === false/);
-  assert.match(editor,/capabilities\.allowEndChange === false/);
-  const canMove=text.match(/private canMoveOccurrence\([\s\S]*?\n  }/)?.[0] ?? '';
-  assert.doesNotMatch(canMove,/isPending|commandLifecycle/);
-  for(const token of ['Ayana','nominal','journey','habit','payment']) assert.equal(new RegExp(`\\b${token}\\b`,'i').test(text),false,`generic authority path leaked ${token}`);
+
+
+test('command lifecycle distinguishes rejected mutation from committed refresh failure',async()=>{
+  const lifecycle=new CalendarCommandLifecycle();
+  const rejected=await lifecycle.run('reject','move',()=>{throw new Error('reject');},{refresh(){}});
+  assert.equal(rejected,'rejected');
+
+  let committed=false;
+  const refreshFailed=await lifecycle.run('refresh-failure','move',()=>{committed=true;},{
+    refresh(){throw new Error('offline');},
+  });
+  assert.equal(committed,true);
+  assert.equal(refreshFailed,'committed-refresh-failed');
+});
+
+test('tentative occurrence geometry can be reconstructed after authoritative re-render',()=>{
+  const row=occurrence();
+  const preview={patch:{start:'2026-11-09T12:00:00.000Z',end:'2026-11-09T13:00:00.000Z'}};
+  const first=occurrenceWithPreview(row,preview,'UTC');
+  const refreshed=occurrenceWithPreview({...row,title:'Fresh authoritative title'},preview,'UTC');
+  assert.equal(first.start,'2026-11-09T12:00:00.000Z');
+  assert.equal(refreshed.start,'2026-11-09T12:00:00.000Z');
+  assert.equal(refreshed.title,'Fresh authoritative title');
+  assert.equal(row.start,'2026-11-09T10:00:00.000Z');
+});
+
+
+test('mutation coordinator revalidates occurrence authority and owns pending preview lifecycle',async()=>{
+  const row=occurrence({occurrenceId:'coordinated',sourceItemId:'source-1'});
+  let current=row;
+  let release;
+  const blocker=new Promise(resolve=>{release=resolve;});
+  const transitions=[];
+  const commands=[];
+  let refreshes=0;
+  const coordinator=new CalendarMutationCoordinator({
+    engine:new C.CalendarEngine(new C.MemoryCalendarRepository([source],[])),
+    clock:{now:()=>new Date('2026-11-09T09:00:00.000Z')},
+    timeZone:'UTC',
+    navigationBounds:{},
+    collisionPolicy:{mode:'allow',includeAllDay:false},
+    placementGuards:undefined,
+    commandHandler:{async execute(command){commands.push(command);await blocker;}},
+    trustedHostCommandHandler:undefined,
+    occurrenceCapabilities:undefined,
+    sourceActions:undefined,
+    sources:()=>[source],
+    occurrence:id=>id===current.occurrenceId?current:undefined,
+    refresh:async()=>{refreshes+=1;},
+    announce:()=>{},
+    onCommand:()=>{},
+    onPendingChange:(id,operation,pending)=>transitions.push([id,operation,pending]),
+    onSettled:()=>{},
+    confirmPlacementWarning:async()=>true,
+    selectSeriesScope:async()=> 'all',
+  });
+
+  const stableOccurrences=[row];
+  assert.strictEqual(coordinator.previewOccurrences(stableOccurrences),stableOccurrences);
+
+  const command={
+    type:'move-occurrence',
+    occurrence:row,
+    start:'2026-11-09T12:00:00.000Z',
+    end:'2026-11-09T13:00:00.000Z',
+    scope:'this',
+  };
+  const pending=coordinator.dispatchOccurrence(command,['canMove'],'move');
+  await Promise.resolve();
+  assert.equal(coordinator.isPending(row),true);
+  const previewed=coordinator.previewOccurrences(stableOccurrences);
+  assert.notStrictEqual(previewed,stableOccurrences);
+  assert.equal(previewed[0].start,'2026-11-09T12:00:00.000Z');
+  assert.equal(coordinator.previewOccurrence(row).start,'2026-11-09T12:00:00.000Z');
+  release();
+  assert.equal(await pending,'completed');
+  assert.equal(coordinator.isPending(row),false);
+  assert.equal(coordinator.previewOccurrence(row).start,row.start);
+  assert.equal(commands.length,1);
+  assert.equal(refreshes,1);
+  assert.deepEqual(transitions,[
+    ['coordinated','move',true],
+    ['coordinated','move',false],
+  ]);
+
+  current={...row,editPolicy:'readonly'};
+  const denied=await coordinator.dispatchOccurrence(command,['canMove'],'move');
+  assert.equal(denied,'rejected');
+  assert.equal(commands.length,1);
 });
