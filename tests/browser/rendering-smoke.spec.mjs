@@ -396,3 +396,292 @@ test("registered custom views own range navigation rendering and use only the bo
   await page.getByRole("button", { name: "Month", exact: true }).click();
   await expect(page.locator(".dc-month-grid")).toBeVisible();
 });
+
+
+test("external DOM drops create through Calendar authority while internal drag remains a move", async ({ page }) => {
+  await page.goto("/tests/browser/harness.html");
+  await page.evaluate(async () => {
+    const [
+      { CalendarEngine },
+      { MemoryCalendarRepository },
+      { RepositoryCommandHandler },
+      { CalendarUi },
+      { CALENDAR_EXTERNAL_DROP_MIME, setCalendarExternalDropData },
+    ] = await Promise.all([
+      import("/dist/core/calendar-engine.js"),
+      import("/dist/core/store.js"),
+      import("/dist/core/commands.js"),
+      import("/dist/view/calendar-ui.js"),
+      import("/dist/view/external-drop.js"),
+    ]);
+
+    const sources = [
+      { id: "personal", title: "Personal", visible: true, removable: true },
+      { id: "locked", title: "Locked", visible: true, removable: true, readOnly: true },
+    ];
+    const initial = {
+      id: "internal",
+      calendarId: "personal",
+      title: "Internal event",
+      start: "2026-11-05",
+      end: "2026-11-06",
+      allDay: true,
+      precision: "date",
+      temporal: { kind: "date" },
+      kind: "event",
+      ownership: "calendar",
+      editPolicy: "full",
+    };
+    const repository = new MemoryCalendarRepository(sources, [initial]);
+    const purposes = [];
+    let decoderCalls = 0;
+    const calendar = new CalendarUi(
+      document.getElementById("browser-test-host"),
+      new CalendarEngine(repository),
+      {
+        locale: "en-US",
+        timeZone: "UTC",
+        initialDate: "2026-11-10",
+        initialView: "month",
+        dayStartHour: 8,
+        dayEndHour: 18,
+        slotMinutes: 30,
+        snapPolicy: { selection: "floor", move: "round", resize: "round", keyboardStepMinutes: 30 },
+        commandHandler: new RepositoryCommandHandler(repository),
+        itemFactory({ id, now, purpose, draft }) {
+          purposes.push(purpose);
+          return {
+            ...draft,
+            id,
+            ownership: "calendar",
+            editPolicy: "full",
+            createdAt: now,
+            updatedAt: now,
+          };
+        },
+        externalDropDecoder: {
+          types: ["application/x-host-task"],
+          decode(dataTransfer) {
+            decoderCalls += 1;
+            return JSON.parse(dataTransfer.getData("application/x-host-task"));
+          },
+        },
+        placementGuards: [{
+          id: "block-nov-14",
+          evaluate(context) {
+            return context.start.startsWith("2026-11-14T")
+              ? { mode: "prevent", message: "Fixture blocked date." }
+              : { mode: "allow" };
+          },
+        }],
+      },
+    );
+    await calendar.refresh();
+
+    const addSource = (id, writer) => {
+      const source = document.createElement("button");
+      source.id = id;
+      source.type = "button";
+      source.draggable = true;
+      source.textContent = id;
+      source.addEventListener("dragstart", event => {
+        if (event.dataTransfer) writer(event.dataTransfer);
+      });
+      document.body.append(source);
+    };
+    addSource("external-month", dataTransfer => setCalendarExternalDropData(dataTransfer, {
+      title: "External month",
+      durationDays: 2,
+      metadata: { origin: "outside-dom" },
+    }));
+    addSource("external-locked", dataTransfer => setCalendarExternalDropData(dataTransfer, {
+      title: "Locked external",
+      calendarId: "locked",
+    }));
+    addSource("external-malformed", dataTransfer => {
+      dataTransfer.setData(CALENDAR_EXTERNAL_DROP_MIME, "{malformed");
+      dataTransfer.effectAllowed = "copy";
+    });
+    addSource("external-custom", dataTransfer => {
+      dataTransfer.setData("application/x-host-task", JSON.stringify({
+        title: "Host decoded",
+        durationDays: 1,
+        kind: "task",
+      }));
+      dataTransfer.effectAllowed = "copy";
+    });
+    addSource("external-blocked", dataTransfer => setCalendarExternalDropData(dataTransfer, {
+      title: "Blocked external",
+    }));
+    addSource("external-lane", dataTransfer => setCalendarExternalDropData(dataTransfer, {
+      title: "All-day lane",
+    }));
+    addSource("external-timed", dataTransfer => setCalendarExternalDropData(dataTransfer, {
+      title: "Timed external",
+      durationMinutes: 90,
+    }));
+
+    const dispatchDrag = (source, target, clientY) => {
+      const dataTransfer = new DataTransfer();
+      source.dispatchEvent(new DragEvent("dragstart", {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+      }));
+      const rect = target.getBoundingClientRect();
+      const init = {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+        clientX: rect.left + Math.min(12, Math.max(1, rect.width / 2)),
+        clientY: clientY ?? rect.top + Math.min(12, Math.max(1, rect.height / 2)),
+      };
+      const callsBeforeHover = decoderCalls;
+      target.dispatchEvent(new DragEvent("dragenter", init));
+      target.dispatchEvent(new DragEvent("dragover", init));
+      const accepted = target.classList.contains("is-external-drop-target");
+      const callsAfterHover = decoderCalls;
+      target.dispatchEvent(new DragEvent("drop", init));
+      source.dispatchEvent(new DragEvent("dragend", {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+      }));
+      return {
+        accepted,
+        callsBeforeHover,
+        callsAfterHover,
+        callsAfterDrop: decoderCalls,
+        targetStillActive: target.classList.contains("is-external-drop-target"),
+      };
+    };
+
+    const monthCell = date => document.querySelector(
+      `.dc-day-cell[data-calendar-date^="${date}"]`,
+    );
+    globalThis.__externalDropProbe = {
+      calendar,
+      repository,
+      purposes,
+      decoderCalls: () => decoderCalls,
+      dropMonth(sourceId, date) {
+        const source = document.getElementById(sourceId);
+        const target = monthCell(date);
+        if (!source || !target) throw new Error("Month drag fixture target missing");
+        return dispatchDrag(source, target);
+      },
+      moveInternal(date) {
+        const source = [...document.querySelectorAll(".dc-event")]
+          .find(node => node.textContent?.includes("Internal event"));
+        const target = monthCell(date);
+        if (!source || !target) throw new Error("Internal drag fixture target missing");
+        return dispatchDrag(source, target);
+      },
+      async showDay(date) {
+        calendar.setView("day");
+        calendar.goTo(new Date(`${date}T00:00:00.000Z`));
+        await calendar.refresh();
+      },
+      dropAllDay(sourceId) {
+        const source = document.getElementById(sourceId);
+        const target = document.querySelector(".dc-all-day-col");
+        if (!source || !target) throw new Error("All-day drag fixture target missing");
+        return dispatchDrag(source, target);
+      },
+      dropTimed(sourceId, minuteOffset) {
+        const source = document.getElementById(sourceId);
+        const target = document.querySelector(".dc-time-column");
+        if (!source || !target) throw new Error("Timed drag fixture target missing");
+        const rect = target.getBoundingClientRect();
+        return dispatchDrag(source, target, rect.top + minuteOffset);
+      },
+    };
+  });
+
+  const internalResult = await page.evaluate(() => globalThis.__externalDropProbe.moveInternal("2026-11-06"));
+  expect(internalResult.accepted).toBe(false);
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__externalDropProbe.repository.read().items.find(item => item.id === "internal")?.start,
+  )).toBe("2026-11-06");
+  expect(await page.evaluate(() => globalThis.__externalDropProbe.repository.read().items.length)).toBe(1);
+
+  const monthResult = await page.evaluate(() => globalThis.__externalDropProbe.dropMonth("external-month", "2026-11-10"));
+  expect(monthResult.accepted).toBe(true);
+  expect(monthResult.targetStillActive).toBe(false);
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__externalDropProbe.repository.read().items.find(item => item.title === "External month")?.end,
+  )).toBe("2026-11-12");
+  expect(await page.evaluate(() => {
+    const item = globalThis.__externalDropProbe.repository.read().items.find(row => row.title === "External month");
+    return {
+      start: item?.start,
+      allDay: item?.allDay,
+      precision: item?.precision,
+      temporalKind: item?.temporal?.kind,
+      metadata: item?.metadata,
+    };
+  })).toEqual({
+    start: "2026-11-10",
+    allDay: true,
+    precision: "date",
+    temporalKind: "date",
+    metadata: { origin: "outside-dom" },
+  });
+
+  await page.evaluate(() => globalThis.__externalDropProbe.dropMonth("external-locked", "2026-11-11"));
+  await page.waitForTimeout(20);
+  expect(await page.evaluate(() =>
+    globalThis.__externalDropProbe.repository.read().items.some(item => item.title === "Locked external"),
+  )).toBe(false);
+
+  await page.evaluate(() => globalThis.__externalDropProbe.dropMonth("external-malformed", "2026-11-12"));
+  await page.waitForTimeout(20);
+  expect(await page.evaluate(() =>
+    globalThis.__externalDropProbe.repository.read().items.some(item => item.title === "external-malformed"),
+  )).toBe(false);
+
+  const customResult = await page.evaluate(() => globalThis.__externalDropProbe.dropMonth("external-custom", "2026-11-13"));
+  expect(customResult.accepted).toBe(true);
+  expect(customResult.callsAfterHover).toBe(customResult.callsBeforeHover);
+  expect(customResult.callsAfterDrop).toBe(customResult.callsBeforeHover + 1);
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__externalDropProbe.repository.read().items.find(item => item.title === "Host decoded")?.kind,
+  )).toBe("task");
+
+  await page.evaluate(() => globalThis.__externalDropProbe.dropMonth("external-blocked", "2026-11-14"));
+  await page.waitForTimeout(20);
+  expect(await page.evaluate(() =>
+    globalThis.__externalDropProbe.repository.read().items.some(item => item.title === "Blocked external"),
+  )).toBe(false);
+
+  await page.evaluate(() => globalThis.__externalDropProbe.showDay("2026-11-10"));
+  await expect(page.locator(".dc-all-day-col")).toBeVisible();
+
+  const laneResult = await page.evaluate(() => globalThis.__externalDropProbe.dropAllDay("external-lane"));
+  expect(laneResult.accepted).toBe(true);
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__externalDropProbe.repository.read().items.find(item => item.title === "All-day lane")?.start,
+  )).toBe("2026-11-10");
+
+  const timedResult = await page.evaluate(() => globalThis.__externalDropProbe.dropTimed("external-timed", 95));
+  expect(timedResult.accepted).toBe(true);
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__externalDropProbe.repository.read().items.find(item => item.title === "Timed external")?.start,
+  )).toBe("2026-11-10T09:30:00.000Z");
+  expect(await page.evaluate(() => {
+    const item = globalThis.__externalDropProbe.repository.read().items.find(row => row.title === "Timed external");
+    return {
+      end: item?.end,
+      allDay: item?.allDay,
+      temporalKind: item?.temporal?.kind,
+    };
+  })).toEqual({
+    end: "2026-11-10T11:00:00.000Z",
+    allDay: false,
+    temporalKind: "instant",
+  });
+
+  expect(await page.evaluate(() =>
+    globalThis.__externalDropProbe.purposes.filter(value => value === "external-drop").length,
+  )).toBeGreaterThanOrEqual(4);
+});
