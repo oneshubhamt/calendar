@@ -4,6 +4,7 @@ import type {
 } from "../../core/types.js";
 import { civilMinuteOfInstant } from "../../core/civil-timeline.js";
 import { parseAbsoluteDateTime } from "../../core/time.js";
+import { partitionOverlapLanes } from "../../core/visual-lanes.js";
 import {
   flattenCalendarResources,
   validateCalendarResourceAssignments,
@@ -91,25 +92,6 @@ function visualOverlap(left: PreparedLayout, right: PreparedLayout): boolean {
   return left.xMinutes < rightEnd && leftEnd > right.xMinutes;
 }
 
-function laneCluster(cluster: readonly PreparedLayout[]): CalendarResourceTimelineLayoutItem[] {
-  const lanes: PreparedLayout[][] = [];
-  const placed: Array<{ readonly item: PreparedLayout; readonly lane: number }> = [];
-  for (const item of cluster) {
-    let lane = lanes.findIndex(existing => existing.every(other => !visualOverlap(item, other)));
-    if (lane < 0) {
-      lane = lanes.length;
-      lanes.push([]);
-    }
-    lanes[lane]!.push(item);
-    placed.push({ item, lane });
-  }
-  const laneCount = Math.max(1, lanes.length);
-  return placed.map(({ item, lane }) => {
-    const { start: _start, end: _end, point: _point, ...publicItem } = item;
-    return { ...publicItem, lane, laneCount };
-  });
-}
-
 function assignLanes(items: readonly PreparedLayout[]): CalendarResourceTimelineLayoutItem[] {
   const byRow = new Map<number, PreparedLayout[]>();
   for (const item of items) {
@@ -126,17 +108,13 @@ function assignLanes(items: readonly PreparedLayout[]): CalendarResourceTimeline
       || b.widthMinutes - a.widthMinutes
       || a.start - b.start
       || a.renderId.localeCompare(b.renderId));
-    let cluster: PreparedLayout[] = [];
-    const flush = (): void => {
-      if (!cluster.length) return;
-      result.push(...laneCluster(cluster));
-      cluster = [];
-    };
-    for (const item of row) {
-      if (cluster.length && !cluster.some(other => visualOverlap(item, other))) flush();
-      cluster.push(item);
+    for (const cluster of partitionOverlapLanes(row, visualOverlap)) {
+      const laneCount = Math.max(1, cluster.lanes.length);
+      for (const { item, lane } of cluster.placements) {
+        const { start: _start, end: _end, point: _point, ...publicItem } = item;
+        result.push({ ...publicItem, lane, laneCount });
+      }
     }
-    flush();
   }
   return result.sort((a, b) =>
     a.resourceRow - b.resourceRow
