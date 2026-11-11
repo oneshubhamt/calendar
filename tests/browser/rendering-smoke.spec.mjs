@@ -307,7 +307,7 @@ test("registered custom views own range navigation rendering and use only the bo
       commandHandler: commands,
       extensions: [{
         presentOccurrence(occurrence) {
-          if (occurrence.id !== "custom-event") return undefined;
+          if (occurrence.sourceItemId !== "custom-event") return undefined;
           return { title: "Presented custom event", badges: [{ label: "Custom badge" }] };
         },
       }],
