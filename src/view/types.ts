@@ -103,14 +103,6 @@ export interface CalendarCustomViewPlugin {
   render(context: CalendarCustomViewRenderContext): HTMLElement;
 }
 
-type CalendarUiViewChangeCallback = {
-  bivarianceHack(view: CalendarUiViewId): void;
-}["bivarianceHack"];
-
-type CalendarUiRangeChangeCallback = {
-  bivarianceHack(range: CalendarRange, view: CalendarUiViewId): void;
-}["bivarianceHack"];
-
 /** Host-defined occurrence action. `kind` and `state` are presentation metadata only and intentionally open-ended. */
 export interface CalendarSourceAction {
   /** Stable action identity within one occurrence. Duplicate IDs fail closed. */
@@ -145,8 +137,8 @@ export interface CalendarUiCallbacks {
   readonly onCreate?: (selection: CalendarSelection) => void;
   readonly onOpen?: (occurrence: CalendarOccurrence) => void;
   readonly onCommand?: (command: CalendarCommand) => void;
-  readonly onRangeChange?: CalendarUiRangeChangeCallback;
-  readonly onViewChange?: CalendarUiViewChangeCallback;
+  readonly onRangeChange?: (range: CalendarRange, view: CalendarUiViewId) => void;
+  readonly onViewChange?: (view: CalendarUiViewId) => void;
 }
 
 export interface CalendarKindOption {
