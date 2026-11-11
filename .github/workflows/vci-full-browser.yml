@@ -1,0 +1,29 @@
+name: VC-I Full Browser QA
+
+on:
+  push:
+    branches: [working]
+    paths:
+      - ".github/workflows/vci-full-browser.yml"
+
+jobs:
+  browser-release-qa:
+    runs-on: ubuntu-latest
+    container: mcr.microsoft.com/playwright:v1.65.0-noble
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26.13.0"
+          cache: npm
+      - name: Use pinned npm
+        run: npm install --global npm@12.2.2
+      - name: Install dependencies
+        run: npm ci
+      - name: Verify toolchain
+        run: node --version && npm --version && npx playwright --version
+      - name: Build
+        run: npm run build
+      - name: Full configured browser QA
+        run: npx playwright test --config=playwright.config.mjs
