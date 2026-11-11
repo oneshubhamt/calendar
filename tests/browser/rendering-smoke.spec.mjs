@@ -634,6 +634,29 @@ test("optional Multi-Month composes canonical Month panels across years with one
       target.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
     };
 
+    const moveInternal = date => {
+      const source = [...document.querySelectorAll(".dc-event")]
+        .find(node => node.textContent?.includes("Move me"));
+      const target = document.querySelector(`.dc-day-cell[data-calendar-date^="${date}"]`);
+      if (!(source instanceof HTMLElement) || !(target instanceof HTMLElement)) {
+        throw new Error("Multi-Month internal drag fixture target missing");
+      }
+      const dataTransfer = new DataTransfer();
+      source.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer }));
+      const rect = target.getBoundingClientRect();
+      const init = {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer,
+        clientX: rect.left + Math.min(12, Math.max(1, rect.width / 2)),
+        clientY: rect.top + Math.min(12, Math.max(1, rect.height / 2)),
+      };
+      target.dispatchEvent(new DragEvent("dragenter", init));
+      target.dispatchEvent(new DragEvent("dragover", init));
+      target.dispatchEvent(new DragEvent("drop", init));
+      source.dispatchEvent(new DragEvent("dragend", { bubbles: true, cancelable: true, dataTransfer }));
+    };
+
     globalThis.__multiMonthProbe = {
       calendar,
       repository,
@@ -643,6 +666,7 @@ test("optional Multi-Month composes canonical Month panels across years with one
       createdSelections,
       dispatchExternal,
       createOn,
+      moveInternal,
     };
   });
 
@@ -667,9 +691,7 @@ test("optional Multi-Month composes canonical Month panels across years with one
   await expect(januaryFifth.locator(".dc-day-background-range")).toHaveCount(1);
   await expect(januaryFifth).toHaveAttribute("aria-label", /Background: January background/);
 
-  const moving = page.locator(".dc-event").filter({ hasText: "Move me" }).first();
-  const decemberTwentieth = page.locator('.dc-day-cell[data-calendar-date^="2026-12-20"]');
-  await moving.dragTo(decemberTwentieth);
+  await page.evaluate(() => globalThis.__multiMonthProbe.moveInternal("2026-12-20"));
   await expect.poll(async () => await page.evaluate(() =>
     globalThis.__multiMonthProbe.repository.read().items.find(item => item.id === "move-me")?.start,
   )).toBe("2026-12-20T09:00:00.000Z");
