@@ -115,6 +115,10 @@
     "./features/resource-scheduler-ui": {
       "types": "./dist/features/resource-scheduler-ui/index.d.ts",
       "import": "./dist/features/resource-scheduler-ui/index.js"
+    },
+    "./features/resource-time-grid-ui": {
+      "types": "./dist/features/resource-time-grid-ui/index.d.ts",
+      "import": "./dist/features/resource-time-grid-ui/index.js"
     }
   },
   "files": [
