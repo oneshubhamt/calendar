@@ -106,7 +106,7 @@ export function resolveHorizontalTimelineRangeGeometry(
     end,
     widthMinutes,
     coordinate,
-    instantAtCoordinate(minute, overlap = "earlier") {
+    instantAtCoordinate(minute: number, overlap: CalendarOverlapDisambiguation = "earlier") {
       if (!Number.isFinite(minute)) throw new RangeError("Horizontal timeline coordinate must be finite");
       if (!["earlier", "later"].includes(overlap)) throw new RangeError("Horizontal timeline overlap policy is invalid");
       return timeZone === undefined
