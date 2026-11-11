@@ -16,7 +16,6 @@ import { instantToPlain } from "../core/temporal.js";
 import { renderMonthPanel } from "./month-panel.js";
 import {
   el,
-  formatDateTime,
   formatTime,
   sameLocalDay,
 } from "./render-primitives.js";
@@ -198,4 +197,8 @@ export function renderAgendaView(model: CalendarStaticRenderModel, actions: Cale
     container.append(section);
   }
   return container;
+}
+
+function weekdayOrder(weekStartsOn: Weekday): readonly Weekday[] {
+  return Array.from({ length: 7 }, (_, index) => ((weekStartsOn + index) % 7) as Weekday);
 }
