@@ -77,7 +77,7 @@ export class MemorySyncStateStore implements SyncStateStore {
 }
 
 export interface SyncDecision {
-  readonly action: "none" | "apply-remote" | "push-local" | "delete-local" | "delete-remote" | "conflict";
+  readonly action: "none" | "rebase" | "apply-remote" | "push-local" | "delete-local" | "delete-remote" | "conflict";
   readonly conflict?: SyncConflict | undefined;
 }
 
@@ -113,6 +113,10 @@ export function decideSync(
   const remoteDeleted = !remote || remote.deleted;
   const localDeleted = !local;
 
+  // A failed checkpoint can leave both sides already converged while the persisted
+  // baselines still describe the older state. Rebase that stale checkpoint instead
+  // of manufacturing a both-modified conflict on retry.
+  if ((localChanged || remoteChanged) && localFingerprint === remoteFingerprint) return { action: "rebase" };
   if (!localChanged && !remoteChanged) return { action: "none" };
   if (localDeleted && remoteDeleted) return { action: "none" };
   if (localDeleted && remoteChanged && !remoteDeleted) {
