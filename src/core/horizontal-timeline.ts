@@ -55,11 +55,11 @@ export interface CalendarHorizontalTimelineTick {
   readonly coordinate: number;
 }
 
-export function horizontalTimelineTicks(
+export function horizontalTimelineTickStepMinutes(
   geometry: CalendarHorizontalTimelineRangeGeometry,
   requestedTickMinutes: number,
   maxTicks = 240,
-): readonly CalendarHorizontalTimelineTick[] {
+): number {
   if (!Number.isFinite(requestedTickMinutes) || requestedTickMinutes <= 0) {
     throw new RangeError("Horizontal timeline tick minutes must be positive and finite");
   }
@@ -68,7 +68,15 @@ export function horizontalTimelineTicks(
   }
   const elapsedMinutes = Math.max(1, (geometry.end - geometry.start) / MINUTE_MS);
   const multiplier = Math.max(1, Math.ceil(elapsedMinutes / requestedTickMinutes / maxTicks));
-  const tickMinutes = requestedTickMinutes * multiplier;
+  return requestedTickMinutes * multiplier;
+}
+
+export function horizontalTimelineTicks(
+  geometry: CalendarHorizontalTimelineRangeGeometry,
+  requestedTickMinutes: number,
+  maxTicks = 240,
+): readonly CalendarHorizontalTimelineTick[] {
+  const tickMinutes = horizontalTimelineTickStepMinutes(geometry, requestedTickMinutes, maxTicks);
   const tickMs = tickMinutes * MINUTE_MS;
   const seen = new Set<string>();
   const result: CalendarHorizontalTimelineTick[] = [];
