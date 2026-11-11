@@ -105,7 +105,7 @@ interface SelectionDragState {
 
 const NATIVE_DRAG_TYPE = "application/x-calendar-occurrence";
 
-function creatableSource(source: CalendarSource | undefined): boolean {
+function creatableSource(source: CalendarSource | undefined): source is CalendarSource {
   return Boolean(source && !source.readOnly && source.allowCreate !== false);
 }
 
@@ -1489,13 +1489,16 @@ export class CalendarUi {
         ? calendarDaySpan(selectionStart, selectionEnd, this.timeZone)
         : 1;
       const end = addDays(start, template.durationDays ?? selectedDays, this.timeZone);
-      const temporal = placementTimePatch(start, end, true, this.timeZone);
       draft = {
         calendarId: source.id,
         title: template.title,
         ...(template.description ? { description: template.description } : {}),
         ...(template.location ? { location: template.location } : {}),
-        ...temporal,
+        start: dateKey(start, this.timeZone),
+        end: dateKey(end, this.timeZone),
+        allDay: true,
+        precision: "date",
+        temporal: { kind: "date" },
         kind: template.kind ?? "event",
         ...(template.display ? { display: template.display } : {}),
         ...(template.metadata ? { metadata: template.metadata } : {}),
