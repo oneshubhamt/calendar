@@ -317,16 +317,22 @@ Targeted QA:
 
 ### VC-E — Generic Timeline bundled view
 
+**Status:** complete on `working`.
+
 **Objective:** add a resource-free horizontal temporal view using shared Calendar geometry.
 
-Provisional factory:
+Final factory surface:
 
 ```text
 createTimelineView({
   spanDays: 7,
-  tick: "auto"
+  stepDays: 7,
+  pixelsPerHour: 72,
+  axisTickMinutes: 360
 })
 ```
+
+All fields above are optional defaults except that hosts may override them; the full bounded options surface also includes `id`, `label`, `minWidth`, `eventHeight` and `minTrackHeight`.
 
 Work:
 
