@@ -31,3 +31,19 @@ export type {
   CalendarResourcePlacementExecutionStatus,
   CalendarResourcePlacementExecutionResult,
 } from "./placement.js";
+
+export {
+  expandResourceAvailabilityDefinitions,
+  createResourceAvailabilityProvider,
+  createResourceAvailabilityPlacementGuard,
+} from "./availability.js";
+export type {
+  CalendarResourceAvailabilityState,
+  CalendarResourceAvailabilityExceptionReplacement,
+  CalendarResourceAvailabilityRecurrence,
+  CalendarResourceAvailabilityDefinition,
+  CalendarResourceAvailabilityRange,
+  CalendarResourceAvailabilityProvider,
+  CalendarResourceAvailabilityProviderOptions,
+  CalendarResourceAvailabilityPlacementGuardOptions,
+} from "./availability.js";
