@@ -367,6 +367,18 @@ Targeted QA:
 
 ### VC-F — Print stylesheet and print-snapshot API
 
+**Status:** complete on `working`.
+
+Final public surface:
+
+```text
+calendar.createPrintSnapshot({
+  title?: string | false
+})
+```
+
+The snapshot is detached, inert and view-agnostic: it clones the already-rendered active Calendar surface, owns a copy of Calendar's current stylesheet, removes transient interaction state and never re-queries or mutates Calendar data. A global `print()` convenience wrapper was deliberately not added because the detached snapshot provides the stronger multi-calendar isolation contract without temporary global page state.
+
 **Objective:** provide reliable, read-only printing for the active Calendar view.
 
 Work:
