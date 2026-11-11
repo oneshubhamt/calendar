@@ -63,7 +63,7 @@ export function renderMonthPanel(
     header.append(weekHeading);
   }
   for (const weekday of weekdayOrder(model.weekStartsOn)) {
-    header.append(el("div", "dc-weekday", DAY_NAMES[weekday]));
+    header.append(el("div", "dc-weekday", SHORT_WEEKDAY_NAMES[weekday]!));
   }
 
   const buckets = groupByDay(model.occurrences, model.timeZone, options.range);
