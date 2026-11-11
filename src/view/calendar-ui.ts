@@ -378,15 +378,43 @@ export class CalendarUi {
     });
   }
 
+  private currentCustomViewOccurrence(occurrence: CalendarOccurrence): CalendarOccurrence | undefined {
+    const current = this.occurrenceIndex.get(occurrence.occurrenceId);
+    return current?.sourceItemId === occurrence.sourceItemId ? current : undefined;
+  }
+
+  private async openCustomViewOccurrence(occurrence: CalendarOccurrence): Promise<void> {
+    const current = this.currentCustomViewOccurrence(occurrence);
+    if (!current) {
+      this.announce("This calendar occurrence is no longer available.");
+      return;
+    }
+    await this.openDetails(current);
+  }
+
   private customViewActions(): CalendarCustomViewActionPort {
     const actions: CalendarCustomViewActionPort = {
       canCreateItems: () => this.canCreateItems(),
-      canOpenOccurrence: occurrence => this.canOpenOccurrence(occurrence),
-      canMoveOccurrence: occurrence => this.canMoveOccurrence(occurrence),
-      canResizeOccurrence: (occurrence, edge) => this.canResizeOccurrence(occurrence, edge),
-      isOccurrencePending: occurrence => this.isOccurrencePending(occurrence),
-      occurrencePresentation: occurrence => this.customViewOccurrencePresentation(occurrence),
-      openOccurrence: async occurrence => await this.openDetails(this.authoritativeOccurrence(occurrence)),
+      canOpenOccurrence: occurrence => {
+        const current = this.currentCustomViewOccurrence(occurrence);
+        return Boolean(current && this.canOpenOccurrence(current));
+      },
+      canMoveOccurrence: occurrence => {
+        const current = this.currentCustomViewOccurrence(occurrence);
+        return Boolean(current && this.canMoveOccurrence(current));
+      },
+      canResizeOccurrence: (occurrence, edge) => {
+        const current = this.currentCustomViewOccurrence(occurrence);
+        return Boolean(current && this.canResizeOccurrence(current, edge));
+      },
+      isOccurrencePending: occurrence => {
+        const current = this.currentCustomViewOccurrence(occurrence);
+        return Boolean(current && this.isOccurrencePending(current));
+      },
+      occurrencePresentation: occurrence => this.customViewOccurrencePresentation(
+        this.currentCustomViewOccurrence(occurrence) ?? occurrence,
+      ),
+      openOccurrence: async occurrence => await this.openCustomViewOccurrence(occurrence),
       createFromSelection: async selection => await this.createFromSelection(selection),
       moveOccurrence: async (occurrence, start, options) =>
         await this.moveOccurrenceToStart(occurrence, start, options?.allDay ?? isDateLikeOccurrence(occurrence)),
@@ -492,12 +520,11 @@ export class CalendarUi {
 
   private shiftAnchor(direction: 1 | -1): Date {
     const definition = this.activeView();
-    const shifted = this.hostHook(
+    return this.hostHook(
       `Calendar view ${definition.id} navigation`,
-      () => definition.shiftAnchor(this.viewNavigationContext(), direction),
-      this.anchor,
+      () => toDate(definition.shiftAnchor(this.viewNavigationContext(), direction), this.timeZone),
+      new Date(this.anchor.getTime()),
     );
-    return toDate(shifted, this.timeZone);
   }
 
   private dateInNavigationBounds(value: Date | ISODateTime): boolean {
@@ -1601,7 +1628,11 @@ export class CalendarUi {
     startValue: ISODateTime,
     allDay: boolean,
   ): Promise<boolean> {
-    const current = this.authoritativeOccurrence(occurrence);
+    const current = this.currentCustomViewOccurrence(occurrence);
+    if (!current) {
+      this.announce("This calendar occurrence is no longer available.");
+      return false;
+    }
     if (this.isOccurrencePending(current) || !this.canMoveOccurrenceToPlacement(current, allDay)) {
       this.announce(`${current.title}: this move is not allowed.`);
       return false;
@@ -1638,7 +1669,11 @@ export class CalendarUi {
     edge: CalendarResizeEdge,
     targetValue: ISODateTime,
   ): Promise<boolean> {
-    const current = this.authoritativeOccurrence(occurrence);
+    const current = this.currentCustomViewOccurrence(occurrence);
+    if (!current) {
+      this.announce("This calendar occurrence is no longer available.");
+      return false;
+    }
     if (
       this.isOccurrencePending(current)
       || !this.canResizeOccurrence(current, edge)
