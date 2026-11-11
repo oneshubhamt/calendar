@@ -88,8 +88,8 @@ The normal quality gate is strict TypeScript typechecking, the complete non-visu
 
 The permanent suite covers recurrence/DST, series edits, view-range/list grouping, resize geometry and recurring resize commands, source and item authority, fail-closed undo/redo under concurrent changes, persistence invariants, generic host semantics, optional-feature boundaries, temporal-preserving edits, interoperability/reminders and the optional Director integrations. Native browser QA is a separate release gate covering storage/cross-tab behavior, real DOM interactions and visual baselines.
 
-See:
+Package documentation:
 
-- `docs/ARCHITECTURE.md` — canonical generic architecture contract;
-- `docs/AYANA_INTEGRATION.md` — Ayana-as-host integration architecture and target calendar experience;
-- `docs/AYANA_IMPLEMENTATION_PROGRAMME.md` — remaining Ayana-side implementation programme and acceptance gates.
+- `docs/ARCHITECTURE.md` — canonical generic architecture contract.
+
+Host-specific integration designs and implementation programmes remain repository-only documentation.
