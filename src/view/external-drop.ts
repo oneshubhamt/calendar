@@ -75,6 +75,13 @@ function boundedOptionalText(value: unknown, max: number): string | undefined | 
   return text.length <= max ? (text || undefined) : null;
 }
 
+function boundedOptionalIdentifier(value: unknown, max: number): string | undefined | null {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  return text && text.length <= max ? text : null;
+}
+
 function positiveInteger(value: unknown, max: number): number | undefined | null {
   if (value === undefined) return undefined;
   return Number.isInteger(value) && Number(value) > 0 && Number(value) <= max ? Number(value) : null;
@@ -142,10 +149,10 @@ export function normalizeCalendarExternalDropTemplate(value: unknown): CalendarE
   const raw = value as Record<string, unknown>;
   if (Object.keys(raw).some(key => !EXTERNAL_TEMPLATE_KEYS.has(key))) return undefined;
   const title = boundedRequiredText(raw.title, MAX_TITLE_LENGTH);
-  const calendarId = boundedOptionalText(raw.calendarId, MAX_ID_LENGTH);
+  const calendarId = boundedOptionalIdentifier(raw.calendarId, MAX_ID_LENGTH);
   const description = boundedOptionalText(raw.description, MAX_TEXT_LENGTH);
   const location = boundedOptionalText(raw.location, MAX_TEXT_LENGTH);
-  const kind = boundedOptionalText(raw.kind, MAX_KIND_LENGTH);
+  const kind = boundedOptionalIdentifier(raw.kind, MAX_KIND_LENGTH);
   const durationMinutes = positiveInteger(raw.durationMinutes, 7 * 24 * 60);
   const durationDays = positiveInteger(raw.durationDays, 366);
   const temporalForm = raw.temporalForm === undefined
@@ -235,7 +242,7 @@ export function resolveCalendarExternalDropDecoder(
   if (
     types.length === 0
     || types.length > MAX_DECODER_TYPES
-    || types.some(type => type === undefined)
+    || types.some(type => type === undefined || type === CALENDAR_EXTERNAL_DROP_MIME)
   ) throw new TypeError("Calendar external-drop decoder MIME types are invalid");
   return Object.freeze({
     types: Object.freeze(types as string[]),
