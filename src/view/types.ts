@@ -1,6 +1,7 @@
 import type { CalendarClock } from "../core/time.js";
 import type {
   CalendarAgendaSpan,
+  CalendarBackgroundRange,
   CalendarCommand,
   CalendarCommandHandler,
   CalendarDisplay,
@@ -36,6 +37,80 @@ export interface CalendarSelection {
   readonly allDay: boolean;
 }
 
+export type CalendarUiViewId = CalendarView | (string & Record<never, never>);
+
+export interface CalendarViewNavigationContext {
+  readonly anchor: Date;
+  readonly locale: string;
+  readonly timeZone: string;
+  readonly weekStartsOn: Weekday;
+  readonly agendaSpan: CalendarAgendaSpan;
+}
+
+export interface CalendarViewTitleContext extends CalendarViewNavigationContext {
+  readonly visibleRange: CalendarRange;
+}
+
+export interface CalendarCustomViewActionPort {
+  canCreateItems(): boolean;
+  canOpenOccurrence(occurrence: CalendarOccurrence): boolean;
+  canMoveOccurrence(occurrence: CalendarOccurrence): boolean;
+  canResizeOccurrence(occurrence: CalendarOccurrence, edge: "start" | "end"): boolean;
+  isOccurrencePending(occurrence: CalendarOccurrence): boolean;
+  openOccurrence(occurrence: CalendarOccurrence): Promise<void>;
+  createFromSelection(selection: CalendarSelection): Promise<void>;
+  /**
+   * Move an occurrence to a new start instant. Calendar preserves ordinary duration,
+   * uses one hour when converting a date-like occurrence to timed form, and preserves
+   * day span when moving to all-day form.
+   */
+  moveOccurrence(
+    occurrence: CalendarOccurrence,
+    start: ISODateTime,
+    options?: { readonly allDay?: boolean | undefined },
+  ): Promise<boolean>;
+  /** Resize one edge through Calendar's existing snapping, placement and command lifecycle. */
+  resizeOccurrence(
+    occurrence: CalendarOccurrence,
+    edge: "start" | "end",
+    target: ISODateTime,
+  ): Promise<boolean>;
+  goTo(value: ISODateTime | Date): void;
+  setView(view: CalendarUiViewId): void;
+  announce(message: string): void;
+}
+
+export interface CalendarCustomViewRenderContext extends CalendarViewTitleContext {
+  readonly viewId: CalendarUiViewId;
+  readonly sources: readonly CalendarSource[];
+  readonly occurrences: readonly CalendarOccurrence[];
+  readonly backgroundRanges: readonly CalendarBackgroundRange[];
+  readonly now: Date;
+  readonly actions: CalendarCustomViewActionPort;
+}
+
+/**
+ * Generic DOM custom-view plugin. It receives projected/query data and a bounded
+ * Calendar action port, never repository, storage or interoperability internals.
+ */
+export interface CalendarCustomViewPlugin {
+  readonly id: string;
+  readonly label: string;
+  range(context: CalendarViewNavigationContext): CalendarRange;
+  shiftAnchor(context: CalendarViewNavigationContext, direction: 1 | -1): Date;
+  title(context: CalendarViewTitleContext): string;
+  readonly includeBackgroundRanges?: boolean | undefined;
+  render(context: CalendarCustomViewRenderContext): HTMLElement;
+}
+
+type CalendarUiViewChangeCallback = {
+  bivarianceHack(view: CalendarUiViewId): void;
+}["bivarianceHack"];
+
+type CalendarUiRangeChangeCallback = {
+  bivarianceHack(range: CalendarRange, view: CalendarUiViewId): void;
+}["bivarianceHack"];
+
 /** Host-defined occurrence action. `kind` and `state` are presentation metadata only and intentionally open-ended. */
 export interface CalendarSourceAction {
   /** Stable action identity within one occurrence. Duplicate IDs fail closed. */
@@ -70,8 +145,8 @@ export interface CalendarUiCallbacks {
   readonly onCreate?: (selection: CalendarSelection) => void;
   readonly onOpen?: (occurrence: CalendarOccurrence) => void;
   readonly onCommand?: (command: CalendarCommand) => void;
-  readonly onRangeChange?: (range: CalendarRange, view: CalendarView) => void;
-  readonly onViewChange?: (view: CalendarView) => void;
+  readonly onRangeChange?: CalendarUiRangeChangeCallback;
+  readonly onViewChange?: CalendarUiViewChangeCallback;
 }
 
 export interface CalendarKindOption {
@@ -239,7 +314,9 @@ export interface CalendarUiOptions {
   /** Explicit trusted host command path for occurrences whose capability result selects `trusted-host`. */
   readonly trustedHostCommandHandler?: CalendarCommandHandler;
   readonly weekStartsOn?: Weekday | undefined;
-  readonly initialView?: CalendarView;
+  readonly initialView?: CalendarUiViewId;
+  /** Explicit custom views. IDs must be unique and may not reuse built-in view IDs. */
+  readonly customViews?: readonly CalendarCustomViewPlugin[];
   readonly initialAgendaSpan?: CalendarAgendaSpan;
   readonly initialDate?: ISODateTime;
   /** Calendar-owned chrome is independently suppressible for embedded hosts; every control defaults to visible. */
