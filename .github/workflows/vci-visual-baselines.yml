@@ -6,9 +6,6 @@ on:
     paths:
       - ".github/workflows/vci-visual-baselines.yml"
 
-permissions:
-  contents: write
-
 jobs:
   update-visual-baselines:
     runs-on: ubuntu-latest
@@ -16,8 +13,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: true
       - uses: actions/setup-node@v4
         with:
           node-version: "26.13.0"
@@ -30,15 +25,9 @@ jobs:
         run: npm run build
       - name: Update Chromium visual baselines
         run: npx playwright test tests/browser/visual.spec.mjs --project=chromium --update-snapshots
-      - name: Commit visual baselines
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tests/browser/__screenshots__
-          if git diff --cached --quiet; then
-            echo "No baseline changes."
-            exit 0
-          fi
-          git commit -m "test: update VC-I visual baselines"
-          git push origin HEAD:working
+      - name: Upload visual baselines
+        uses: actions/upload-artifact@v4
+        with:
+          name: vci-visual-baselines
+          path: tests/browser/__screenshots__/
+          if-no-files-found: error
