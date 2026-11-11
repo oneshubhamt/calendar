@@ -7,9 +7,8 @@ import type {
   Weekday,
 } from "../core/types.js";
 
-import type { CalendarSelection } from "./types.js";
+import type { CalendarResolvedWeekNumbering, CalendarSelection } from "./types.js";
 import type { ResolvedCalendarOccurrencePresentation } from "./presentation.js";
-import type { ResolvedCalendarWeekNumbering } from "./week-numbering.js";
 import { groupAgendaByDay, groupByDay } from "../core/layout.js";
 import { addDays, addMonths, dateKey, rangeForView, toDate } from "../core/time.js";
 import { instantToPlain } from "../core/temporal.js";
@@ -38,7 +37,7 @@ export interface CalendarStaticRenderModel {
   readonly locale: string;
   readonly timeZone: string;
   readonly weekStartsOn: Weekday;
-  readonly weekNumbering?: ResolvedCalendarWeekNumbering | undefined;
+  readonly weekNumbering?: CalendarResolvedWeekNumbering | undefined;
   readonly anchor: Date;
   readonly visibleRange: CalendarRange;
   readonly agendaSpan: CalendarAgendaSpan;
