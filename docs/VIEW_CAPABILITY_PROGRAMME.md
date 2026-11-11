@@ -273,6 +273,8 @@ Targeted QA:
 
 ### VC-D — Multi-Month bundled view
 
+**Status:** complete on `working`.
+
 **Objective:** provide a detailed multi-month calendar without duplicating Month logic.
 
 Provisional factory:
