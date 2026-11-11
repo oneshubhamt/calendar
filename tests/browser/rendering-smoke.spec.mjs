@@ -361,6 +361,8 @@ test("registered custom views own range navigation rendering and use only the bo
   expect(exposed.actions).toContain("moveOccurrence");
   expect(exposed.actions).toContain("resizeOccurrence");
   expect(exposed.actions).toContain("occurrencePresentation");
+  expect(exposed.actions).toContain("canAcceptExternalDrop");
+  expect(exposed.actions).toContain("dropExternal");
 
   await page.getByRole("button", { name: "Open custom event" }).click();
   expect(await page.evaluate(() => globalThis.__customViewProbe.openCalls())).toBe(1);
