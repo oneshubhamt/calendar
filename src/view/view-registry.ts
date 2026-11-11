@@ -32,6 +32,9 @@ function ownDefinition(plugin: CalendarCustomViewPlugin, builtIn: boolean): Cale
   if (plugin.dispose !== undefined && typeof plugin.dispose !== "function") {
     throw new TypeError(`Calendar view ${id} dispose must be a function`);
   }
+  if (plugin.includeBackgroundRanges !== undefined && typeof plugin.includeBackgroundRanges !== "boolean") {
+    throw new TypeError(`Calendar view ${id} includeBackgroundRanges must be boolean`);
+  }
   return Object.freeze({
     ...plugin,
     id,

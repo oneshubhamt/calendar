@@ -54,6 +54,10 @@ test("custom view registry rejects reserved, duplicate, malformed and unknown vi
     () => new CalendarViewRegistry(builtIns(), [{ ...plugin("broken"), render: undefined }]),
     /render must be a function/i,
   );
+  assert.throws(
+    () => new CalendarViewRegistry(builtIns(), [{ ...plugin("backgrounds"), includeBackgroundRanges: "yes" }]),
+    /includeBackgroundRanges must be boolean/i,
+  );
   const registry = new CalendarViewRegistry(builtIns(), []);
   assert.throws(() => registry.get("missing"), /Unknown Calendar view: missing/);
 });

@@ -66,6 +66,12 @@ interface DragState {
   targetColumn?: CalendarResourceTimeGridColumn | undefined;
 }
 
+/**
+ * Immutable host projection snapshot. After setProjection(), hosts must replace
+ * changed entities through a new snapshot rather than mutate supplied objects.
+ * The UI owns/freeze-copies collection containers but deliberately does not deep
+ * clone potentially large resource schedules.
+ */
 export interface CalendarResourceTimeGridProjection {
   readonly resources: readonly CalendarResource[];
   readonly occurrences: readonly CalendarOccurrence[];
@@ -201,13 +207,15 @@ export class CalendarResourceTimeGridUi {
 
   public setProjection(projection: CalendarResourceTimeGridProjection): void {
     this.pointer.cancel();
-    const stable: CalendarResourceTimeGridProjection = {
-      resources: [...projection.resources],
-      occurrences: [...projection.occurrences],
-      assignments: [...projection.assignments],
-      range: { start: projection.range.start, end: projection.range.end },
-      ...(projection.availability === undefined ? {} : { availability: [...projection.availability] }),
-    };
+    const stable: CalendarResourceTimeGridProjection = Object.freeze({
+      resources: Object.freeze([...projection.resources]),
+      occurrences: Object.freeze([...projection.occurrences]),
+      assignments: Object.freeze([...projection.assignments]),
+      range: Object.freeze({ start: projection.range.start, end: projection.range.end }),
+      ...(projection.availability === undefined
+        ? {}
+        : { availability: Object.freeze([...projection.availability]) }),
+    });
     const rendered = this.renderProjection(stable);
     this.projection = stable;
     this.replaceSurface(rendered);

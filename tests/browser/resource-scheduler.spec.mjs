@@ -83,6 +83,52 @@ test("Resource Scheduler keyboard reassignment commits one atomic host change an
 });
 
 
+test("Resource Scheduler keyboard end resize uses edge authority and one atomic authoritative mutation", async ({ page }) => {
+  await page.goto("/tests/browser/harness.html");
+  await page.evaluate(async projection => {
+    const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
+    let current = structuredClone(projection);
+    const commits = [];
+    const host = document.getElementById("browser-test-host");
+    host.replaceChildren();
+    const ui = new CalendarResourceSchedulerUi(host, {
+      timeZone: "UTC",
+      interaction: {
+        mutationPort: {
+          commit(change) {
+            commits.push(structuredClone(change));
+            current = {
+              ...current,
+              occurrences: current.occurrences.map(occurrence => occurrence.occurrenceId === change.occurrence.occurrenceId
+                ? { ...occurrence, start: change.start, end: change.end }
+                : occurrence),
+              assignments: current.assignments.map(assignment => assignment.occurrenceId === change.occurrence.occurrenceId
+                ? { ...assignment, resourceIds: [...change.toResourceIds], version: { revision: 2 } }
+                : assignment),
+            };
+          },
+        },
+        occurrenceCapabilityProvider: { capabilities() { return { canResizeStart: true, canResizeEnd: true }; } },
+        sourceForOccurrence() { return { id: "calendar", title: "Calendar", visible: true }; },
+        refreshProjection() { return structuredClone(current); },
+      },
+    });
+    ui.setProjection(current);
+    globalThis.__resourceSchedulerResize = { commits };
+  }, projection);
+
+  const handle = page.getByRole("separator", { name: "Resize end of Visit" });
+  await handle.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(async () => await page.evaluate(() => globalThis.__resourceSchedulerResize.commits.length)).toBe(1);
+  const [commit] = await page.evaluate(() => globalThis.__resourceSchedulerResize.commits);
+  expect(commit.start).toBe("2026-11-10T09:00:00.000Z");
+  expect(commit.end).toBe("2026-11-10T10:15:00.000Z");
+  expect(commit.fromResourceIds).toEqual(["a"]);
+  expect(commit.toResourceIds).toEqual(["a"]);
+  await expect(page.getByRole("separator", { name: "Resize end of Visit" })).toBeVisible();
+});
+
 test("Resource Scheduler reuses shared pointer arming, long-press, cancellation and horizontal move", async ({ page }) => {
   await page.goto("/tests/browser/harness.html");
   await page.evaluate(async projection => {

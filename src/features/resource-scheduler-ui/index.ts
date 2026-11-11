@@ -75,6 +75,12 @@ interface CalendarResourceInteractionCandidate {
   readonly valid: boolean;
 }
 
+/**
+ * Immutable host projection snapshot. After setProjection(), hosts must replace
+ * changed entities through a new snapshot rather than mutate supplied objects.
+ * The UI owns/freeze-copies collection containers but deliberately does not deep
+ * clone potentially large resource schedules.
+ */
 export interface CalendarResourceSchedulerProjection {
   readonly resources: readonly CalendarResource[];
   readonly occurrences: readonly CalendarOccurrence[];
@@ -119,7 +125,7 @@ export interface CalendarResourceSchedulerUiOptions {
   readonly onOccurrenceActivate?: ((occurrence: CalendarOccurrence, resource: CalendarResource) => void) | undefined;
   readonly onCollapseChange?: ((collapsedResourceIds: readonly CalendarResourceId[]) => void) | undefined;
   readonly onError?: ((error: unknown) => void) | undefined;
-  /** Omit to preserve the R4 read-only surface exactly. */
+  /** Omit to keep the Resource Scheduler surface read-only. */
   readonly interaction?: CalendarResourceSchedulerInteractionOptions | undefined;
 }
 
@@ -214,12 +220,12 @@ export class CalendarResourceSchedulerUi {
 
   public setProjection(projection: CalendarResourceSchedulerProjection): void {
     this.cancelDrag();
-    const stable: CalendarResourceSchedulerProjection = {
-      resources: [...projection.resources],
-      occurrences: [...projection.occurrences],
-      assignments: [...projection.assignments],
-      range: { start: projection.range.start, end: projection.range.end },
-    };
+    const stable: CalendarResourceSchedulerProjection = Object.freeze({
+      resources: Object.freeze([...projection.resources]),
+      occurrences: Object.freeze([...projection.occurrences]),
+      assignments: Object.freeze([...projection.assignments]),
+      range: Object.freeze({ start: projection.range.start, end: projection.range.end }),
+    });
     const ids = new Set(stable.resources.map(resource => resource.id));
     const nextCollapsed = new Set([...this.collapsed].filter(id => ids.has(id)));
     const rendered = this.renderProjection(stable, nextCollapsed);
@@ -236,7 +242,6 @@ export class CalendarResourceSchedulerUi {
     }
     const next = new Set(ids);
     if (next.size !== ids.length) throw new Error("Collapsed resource IDs must be unique");
-    // R2 validation rejects unknown collapse IDs before current UI state is changed.
     flattenCalendarResources(this.projection.resources, [...next]);
     const rendered = this.renderProjection(this.projection, next);
     this.collapsed = next;

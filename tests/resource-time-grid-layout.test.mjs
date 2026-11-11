@@ -48,6 +48,23 @@ test("Resource TimeGrid delegates civil/DST geometry to ordinary timed-day layou
   assert.equal(resource.topMinutes,180);
 });
 
+test("Resource TimeGrid requires whole local-day ranges while accepting 23/25-hour DST days", () => {
+  const spring=layoutResourceTimeGrid(resources,[],[],{
+    start:"2026-03-08T05:00:00.000Z",end:"2026-03-09T04:00:00.000Z",
+  },{timeZone:"America/New_York"});
+  const fall=layoutResourceTimeGrid(resources,[],[],{
+    start:"2026-11-01T04:00:00.000Z",end:"2026-11-02T05:00:00.000Z",
+  },{timeZone:"America/New_York"});
+  assert.deepEqual(spring.columns.map(column=>column.dayKey),["2026-03-08","2026-03-08"]);
+  assert.deepEqual(fall.columns.map(column=>column.dayKey),["2026-11-01","2026-11-01"]);
+  assert.throws(()=>layoutResourceTimeGrid(resources,[],[],{
+    start:"2026-11-10T12:00:00.000Z",end:"2026-11-11T00:00:00.000Z",
+  },{timeZone:"UTC"}),/local day boundaries/i);
+  assert.throws(()=>layoutResourceTimeGrid(resources,[],[],{
+    start:"2026-11-10T00:00:00.000Z",end:"2026-11-10T18:00:00.000Z",
+  },{timeZone:"UTC"}),/local day boundaries/i);
+});
+
 test("Resource TimeGrid keeps points zero-duration, clips visible window and renders all-day assignments separately", () => {
   const point=occurrence("point","2026-11-10T09:15:00Z","2026-11-10T09:15:00Z",{temporalForm:"point"});
   const clipped=occurrence("clip","2026-11-10T07:30:00Z","2026-11-10T09:30:00Z");

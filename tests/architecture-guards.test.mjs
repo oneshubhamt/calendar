@@ -18,15 +18,8 @@ async function sourceFilesUnder(directory) {
 }
 
 test("generic dependency direction and host-domain isolation are explicit architecture guards", async () => {
-  const corePaths = [
-    "../src/core/types.ts","../src/core/authority.ts","../src/core/calendar-engine.ts","../src/core/commands.ts",
-    "../src/core/layout.ts","../src/core/visual-lanes.ts","../src/core/horizontal-timeline.ts","../src/core/recurrence.ts","../src/core/store.ts","../src/core/interaction.ts",
-  ];
-  const viewPaths = [
-    "../src/view/types.ts","../src/view/calendar-ui.ts","../src/view/view-renderer.ts","../src/view/view-registry.ts",
-    "../src/view/month-panel.ts","../src/view/render-primitives.ts","../src/view/week-numbering.ts","../src/view/multi-month.ts","../src/view/timeline.ts",
-    "../src/view/external-drop.ts","../src/view/pointer-gesture.ts","../src/view/gesture-controller.ts","../src/view/temporal-chrome.ts",
-  ];
+  const corePaths = await sourceFilesUnder("../src/core/");
+  const viewPaths = await sourceFilesUnder("../src/view/");
   const core = await Promise.all(corePaths.map(async path => [path, await read(path)]));
   const view = await Promise.all(viewPaths.map(async path => [path, await read(path)]));
   for (const [path, source] of core) {

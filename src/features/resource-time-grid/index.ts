@@ -106,13 +106,18 @@ function localDays(
   const rangeStart = parseAbsoluteDateTime(range?.start, "Resource TimeGrid range start");
   const rangeEnd = parseAbsoluteDateTime(range?.end, "Resource TimeGrid range end");
   if (rangeEnd.getTime() <= rangeStart.getTime()) throw new RangeError("Resource TimeGrid range must end after it starts");
+  if (
+    startOfDay(rangeStart, timeZone).getTime() !== rangeStart.getTime()
+    || startOfDay(rangeEnd, timeZone).getTime() !== rangeEnd.getTime()
+  ) {
+    throw new RangeError("Resource TimeGrid range must start and end at local day boundaries");
+  }
   const days: Date[] = [];
-  let day = startOfDay(rangeStart, timeZone);
+  let day = new Date(rangeStart.getTime());
   while (day.getTime() < rangeEnd.getTime()) {
-    const next = addDays(day, 1, timeZone);
-    if (next.getTime() > rangeStart.getTime()) days.push(day);
+    days.push(day);
     if (days.length > maxDays) throw new RangeError(`Resource TimeGrid range exceeds ${maxDays} local days`);
-    day = next;
+    day = addDays(day, 1, timeZone);
   }
   return days;
 }
@@ -171,7 +176,8 @@ function clippedTimed(
 }
 
 /**
- * Vertical resources-as-columns geometry. Resource Scheduler owns hierarchy and
+ * Vertical resources-as-columns geometry. The requested range must contain whole
+ * local days in the configured timezone. Resource Scheduler owns hierarchy and
  * assignments; ordinary Calendar timed/background layout remains authoritative
  * for civil/DST coordinates, clipping and overlap lanes.
  */

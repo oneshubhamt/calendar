@@ -57,6 +57,8 @@ test("Resource TimeGrid renders resources as columns, all-day assignments and pa
   await expect(page.locator('.dc-rtg-all-day-event[data-occurrence-id="day"]')).toBeVisible();
   await expect(page.locator(".dc-rtg-availability")).toHaveCount(2);
   await expect(page.locator(".dc-rtg-availability.is-unavailable")).toContainText("Unavailable");
+  await expect(page.locator('.dc-rtg-all-day-cell[data-resource-id="a"]'))
+    .toHaveAttribute("aria-label", /Room A.*November 10, 2026/);
   const screenshot = await page.locator(".dc-rtg-root").screenshot();
   expect(screenshot.byteLength).toBeGreaterThan(1000);
 });
@@ -87,7 +89,7 @@ test("Resource TimeGrid keyboard diagonal move produces one atomic host mutation
           },
         },
         resourceCapabilityProvider: { capabilities() { return { canReassign: true }; } },
-        occurrenceCapabilityProvider: { capabilities() { return { canMove: true, canResize: true }; } },
+        occurrenceCapabilityProvider: { capabilities() { return { canMove: true, canResizeStart: true, canResizeEnd: true }; } },
         sourceForOccurrence() { return { id: "calendar", title: "Calendar", visible: true }; },
         refreshProjection() { return structuredClone(current); },
       },
@@ -130,7 +132,7 @@ test("Resource TimeGrid vertical keyboard movement reuses temporal authority and
             };
           },
         },
-        occurrenceCapabilityProvider: { capabilities() { return { canMove: true, canResize: true }; } },
+        occurrenceCapabilityProvider: { capabilities() { return { canMove: true, canResizeStart: true, canResizeEnd: true }; } },
         sourceForOccurrence() { return { id: "calendar", title: "Calendar", visible: true }; },
         refreshProjection() { return structuredClone(current); },
       },
@@ -147,6 +149,52 @@ test("Resource TimeGrid vertical keyboard movement reuses temporal authority and
   expect(await page.evaluate(() => globalThis.__resourceTimeGridMove.commits.length)).toBe(1);
 });
 
+
+test("Resource TimeGrid keyboard end resize uses edge authority and one atomic authoritative mutation", async ({ page }) => {
+  await page.goto("/tests/browser/harness.html");
+  await page.evaluate(async projection => {
+    const { CalendarResourceTimeGridUi } = await import("/dist/features/resource-time-grid-ui/index.js");
+    let current = structuredClone(projection);
+    const commits = [];
+    const host = document.getElementById("browser-test-host");
+    host.replaceChildren();
+    const ui = new CalendarResourceTimeGridUi(host, {
+      timeZone: "UTC", dayStartHour: 8, dayEndHour: 18,
+      interaction: {
+        mutationPort: {
+          commit(change) {
+            commits.push(structuredClone(change));
+            current = {
+              ...current,
+              occurrences: current.occurrences.map(occurrence => occurrence.occurrenceId === change.occurrence.occurrenceId
+                ? { ...occurrence, start: change.start, end: change.end }
+                : occurrence),
+              assignments: current.assignments.map(assignment => assignment.occurrenceId === change.occurrence.occurrenceId
+                ? { ...assignment, resourceIds: [...change.toResourceIds], version: { revision: 2 } }
+                : assignment),
+            };
+          },
+        },
+        occurrenceCapabilityProvider: { capabilities() { return { canResizeStart: true, canResizeEnd: true }; } },
+        sourceForOccurrence() { return { id: "calendar", title: "Calendar", visible: true }; },
+        refreshProjection() { return structuredClone(current); },
+      },
+    });
+    ui.setProjection(current);
+    globalThis.__resourceTimeGridResize = { commits };
+  }, projection);
+
+  const handle = page.getByRole("separator", { name: "Resize end of Visit" });
+  await handle.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(async () => await page.evaluate(() => globalThis.__resourceTimeGridResize.commits.length)).toBe(1);
+  const [commit] = await page.evaluate(() => globalThis.__resourceTimeGridResize.commits);
+  expect(commit.start).toBe("2026-11-10T09:00:00.000Z");
+  expect(commit.end).toBe("2026-11-10T10:15:00.000Z");
+  expect(commit.fromResourceIds).toEqual(["a"]);
+  expect(commit.toResourceIds).toEqual(["a"]);
+  await expect(page.getByRole("separator", { name: "Resize end of Visit" })).toBeVisible();
+});
 
 test("Resource TimeGrid pointer drag combines time and resource changes into one atomic commit", async ({ page }) => {
   await page.goto("/tests/browser/harness.html");

@@ -127,6 +127,9 @@ export function renderResourceTimeGridSurface(
   const allDayLabel = element("div", "dc-rtg-all-day-label", "All-day");
   allDayLabel.setAttribute("role", "rowheader");
   allDay.append(allDayLabel);
+  const allDayDateFormatter = new Intl.DateTimeFormat(model.locale, {
+    weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: model.timeZone,
+  });
   const allDayByColumn = new Map<number, CalendarResourceTimeGridAllDayItem[]>();
   for (const item of layout.allDay) {
     const bucket = allDayByColumn.get(item.columnIndex) ?? [];
@@ -139,7 +142,10 @@ export function renderResourceTimeGridSurface(
     cell.dataset.dayIndex = String(column.dayIndex);
     cell.dataset.columnIndex = String(column.columnIndex);
     cell.setAttribute("role", "gridcell");
-    cell.setAttribute("aria-label", `All-day events for ${column.resource.title}`);
+    cell.setAttribute(
+      "aria-label",
+      `All-day events for ${column.resource.title}, ${allDayDateFormatter.format(column.day)}`,
+    );
     for (const item of allDayByColumn.get(column.columnIndex) ?? []) {
       cell.append(actions.renderAllDay(item, column));
     }
