@@ -22,7 +22,7 @@ The programme has the following architectural objectives:
 
 - keep `core/` host- and DOM-neutral;
 - keep storage, interoperability and host integrations out of view mechanics;
-- preserve the existing five built-in views without behavioural regressions;
+- preserve the current five built-in views without behavioural regressions;
 - avoid turning `calendar-ui.ts` into a larger view switch statement;
 - make custom views use Calendar's authoritative interaction/mutation boundaries rather than bypassing them;
 - make external drops enter through the same creation, source-authority, placement, collision and item-factory path as ordinary Calendar creation;
@@ -32,7 +32,8 @@ The programme has the following architectural objectives:
 - keep print rendering read-only and free of persistence or command side effects;
 - add no runtime dependency or UI framework;
 - preserve explicit package boundaries and tree-shakable optional capabilities;
-- fail closed on duplicate/invalid view IDs, malformed external drag payloads and unsupported interaction targets.
+- fail closed on duplicate/invalid view IDs, malformed external drag payloads and unsupported interaction targets;
+- add no migration, legacy, compatibility or version-bridging implementation: this is a new application and only the current contract is supported.
 
 No persistence-schema change is expected.
 
@@ -389,7 +390,7 @@ Audit:
 - duplicate Month/timeline/gesture/drop logic;
 - dead branches/helpers;
 - package exports/tree-shaking boundaries;
-- callback and view-ID type compatibility;
+- callback and view-ID correctness;
 - external-drop authority safety;
 - navigation bounds across every view;
 - DST/timezone/point-event correctness;
