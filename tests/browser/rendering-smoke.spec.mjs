@@ -446,6 +446,30 @@ test("external DOM drops create through Calendar authority while internal drag r
     const repository = new MemoryCalendarRepository(sources, [initial, collision]);
     const purposes = [];
     let decoderCalls = 0;
+    const customDropView = {
+      id: "external-drop-view",
+      label: "Drop view",
+      range(context) {
+        const start = new Date(context.anchor);
+        start.setUTCHours(0, 0, 0, 0);
+        return { start: start.toISOString(), end: new Date(start.getTime() + 86400000).toISOString() };
+      },
+      shiftAnchor(context, direction) {
+        return new Date(context.anchor.getTime() + direction * 86400000);
+      },
+      title() { return "External drop custom view"; },
+      render(context) {
+        const target = document.createElement("section");
+        target.className = "custom-external-drop-target";
+        target.textContent = "Custom drop target";
+        context.actions.bindExternalDropTarget(target, () => ({
+          start: "2026-11-15T00:00:00.000Z",
+          end: "2026-11-16T00:00:00.000Z",
+          allDay: true,
+        }));
+        return target;
+      },
+    };
     const calendar = new CalendarUi(
       document.getElementById("browser-test-host"),
       new CalendarEngine(repository),
@@ -454,6 +478,7 @@ test("external DOM drops create through Calendar authority while internal drag r
         timeZone: "UTC",
         initialDate: "2026-11-10",
         initialView: "month",
+        customViews: [customDropView],
         dayStartHour: 8,
         dayEndHour: 18,
         slotMinutes: 30,
@@ -544,6 +569,9 @@ test("external DOM drops create through Calendar authority while internal drag r
     addSource("external-factory-redirect", dataTransfer => setCalendarExternalDropData(dataTransfer, {
       title: "Factory redirect",
     }));
+    addSource("external-custom-view", dataTransfer => setCalendarExternalDropData(dataTransfer, {
+      title: "Custom view external",
+    }));
 
     const dispatchDrag = (source, target, clientY) => {
       const dataTransfer = new DataTransfer();
@@ -618,6 +646,16 @@ test("external DOM drops create through Calendar authority while internal drag r
         if (!source || !target) throw new Error("Timed drag fixture target missing");
         const rect = target.getBoundingClientRect();
         return dispatchDrag(source, target, rect.top + minuteOffset);
+      },
+      async showCustomDropView() {
+        calendar.setView("external-drop-view");
+        await calendar.refresh();
+      },
+      dropCustomView(sourceId) {
+        const source = document.getElementById(sourceId);
+        const target = document.querySelector(".custom-external-drop-target");
+        if (!source || !target) throw new Error("Custom-view drag fixture target missing");
+        return dispatchDrag(source, target);
       },
     };
   });
@@ -732,7 +770,17 @@ test("external DOM drops create through Calendar authority while internal drag r
     globalThis.__externalDropProbe.repository.read().items.some(item => item.title === "Collision external"),
   )).toBe(false);
 
+  await page.evaluate(() => globalThis.__externalDropProbe.showCustomDropView());
+  await expect(page.locator(".custom-external-drop-target")).toBeVisible();
+  const customViewResult = await page.evaluate(() =>
+    globalThis.__externalDropProbe.dropCustomView("external-custom-view"),
+  );
+  expect(customViewResult.accepted).toBe(true);
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__externalDropProbe.repository.read().items.find(item => item.title === "Custom view external")?.start,
+  )).toBe("2026-11-15");
+
   expect(await page.evaluate(() =>
     globalThis.__externalDropProbe.purposes.filter(value => value === "external-drop").length,
-  )).toBeGreaterThanOrEqual(6);
+  )).toBeGreaterThanOrEqual(7);
 });
