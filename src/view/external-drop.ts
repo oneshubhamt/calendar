@@ -19,9 +19,7 @@ const MAX_METADATA_STRING_LENGTH = 65_536;
 const MAX_METADATA_KEY_LENGTH = 256;
 const MAX_DECODER_TYPES = 16;
 const MAX_MIME_LENGTH = 256;
-const MIME_TYPE = /^[A-Za-z0-9!#const MIME_TYPE = /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/u;
-^_.+-]+\/[A-Za-z0-9!#const MIME_TYPE = /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/u;
-^_.+-]+$/u;
+const MIME_TYPE = /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/u;
 const EXTERNAL_TEMPLATE_KEYS = new Set([
   "title",
   "calendarId",
