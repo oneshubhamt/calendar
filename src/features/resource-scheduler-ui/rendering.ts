@@ -1,5 +1,6 @@
 import type { CalendarOccurrence, CalendarRange } from "../../core/types.js";
 import {
+  horizontalTimelineTickStepMinutes,
   horizontalTimelineTicks,
   resolveHorizontalTimelineRangeGeometry,
 } from "../../core/horizontal-timeline.js";
@@ -86,10 +87,8 @@ export function renderResourceSchedulerSurface(
   const geometry = resolveHorizontalTimelineRangeGeometry(projection.range, model.timeZone);
   const timelineWidth = Math.max(model.minTimelineWidth, geometry.widthMinutes * model.pixelsPerMinute);
   const scale = timelineWidth / geometry.widthMinutes;
+  const tickMinutes = horizontalTimelineTickStepMinutes(geometry, model.axisTickMinutes);
   const ticks = horizontalTimelineTicks(geometry, model.axisTickMinutes);
-  const tickMinutes = ticks.length > 1
-    ? Math.max(model.axisTickMinutes, (ticks[1]!.instant - ticks[0]!.instant) / 60_000)
-    : model.axisTickMinutes;
 
   const scroll = element("div", "dc-rs-scroll");
   scroll.tabIndex = 0;
@@ -167,7 +166,7 @@ function headerRow(
     minute: "2-digit",
     timeZone: model.timeZone,
   });
-  for (const point of horizontalTimelineTicks(geometry, tickMinutes)) {
+  for (const point of ticks) {
     const tick = element("div", "dc-rs-axis-tick", formatter.format(new Date(point.instant)));
     tick.style.left = `${clamp(point.coordinate * scale, 0, timelineWidth)}px`;
     tick.setAttribute("aria-hidden", "true");
