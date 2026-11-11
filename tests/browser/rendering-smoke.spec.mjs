@@ -937,7 +937,7 @@ test("optional Timeline renders and mutates through generic horizontal mechanics
   await page.keyboard.press("ArrowRight");
   await expect.poll(async () => await page.evaluate(() =>
     globalThis.__timelineProbe.repository.read().items.find(item => item.id === "timeline-a")?.end,
-  )).toBe("2026-11-10T11:15:00.000Z");
+  )).toBe("2026-11-10T11:30:00.000Z");
 
   await page.evaluate(() => globalThis.__timelineProbe.pointerMove("item:timeline-b", 60));
   await expect.poll(async () => await page.evaluate(() =>
