@@ -20,6 +20,10 @@
       "types": "./dist/view/multi-month.d.ts",
       "import": "./dist/view/multi-month.js"
     },
+    "./view/timeline": {
+      "types": "./dist/view/timeline.d.ts",
+      "import": "./dist/view/timeline.js"
+    },
     "./storage": {
       "types": "./dist/storage/index.d.ts",
       "import": "./dist/storage/index.js"
