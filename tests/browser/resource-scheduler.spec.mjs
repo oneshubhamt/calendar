@@ -171,3 +171,86 @@ test("Resource Scheduler reuses shared pointer arming, long-press, cancellation 
   await page.evaluate(() => globalThis.__resourcePointerProbe.cancelTouch());
   await expect(page.locator('.dc-rs-event[data-occurrence-id="occ"]')).not.toHaveClass(/is-drag-source|is-touch-arming/);
 });
+
+
+test("shared pointer gesture lifecycle auto-scrolls horizontally and cancels cleanly", async ({ page }) => {
+  await page.setViewportSize({ width: 480, height: 640 });
+  await page.goto("/tests/browser/harness.html");
+  await page.evaluate(async () => {
+    const { CalendarPointerGestureController } = await import("/dist/view/pointer-gesture.js");
+    const host = document.getElementById("browser-test-host");
+    host.replaceChildren();
+
+    const scroll = document.createElement("div");
+    scroll.style.width = "220px";
+    scroll.style.height = "120px";
+    scroll.style.overflow = "auto";
+    scroll.style.position = "relative";
+    const content = document.createElement("div");
+    content.style.width = "1200px";
+    content.style.height = "100px";
+    content.style.position = "relative";
+    const target = document.createElement("button");
+    target.textContent = "Gesture target";
+    target.style.position = "absolute";
+    target.style.left = "20px";
+    target.style.top = "20px";
+    content.append(target);
+    scroll.append(content);
+    host.append(scroll);
+
+    let cancelled = 0;
+    const controller = new CalendarPointerGestureController({
+      scrollElement: () => scroll,
+      longPressMs: 250,
+      autoScrollEdgePx: 40,
+      autoScrollMaxPxPerFrame: 20,
+      onActivate() {},
+      onMove() {},
+      onFinish() {},
+      onCancel() { cancelled += 1; },
+    });
+    target.addEventListener("pointerdown", event => controller.begin(event, { element: target }));
+
+    const beginAndEdge = () => {
+      scroll.scrollLeft = 0;
+      const targetRect = target.getBoundingClientRect();
+      const scrollRect = scroll.getBoundingClientRect();
+      const pointerId = 101;
+      target.dispatchEvent(new PointerEvent("pointerdown", {
+        bubbles: true, cancelable: true, pointerId, pointerType: "mouse", button: 0,
+        clientX: targetRect.left + 5, clientY: targetRect.top + 5,
+      }));
+      window.dispatchEvent(new PointerEvent("pointermove", {
+        bubbles: true, cancelable: true, pointerId, pointerType: "mouse", button: 0,
+        clientX: targetRect.left + 12, clientY: targetRect.top + 5,
+      }));
+      window.dispatchEvent(new PointerEvent("pointermove", {
+        bubbles: true, cancelable: true, pointerId, pointerType: "mouse", button: 0,
+        clientX: scrollRect.right - 2, clientY: scrollRect.top + 60,
+      }));
+      return pointerId;
+    };
+
+    globalThis.__pointerLifecycleProbe = {
+      scroll,
+      controller,
+      beginAndEdge,
+      cancelled: () => cancelled,
+    };
+  });
+
+  const pointerId = await page.evaluate(() => globalThis.__pointerLifecycleProbe.beginAndEdge());
+  await expect.poll(async () => await page.evaluate(() => globalThis.__pointerLifecycleProbe.scroll.scrollLeft))
+    .toBeGreaterThan(0);
+
+  await page.evaluate(pointerId => {
+    window.dispatchEvent(new PointerEvent("pointercancel", {
+      bubbles: true, cancelable: true, pointerId, pointerType: "mouse", button: 0,
+    }));
+  }, pointerId);
+  expect(await page.evaluate(() => globalThis.__pointerLifecycleProbe.cancelled())).toBe(1);
+  const settled = await page.evaluate(() => globalThis.__pointerLifecycleProbe.scroll.scrollLeft);
+  await page.waitForTimeout(80);
+  expect(await page.evaluate(() => globalThis.__pointerLifecycleProbe.scroll.scrollLeft)).toBe(settled);
+});
