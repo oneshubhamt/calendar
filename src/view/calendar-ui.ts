@@ -430,6 +430,11 @@ export class CalendarUi {
       createFromSelection: async selection => await this.createFromSelection(selection),
       canAcceptExternalDrop: dataTransfer => this.canAcceptExternalDrop(dataTransfer),
       dropExternal: (dataTransfer, selection) => this.dropExternal(dataTransfer, selection),
+      bindExternalDropTarget: (element, resolveSelection) =>
+        bindCalendarExternalDropTarget(element, resolveSelection, {
+          canAcceptExternalDrop: dataTransfer => this.canAcceptExternalDrop(dataTransfer),
+          dropExternal: (dataTransfer, selection) => this.dropExternal(dataTransfer, selection),
+        }),
       moveOccurrence: async (occurrence, start, options) =>
         await this.moveOccurrenceToStart(occurrence, start, options?.allDay ?? isDateLikeOccurrence(occurrence)),
       resizeOccurrence: async (occurrence, edge, target) =>
@@ -598,8 +603,9 @@ export class CalendarUi {
 
   private decodeExternalDrop(dataTransfer: DataTransfer | null): CalendarExternalDropTemplate | undefined {
     if (!dataTransfer || dataTransferHasType(dataTransfer, NATIVE_DRAG_TYPE)) return undefined;
-    const standard = decodeCalendarExternalDropData(dataTransfer);
-    if (standard) return standard;
+    if (dataTransferHasType(dataTransfer, CALENDAR_EXTERNAL_DROP_MIME)) {
+      return decodeCalendarExternalDropData(dataTransfer);
+    }
     const decoder = this.externalDropDecoder;
     if (!decoder || !decoder.types.some(type => dataTransferHasType(dataTransfer, type))) return undefined;
     try {
