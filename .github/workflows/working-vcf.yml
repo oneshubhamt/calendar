@@ -1,0 +1,48 @@
+name: Working VC-F print verification
+
+on:
+  push:
+    branches:
+      - working
+
+permissions:
+  contents: read
+
+concurrency:
+  group: working-vcf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  print-browser:
+    name: Print browser verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Use pinned npm
+        run: npm install --global npm@12.2.2
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Build
+        run: npm run build
+      - name: Run VC-F browser checks
+        run: npx playwright test tests/browser/rendering-smoke.spec.mjs --config=playwright.config.mjs
+      - name: Upload failure report
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: vcf-playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
