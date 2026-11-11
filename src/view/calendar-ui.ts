@@ -16,7 +16,20 @@ import type {
   Weekday,
 } from "../core/types.js";
 import type {
-  CalendarCreateDraft, CalendarItemFactoryInput, CalendarKindOption, CalendarPlacementValidationPort, CalendarSelection, CalendarUiAddonContext, CalendarUiChromeOptions, CalendarUiOptions,
+  CalendarCreateDraft,
+  CalendarCustomViewActionPort,
+  CalendarCustomViewPlugin,
+  CalendarCustomViewRenderContext,
+  CalendarItemFactoryInput,
+  CalendarKindOption,
+  CalendarPlacementValidationPort,
+  CalendarSelection,
+  CalendarUiAddonContext,
+  CalendarUiChromeOptions,
+  CalendarUiOptions,
+  CalendarUiViewId,
+  CalendarViewNavigationContext,
+  CalendarViewTitleContext,
 } from "./types.js";
 import { CalendarEngine } from "../core/calendar-engine.js";
 import { addDays, addMonths, addYears, dateKey, rangeForView, resolvedTimeZone, startOfDay, systemClock, toDate, type CalendarClock } from "../core/time.js";
@@ -64,6 +77,7 @@ import {
   boundProjectionRange, clampNavigationDate, navigationDateInBounds, resolveNavigationBounds,
   type ResolvedCalendarNavigationBounds,
 } from "./navigation.js";
+import { CalendarViewRegistry, type CalendarViewDefinition } from "./view-registry.js";
 
 
 interface SelectionDragState {
@@ -122,12 +136,13 @@ export class CalendarUi {
   private readonly dayEndHour: number;
   private readonly chrome: Required<CalendarUiChromeOptions>;
   private readonly navigationBounds: ResolvedCalendarNavigationBounds;
+  private readonly views: CalendarViewRegistry;
   private agendaSpan: CalendarAgendaSpan;
   private sources: readonly CalendarSource[];
   private readonly sourceVisibility = new Map<string, boolean>();
   private readonly occurrenceIndex = new Map<string, CalendarOccurrence>();
   private readonly defaultCalendarId: string;
-  private view: CalendarView;
+  private view: CalendarUiViewId;
   private anchor: Date;
   private visibleRange: CalendarRange;
   private occurrences: readonly CalendarOccurrence[] = [];
@@ -170,10 +185,12 @@ export class CalendarUi {
     };
     this.navigationBounds = resolveNavigationBounds(options.navigationBounds);
     this.agendaSpan = options.initialAgendaSpan ?? "30-days";
+    this.views = new CalendarViewRegistry(this.builtInViewDefinitions(), options.customViews ?? []);
     this.view = options.initialView ?? "week";
+    this.views.get(this.view);
     const initialAnchor = options.initialDate ? toDate(options.initialDate, this.timeZone) : this.clock.now();
     this.anchor = clampNavigationDate(initialAnchor, this.navigationBounds, this.timeZone);
-    this.visibleRange = rangeForView(this.anchor, this.view, this.weekStartsOn, this.timeZone, this.agendaSpan);
+    this.visibleRange = this.resolveViewRange();
     this.sources = this.engine.snapshot().sources;
     for (const source of this.sources) this.sourceVisibility.set(source.id, source.visible);
     this.defaultCalendarId = options.defaultCalendarId ?? this.sources.find(source => !source.readOnly && source.allowCreate !== false)?.id ?? this.sources[0]?.id ?? "calendar";
@@ -246,7 +263,7 @@ export class CalendarUi {
     this.sources = snapshot.sources;
     for (const source of this.sources) if (!this.sourceVisibility.has(source.id)) this.sourceVisibility.set(source.id, source.visible);
     for (const id of [...this.sourceVisibility.keys()]) if (!this.sources.some(source => source.id === id)) this.sourceVisibility.delete(id);
-    this.visibleRange = rangeForView(this.anchor, this.view, this.weekStartsOn, this.timeZone, this.agendaSpan);
+    this.visibleRange = this.resolveViewRange();
     const visibleSourceIds = new Set([...this.sourceVisibility].filter(([, visible]) => visible).map(([id]) => id));
     const sourceById = new Map(this.sources.map(source => [source.id, source] as const));
     const filters = (this.options.addons ?? []).filter(addon => addon.filterOccurrence);
@@ -254,7 +271,7 @@ export class CalendarUi {
     const result = await this.engine.query(projectionRange, {
       visibleSourceIds,
       timeZone: this.timeZone,
-      includeBackgroundRanges: this.view === "month" || this.view === "week" || this.view === "day",
+      includeBackgroundRanges: this.activeView().includeBackgroundRanges === true,
       ...(filters.length ? { predicate: (occurrence: CalendarOccurrence) => filters.every(addon => this.hostHook(`Calendar add-on ${addon.id} filter`, () => addon.filterOccurrence?.(occurrence, sourceById.get(occurrence.calendarId)) !== false, true)) } : {}),
     });
     if (this.destroyed || generation !== this.renderGeneration) return;
@@ -269,7 +286,8 @@ export class CalendarUi {
     this.hostHook("Calendar onRangeChange callback", () => this.options.callbacks?.onRangeChange?.(this.visibleRange, this.view), undefined);
   }
 
-  public setView(view: CalendarView): void {
+  public setView(view: CalendarUiViewId): void {
+    this.views.get(view);
     if (this.view === view) return;
     this.view = view;
     this.hostHook("Calendar onViewChange callback", () => this.options.callbacks?.onViewChange?.(view), undefined);
@@ -304,13 +322,13 @@ export class CalendarUi {
   }
 
   private shiftAnchor(direction: 1 | -1): Date {
-    if (this.view === "year") return addYears(this.anchor, direction, this.timeZone);
-    if (this.view === "month") return addMonths(this.anchor, direction, this.timeZone);
-    if (this.view === "week") return addDays(this.anchor, 7 * direction, this.timeZone);
-    if (this.view !== "agenda") return addDays(this.anchor, direction, this.timeZone);
-    if (this.agendaSpan === "month") return addMonths(this.anchor, direction, this.timeZone);
-    const days = this.agendaSpan === "week" ? 7 : this.agendaSpan === "day" ? 1 : 30;
-    return addDays(this.anchor, days * direction, this.timeZone);
+    const definition = this.activeView();
+    const shifted = this.hostHook(
+      `Calendar view ${definition.id} navigation`,
+      () => definition.shiftAnchor(this.viewNavigationContext(), direction),
+      this.anchor,
+    );
+    return toDate(shifted, this.timeZone);
   }
 
   private dateInNavigationBounds(value: Date | ISODateTime): boolean {
@@ -499,9 +517,9 @@ export class CalendarUi {
       agendaSpan.addEventListener("change", () => this.setAgendaSpan(agendaSpan.value as CalendarAgendaSpan));
       const switcher = el("div", "dc-view-switch");
       switcher.setAttribute("role", "group");
-      for (const view of ["month", "week", "day", "year", "agenda"] as const) {
-        const button = this.button(view[0]!.toUpperCase() + view.slice(1), () => this.setView(view));
-        button.dataset.view = view;
+      for (const definition of this.views.entries()) {
+        const button = this.button(definition.label, () => this.setView(definition.id));
+        button.dataset.view = definition.id;
         switcher.append(button);
       }
       bar.append(agendaSpan, switcher);
@@ -541,10 +559,7 @@ export class CalendarUi {
     if (undo) undo.disabled = !history?.canUndo;
     if (redo) redo.disabled = !history?.canRedo;
     body.replaceChildren();
-    if (this.view === "month") body.append(this.renderMonth());
-    else if (this.view === "year") body.append(this.renderYear());
-    else if (this.view === "agenda") body.append(this.renderAgenda());
-    else body.append(this.renderTimeGrid(this.view === "week" ? 7 : 1));
+    body.append(this.renderActiveView());
     this.temporalChrome.refresh();
   }
 
@@ -554,7 +569,13 @@ export class CalendarUi {
   }
 
   private periodTitle(): string {
-    return renderPeriodTitle({ ...this.staticRenderModel(), view: this.view });
+    const definition = this.activeView();
+    const title = this.hostHook(
+      `Calendar view ${definition.id} title`,
+      () => definition.title(this.viewTitleContext()),
+      definition.label,
+    );
+    return typeof title === "string" && title.trim() && title.length <= 4_096 ? title : definition.label;
   }
 
   private renderYear(): HTMLElement {
