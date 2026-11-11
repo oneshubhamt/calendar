@@ -92,6 +92,14 @@ export interface CalendarCustomViewActionPort {
   announce(message: string): void;
 }
 
+export interface CalendarCustomViewRenderPort {
+  /**
+   * Render Calendar's canonical detailed Month panel for a month already covered
+   * by this custom view's visible range. Calendar retains all interaction mechanics.
+   */
+  monthPanel(monthStart: Date): HTMLElement;
+}
+
 export interface CalendarCustomViewRenderContext extends CalendarViewTitleContext {
   readonly viewId: CalendarUiViewId;
   /** Resolved policy shared with Month-like bundled/custom views. */
@@ -101,6 +109,7 @@ export interface CalendarCustomViewRenderContext extends CalendarViewTitleContex
   readonly backgroundRanges: readonly CalendarBackgroundRange[];
   readonly now: Date;
   readonly actions: CalendarCustomViewActionPort;
+  readonly renderers: CalendarCustomViewRenderPort;
 }
 
 /**
