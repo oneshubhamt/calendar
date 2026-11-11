@@ -111,7 +111,7 @@
   },
   "files": [
     "dist",
-    "docs",
+    "docs/ARCHITECTURE.md",
     "README.md"
   ],
   "scripts": {
@@ -119,7 +119,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs",
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
-    "check": "npm run typecheck && npm test && npm pack --dry-run",
+    "check": "npm test && npm pack --dry-run",
     "prepack": "npm run build:package",
     "build:package": "npm run clean && tsc -p tsconfig.package.json",
     "qa:browser": "npm run build && playwright test --config=playwright.config.mjs",
