@@ -81,6 +81,8 @@ export class CalendarPointerGestureController<T extends CalendarPointerGestureDa
   public begin(pointer: PointerEvent, data: T): void {
     if (pointer.button !== 0 || this.session) return;
     pointer.stopPropagation();
+    this.cancelPointerArm();
+    this.cancelTouchPress();
     if (pointer.pointerType === "touch") this.armTouch(pointer, data);
     else this.armPointer(pointer, data);
   }
