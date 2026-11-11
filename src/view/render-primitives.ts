@@ -1,5 +1,11 @@
-import type { CalendarBackgroundRange } from "../core/types.js";
+import type { CalendarBackgroundRange, Weekday } from "../core/types.js";
 import { dateKey } from "../core/time.js";
+
+export const SHORT_WEEKDAY_NAMES = Object.freeze(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const);
+
+export function weekdayOrder(weekStartsOn: Weekday): readonly Weekday[] {
+  return Array.from({ length: 7 }, (_, index) => ((weekStartsOn + index) % 7) as Weekday);
+}
 
 export function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
