@@ -4,13 +4,15 @@ Baseline: `working` at `0414949a5e5ec29a72a45d2ffb83d9652efedcdc`.
 
 ## Purpose
 
-Add five generic calendar capabilities without weakening the existing host-neutral architecture:
+Add seven generic calendar capabilities without weakening the existing host-neutral architecture:
 
 1. external drag/drop from arbitrary DOM sources;
 2. week numbers;
 3. Multi-Month and generic Timeline views;
 4. dedicated print styling and print rendering;
-5. a generic custom-view plugin API that makes future view additions possible without adding more hard-coded branches to `CalendarUi`.
+5. a generic custom-view plugin API that makes future view additions possible without adding more hard-coded branches to `CalendarUi`;
+6. resource-specific availability that remains outside generic Calendar state; and
+7. a vertical resources-as-columns TimeGrid for scheduling hosts.
 
 This programme is an extension of the generic Calendar product, not an Ayana/Director-specific integration programme.
 
@@ -30,6 +32,8 @@ The programme has the following architectural objectives:
 - make generic Timeline reuse a shared horizontal temporal geometry primitive rather than clone Resource Scheduler geometry;
 - keep generic Timeline resource-free;
 - keep print rendering read-only and free of persistence or command side effects;
+- keep resource-specific availability and resource TimeGrid optional, host-authoritative and outside generic Calendar item/view/storage contracts;
+- reuse ordinary vertical timed/background geometry and the existing atomic resource-placement boundary rather than cloning either;
 - add no runtime dependency or UI framework;
 - preserve explicit package boundaries and tree-shakable optional capabilities;
 - fail closed on duplicate/invalid view IDs, malformed external drag payloads and unsupported interaction targets;
@@ -171,6 +175,16 @@ The print snapshot should:
 - support all built-in views plus registered Multi-Month/Timeline views through the same active renderer.
 
 A convenience browser-print method may be added only if it can be implemented without leaking global page state or leaving temporary DOM behind. The detached snapshot is the primary contract.
+
+### 8. Resource availability is a resource feature, not generic Calendar state
+
+Resource-specific availability stays under `features/resource-scheduler`. A definition targets one or more assignable resource IDs but delegates temporal recurrence/exceptions and DST semantics to the generic availability engine. Visual availability is passive unless an explicit resource placement guard is installed.
+
+The model must not add `resourceIds` to generic `CalendarAvailabilityDefinition`, `CalendarItem`, `CalendarOccurrence` or persistence.
+
+### 9. Vertical Resource TimeGrid is a sibling resource presentation
+
+The resources-as-columns TimeGrid is an optional UI subpath over the same resources, occurrences, assignments and atomic placement contract as the horizontal Resource Scheduler. Vertical event/background geometry must reuse `layoutTimedDay()` and `layoutBackgroundDay()`; interaction scope/warning/commit orchestration is shared through a small orientation-neutral executor, while pointer targeting and preview geometry remain surface-specific.
 
 ## Pass programme
 
@@ -406,9 +420,59 @@ Targeted QA:
 - Playwright `emulateMedia({ media: "print" })` checks;
 - print visual snapshots for at least Month, Week, Multi-Month and Timeline.
 
-### VC-G — Independent audit, consolidation and programme closure
+### VC-G — Resource-specific availability
 
-**Objective:** prove the five capabilities form one coherent extension rather than accumulated patches.
+**Status:** complete on `working`.
+
+**Objective:** add explicit recurring availability for resource-constrained scheduling without contaminating generic Calendar state.
+
+Final headless surface includes `CalendarResourceAvailabilityDefinition`, `expandResourceAvailabilityDefinitions()`, `createResourceAvailabilityProvider()` and `createResourceAvailabilityPlacementGuard()`.
+
+Acceptance:
+
+- definitions target only known assignable resources and canonicalize resource order;
+- recurrence/exceptions/DST reuse generic availability rather than a second temporal engine;
+- visual projection owns no persistence and never enforces placement implicitly;
+- an explicit guard checks every target resource from one authoritative host snapshot;
+- base Calendar item/view/storage types remain resource-free.
+
+Targeted QA:
+
+- recurrence/fan-out, validation and provider tests;
+- multi-resource require-available/exclude-unavailable guard tests;
+- authoritative snapshot-read test;
+- package/dependency architecture guards.
+
+### VC-H — Vertical Resource TimeGrid
+
+**Status:** complete on `working`.
+
+**Objective:** add a FullCalendar-style resources-as-columns vertical scheduling surface without duplicating Calendar time-grid or Resource Scheduler mutation semantics.
+
+Final optional subpath: `@director/calendar/features/resource-time-grid-ui`.
+
+Acceptance:
+
+- local day × assignable-resource columns are deterministic and hierarchy ordered;
+- timed geometry, points, overlap lanes and DST reuse `layoutTimedDay()`;
+- resource availability backgrounds reuse `layoutBackgroundDay()`;
+- all-day assignments render in a separate strip;
+- default mode is read-only;
+- timed pointer/touch/keyboard move and resize use the shared atomic resource interaction executor;
+- a diagonal resource+time move is one host mutation and never an optimistic split write;
+- base `CalendarUi` and persistence remain unaware of resources.
+
+Targeted QA:
+
+- headless layout, visible-window, point, DST, all-day and availability tests;
+- keyboard and pointer atomic-mutation browser tests;
+- screenshot rendering check;
+- horizontal Resource Scheduler regression after shared executor extraction;
+- package/dependency architecture guards.
+
+### VC-I — Independent audit, consolidation and programme closure
+
+**Objective:** prove the seven capabilities form one coherent extension rather than accumulated patches.
 
 Audit:
 
@@ -474,7 +538,7 @@ This programme does not add:
 
 The programme is complete only when:
 
-- all five requested capabilities are present;
+- all seven requested capabilities are present;
 - Multi-Month and Timeline use the custom-view boundary rather than new hard-coded CalendarUi branches;
 - external drag/drop uses the canonical create/placement/mutation path;
 - week numbers and Multi-Month share one Month implementation;

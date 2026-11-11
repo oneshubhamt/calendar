@@ -141,3 +141,31 @@ test("exclude-unavailable resource policy can warn without becoming implicit vis
   });
   assert.deepEqual(result, { mode: "warn", message: "Room A: Maintenance window." });
 });
+
+
+test("resource availability guard reads authoritative resources and definitions once per decision", async () => {
+  let resourceReads=0;
+  let definitionReads=0;
+  const guard=createResourceAvailabilityPlacementGuard({
+    id:"stable-snapshot",
+    timeZone:"UTC",
+    resources(){resourceReads+=1;return resources;},
+    definitions(){
+      definitionReads+=1;
+      return [{id:"open",resourceIds:["a","b"],state:"available",start:"2026-11-09T09:00:00Z",end:"2026-11-09T17:00:00Z"}];
+    },
+    policy:"require-available",
+    mode:"prevent",
+  });
+  const occurrence={
+    occurrenceId:"occ",sourceItemId:"item",calendarId:"calendar",title:"Visit",
+    start:"2026-11-09T10:00:00Z",end:"2026-11-09T11:00:00Z",
+    originalStart:"2026-11-09T10:00:00Z",recurring:false,kind:"event",ownership:"host",editPolicy:"full",
+  };
+  assert.deepEqual(await guard.evaluate({
+    occurrence,fromResourceIds:["a"],toResourceIds:["a","b"],
+    start:"2026-11-09T10:00:00Z",end:"2026-11-09T11:00:00Z",action:"resource-reassign",
+  }),{mode:"allow"});
+  assert.equal(resourceReads,1);
+  assert.equal(definitionReads,1);
+});

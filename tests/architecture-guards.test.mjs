@@ -50,41 +50,61 @@ test("optional feature and package boundaries stay explicit", async () => {
   assert.equal(Object.hasOwn(pkg.exports, "./features"), false);
   for (const subpath of [
     "./features/personal","./features/personal-ui","./features/planning","./features/availability",
-    "./features/resource-scheduler","./features/resource-scheduler-ui","./view/multi-month","./view/timeline",
+    "./features/resource-scheduler","./features/resource-scheduler-ui","./features/resource-time-grid-ui","./view/multi-month","./view/timeline",
   ]) assert.equal(typeof pkg.exports[subpath]?.import, "string", `missing explicit feature export ${subpath}`);
   for (const name of [
     "resolveOccurrenceCapabilities","CalendarCommandLifecycle","resolveOccurrencePresentation","CalendarViewRegistry",
     "secondaryTimeScaleLabels","resolveNavigationBounds","createAvailabilityBackgroundProvider",
-    "executeCalendarResourcePlacement","partitionOverlapLanes","createMultiMonthView","createTimelineView",
+    "executeCalendarResourcePlacement","executeCalendarResourceInteraction","layoutResourceTimeGrid","partitionOverlapLanes","createMultiMonthView","createTimelineView",
   ]) assert.equal(Calendar[name], undefined, `${name} must remain outside the root API`);
   assert.equal(CalendarCore.partitionOverlapLanes, undefined, "visual lane partitioning must remain internal to core implementation");
 });
 
-test("Resource Scheduler remains optional and reuses generic timeline/gesture mechanics", async () => {
-  const [types, scheduler, schedulerLayout, schedulerUi, schedulerRendering, coreTypes, timelineCore, pointerGestures, ordinaryView, storage] = await Promise.all([
+test("Resource Scheduler remains optional and reuses generic temporal/gesture mechanics", async () => {
+  const [
+    types, scheduler, schedulerLayout, resourceAvailability, resourceTimeGridLayout, interactionExecution,
+    schedulerUi, schedulerRendering, timeGridUi, timeGridRendering,
+    coreTypes, timelineCore, pointerGestures, ordinaryView, storage,
+  ] = await Promise.all([
     read("../src/features/resource-scheduler/types.ts"),
     read("../src/features/resource-scheduler/index.ts"),
     read("../src/features/resource-scheduler/timeline-layout.ts"),
+    read("../src/features/resource-scheduler/availability.ts"),
+    read("../src/features/resource-scheduler/time-grid-layout.ts"),
+    read("../src/features/resource-scheduler/interaction-execution.ts"),
     read("../src/features/resource-scheduler-ui/index.ts"),
     read("../src/features/resource-scheduler-ui/rendering.ts"),
+    read("../src/features/resource-time-grid-ui/index.ts"),
+    read("../src/features/resource-time-grid-ui/rendering.ts"),
     read("../src/core/types.ts"),
     read("../src/core/horizontal-timeline.ts"),
     read("../src/view/pointer-gesture.ts"),
     read("../src/view/calendar-ui.ts"),
     read("../src/storage/indexeddb-repository.ts"),
   ]);
-  assert.doesNotMatch(types + scheduler, /(?:\.\.\/\.\.\/)(?:view|storage|interoperability)\//);
-  assert.doesNotMatch(types + scheduler, /document\.|HTMLElement|CalendarUi/);
+  const headlessResource = types + scheduler + schedulerLayout + resourceAvailability + resourceTimeGridLayout + interactionExecution;
+  assert.doesNotMatch(headlessResource, /(?:\.\.\/\.\.\/)(?:view|storage|interoperability)\//);
+  assert.doesNotMatch(headlessResource, /document\.|HTMLElement|CalendarUi/);
   assert.doesNotMatch(coreTypes + ordinaryView + storage, /features\/resource-scheduler|CalendarResource/);
   assert.match(schedulerLayout, /layoutHorizontalTimeline/);
   assert.doesNotMatch(schedulerLayout, /civilMinuteOfInstant|partitionOverlapLanes|function visualOverlap/);
+  assert.match(resourceTimeGridLayout, /layoutTimedDay/);
+  assert.match(resourceTimeGridLayout, /layoutBackgroundDay/);
+  assert.doesNotMatch(resourceTimeGridLayout, /civilMinuteOfInstant|partitionOverlapLanes|function visualOverlap/);
+  assert.match(resourceAvailability, /expandAvailabilityDefinitions/);
+  assert.match(resourceAvailability, /createAvailabilityPlacementGuard/);
   assert.match(schedulerRendering, /horizontalTimelineTicks/);
   assert.match(schedulerUi, /CalendarPointerGestureController/);
+  assert.match(timeGridUi, /CalendarPointerGestureController/);
+  assert.match(schedulerUi, /executeCalendarResourceInteraction/);
+  assert.match(timeGridUi, /executeCalendarResourceInteraction/);
+  assert.doesNotMatch(schedulerUi + timeGridUi, /executeCalendarResourcePlacement/);
   assert.match(pointerGestures, /requestAnimationFrame/);
-  assert.doesNotMatch(schedulerUi, /requestAnimationFrame|AUTO_SCROLL_ZONE|AUTO_SCROLL_STEP/);
+  assert.doesNotMatch(schedulerUi + timeGridUi, /requestAnimationFrame|AUTO_SCROLL_ZONE|AUTO_SCROLL_STEP/);
   assert.match(schedulerUi, /from "\.\/rendering\.js"/);
-  assert.doesNotMatch(schedulerRendering, /executeCalendarResourcePlacement|mutationPort|refreshProjection|confirmWarnings/);
-  assert.doesNotMatch(schedulerUi, /\.\.\/\.\.\/(?:storage|interoperability|integration|adapters)\//);
+  assert.match(timeGridUi, /from "\.\/rendering\.js"/);
+  assert.doesNotMatch(schedulerRendering + timeGridRendering, /mutationPort|refreshProjection|confirmWarnings/);
+  assert.doesNotMatch(schedulerUi + timeGridUi, /\.\.\/\.\.\/(?:storage|interoperability|integration|adapters)\//);
   assert.doesNotMatch(timelineCore + pointerGestures, /CalendarResource|resource-scheduler/);
 });
 
