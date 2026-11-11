@@ -57,6 +57,8 @@ export interface CalendarCustomViewActionPort {
   canMoveOccurrence(occurrence: CalendarOccurrence): boolean;
   canResizeOccurrence(occurrence: CalendarOccurrence, edge: "start" | "end"): boolean;
   isOccurrencePending(occurrence: CalendarOccurrence): boolean;
+  /** Safe resolved visual presentation; never returns host DOM or HTML. */
+  occurrencePresentation(occurrence: CalendarOccurrence): CalendarCustomViewOccurrencePresentation;
   openOccurrence(occurrence: CalendarOccurrence): Promise<void>;
   createFromSelection(selection: CalendarSelection): Promise<void>;
   /**
@@ -217,6 +219,18 @@ export interface CalendarOccurrencePresentation {
   readonly subtitle?: CalendarPresentationContent;
   readonly trailing?: CalendarPresentationContent;
   readonly badges?: readonly CalendarPresentationBadge[];
+}
+
+export interface CalendarCustomViewOccurrencePresentation {
+  readonly classNames: readonly string[];
+  readonly data: Readonly<Record<string, string>>;
+  readonly accessibleLabel?: string | undefined;
+  readonly icon?: CalendarPresentationContent | undefined;
+  readonly leading?: CalendarPresentationContent | undefined;
+  readonly title?: CalendarPresentationContent | undefined;
+  readonly subtitle?: CalendarPresentationContent | undefined;
+  readonly trailing?: CalendarPresentationContent | undefined;
+  readonly badges: readonly CalendarPresentationBadge[];
 }
 
 export interface CalendarAgendaDayPresentation { readonly summary?: string; }
