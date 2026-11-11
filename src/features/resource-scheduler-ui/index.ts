@@ -6,7 +6,13 @@ import type {
   CalendarSource,
   SeriesEditScope,
 } from "../../core/types.js";
-import { normalizeSnapPolicy, snapMinuteCoordinate } from "../../core/interaction.js";
+import {
+  moveOccurrenceByCivilMinutes,
+  normalizeSnapPolicy,
+  resizeOccurrenceByCivilMinutes,
+  snapMinuteCoordinate,
+} from "../../core/interaction.js";
+import { resolveHorizontalTimelineRangeGeometry } from "../../core/horizontal-timeline.js";
 import type { CalendarUiExtension } from "../../view/types.js";
 import { hostDataAttributeName, resolveOccurrencePresentation } from "../../view/presentation.js";
 import {
@@ -21,11 +27,6 @@ import {
   type CalendarResourcePlacementExecutionResult,
   type CalendarResourcePlacementRequest,
 } from "../resource-scheduler/index.js";
-import { resolveResourceTimelineRangeGeometry } from "../resource-scheduler/timeline-layout.js";
-import {
-  moveResourceOccurrenceByCivilMinutes,
-  resizeResourceOccurrenceByCivilMinutes,
-} from "./interaction.js";
 import { RESOURCE_SCHEDULER_CSS } from "./styles.js";
 import {
   clamp,
@@ -441,7 +442,7 @@ export class CalendarResourceSchedulerUi {
     if (!assignment || !assignment.resourceIds.includes(sourceResourceId)) return;
     const scroll = this.root.querySelector<HTMLElement>(".dc-rs-scroll");
     if (!scroll) return;
-    const geometry = resolveResourceTimelineRangeGeometry(this.projection.range, this.timeZone);
+    const geometry = resolveHorizontalTimelineRangeGeometry(this.projection.range, this.timeZone);
     const timelineWidth = Math.max(this.minTimelineWidth, geometry.widthMinutes * this.pixelsPerMinute);
     const scale = timelineWidth / geometry.widthMinutes;
     const rect = node.getBoundingClientRect();
@@ -527,11 +528,11 @@ export class CalendarResourceSchedulerUi {
   ): CalendarResourceInteractionCandidate | undefined {
     let times;
     if (drag.mode === "move") {
-      times = moveResourceOccurrenceByCivilMinutes(
+      times = moveOccurrenceByCivilMinutes(
         drag.occurrence, deltaMinutes, this.timeZone, this.overlapDisambiguation(),
       );
     } else {
-      times = resizeResourceOccurrenceByCivilMinutes(
+      times = resizeOccurrenceByCivilMinutes(
         drag.occurrence,
         drag.mode === "resize-start" ? "start" : "end",
         deltaMinutes,
@@ -586,7 +587,7 @@ export class CalendarResourceSchedulerUi {
       .find(row => row.dataset.resourceId === candidate.targetResourceId);
     const track = targetRow?.querySelector<HTMLElement>(".dc-rs-track");
     if (track) {
-      const geometry = resolveResourceTimelineRangeGeometry(this.projection.range, this.timeZone);
+      const geometry = resolveHorizontalTimelineRangeGeometry(this.projection.range, this.timeZone);
       const startMs = Date.parse(candidate.start);
       const endMs = Date.parse(candidate.end);
       const rawX = geometry.coordinate(startMs);
@@ -646,7 +647,7 @@ export class CalendarResourceSchedulerUi {
   ): Promise<void> {
     const assignment = this.assignmentFor(occurrence.occurrenceId);
     if (!assignment) return;
-    const times = moveResourceOccurrenceByCivilMinutes(
+    const times = moveOccurrenceByCivilMinutes(
       occurrence, deltaMinutes, this.timeZone, this.overlapDisambiguation(),
     );
     if (!times) {
@@ -678,7 +679,7 @@ export class CalendarResourceSchedulerUi {
   ): Promise<void> {
     const assignment = this.assignmentFor(occurrence.occurrenceId);
     if (!assignment) return;
-    const times = resizeResourceOccurrenceByCivilMinutes(
+    const times = resizeOccurrenceByCivilMinutes(
       occurrence, edge, deltaMinutes, this.minimumDurationMinutes(), this.timeZone, this.overlapDisambiguation(),
     );
     if (!times) {
