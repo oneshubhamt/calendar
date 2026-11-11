@@ -32,7 +32,7 @@ import type {
   CalendarViewTitleContext,
 } from "./types.js";
 import { CalendarEngine } from "../core/calendar-engine.js";
-import { addDays, addMonths, addYears, dateKey, rangeForView, resolvedTimeZone, startOfDay, systemClock, toDate, type CalendarClock } from "../core/time.js";
+import { addDays, addMonths, addYears, dateKey, parseAbsoluteDateTime, rangeForView, resolvedTimeZone, startOfDay, systemClock, toDate, type CalendarClock } from "../core/time.js";
 import { instantToPlain } from "../core/temporal.js";
 import { civilMinuteOfInstant, civilMinuteResolution, instantAtCivilMinute, shiftCivilMinutes } from "../core/civil-timeline.js";
 import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from "./time-zone-scale.js";
@@ -250,6 +250,139 @@ export class CalendarUi {
     this.temporalChrome.start();
     this.unsubscribeRepository = this.engine.subscribe(() => { if (!this.destroyed) this.requestRefresh(); });
     this.requestRefresh();
+  }
+
+  private builtInViewDefinitions(): readonly CalendarCustomViewPlugin[] {
+    const builtIn = (
+      id: CalendarView,
+      label: string,
+      includeBackgroundRanges: boolean,
+      shiftAnchor: CalendarCustomViewPlugin["shiftAnchor"],
+      render: CalendarCustomViewPlugin["render"],
+    ): CalendarCustomViewPlugin => ({
+      id,
+      label,
+      includeBackgroundRanges,
+      range: context => rangeForView(context.anchor, id, context.weekStartsOn, context.timeZone, context.agendaSpan),
+      shiftAnchor,
+      title: context => renderPeriodTitle({ ...context, view: id }),
+      render,
+    });
+
+    return [
+      builtIn(
+        "month",
+        "Month",
+        true,
+        (context, direction) => addMonths(context.anchor, direction, context.timeZone),
+        () => this.renderMonth(),
+      ),
+      builtIn(
+        "week",
+        "Week",
+        true,
+        (context, direction) => addDays(context.anchor, 7 * direction, context.timeZone),
+        () => this.renderTimeGrid(7),
+      ),
+      builtIn(
+        "day",
+        "Day",
+        true,
+        (context, direction) => addDays(context.anchor, direction, context.timeZone),
+        () => this.renderTimeGrid(1),
+      ),
+      builtIn(
+        "year",
+        "Year",
+        false,
+        (context, direction) => addYears(context.anchor, direction, context.timeZone),
+        () => this.renderYear(),
+      ),
+      builtIn(
+        "agenda",
+        "Agenda",
+        false,
+        (context, direction) => {
+          if (context.agendaSpan === "month") return addMonths(context.anchor, direction, context.timeZone);
+          const days = context.agendaSpan === "week" ? 7 : context.agendaSpan === "day" ? 1 : 30;
+          return addDays(context.anchor, days * direction, context.timeZone);
+        },
+        () => this.renderAgenda(),
+      ),
+    ];
+  }
+
+  private activeView(): CalendarViewDefinition {
+    return this.views.get(this.view);
+  }
+
+  private viewNavigationContext(): CalendarViewNavigationContext {
+    return Object.freeze({
+      anchor: new Date(this.anchor.getTime()),
+      locale: this.locale,
+      timeZone: this.timeZone,
+      weekStartsOn: this.weekStartsOn,
+      agendaSpan: this.agendaSpan,
+    });
+  }
+
+  private viewTitleContext(): CalendarViewTitleContext {
+    return Object.freeze({
+      ...this.viewNavigationContext(),
+      visibleRange: this.visibleRange,
+    });
+  }
+
+  private resolveViewRange(): CalendarRange {
+    const definition = this.activeView();
+    const range = definition.range(this.viewNavigationContext());
+    if (!range || typeof range !== "object") throw new TypeError(`Calendar view ${definition.id} range must return a CalendarRange`);
+    const start = parseAbsoluteDateTime(range.start, `Calendar view ${definition.id} range start`);
+    const end = parseAbsoluteDateTime(range.end, `Calendar view ${definition.id} range end`);
+    if (end.getTime() <= start.getTime()) throw new RangeError(`Calendar view ${definition.id} range must end after it starts`);
+    return Object.freeze({ start: start.toISOString(), end: end.toISOString() });
+  }
+
+  private renderActiveView(): HTMLElement {
+    const definition = this.activeView();
+    const fallback = el("div", "dc-empty", `${definition.label} view could not be rendered.`);
+    const rendered = this.hostHook(
+      `Calendar view ${definition.id} render`,
+      () => definition.render(this.customViewContext()),
+      fallback,
+    );
+    return rendered instanceof HTMLElement ? rendered : fallback;
+  }
+
+  private customViewContext(): CalendarCustomViewRenderContext {
+    return Object.freeze({
+      ...this.viewTitleContext(),
+      viewId: this.view,
+      sources: this.sources,
+      occurrences: this.displayOccurrences(),
+      backgroundRanges: this.backgroundRanges,
+      now: this.clock.now(),
+      actions: this.customViewActions(),
+    });
+  }
+
+  private customViewActions(): CalendarCustomViewActionPort {
+    return Object.freeze({
+      canCreateItems: () => this.canCreateItems(),
+      canOpenOccurrence: occurrence => this.canOpenOccurrence(occurrence),
+      canMoveOccurrence: occurrence => this.canMoveOccurrence(occurrence),
+      canResizeOccurrence: (occurrence, edge) => this.canResizeOccurrence(occurrence, edge),
+      isOccurrencePending: occurrence => this.isOccurrencePending(occurrence),
+      openOccurrence: async occurrence => await this.openDetails(this.authoritativeOccurrence(occurrence)),
+      createFromSelection: async selection => await this.createFromSelection(selection),
+      moveOccurrence: async (occurrence, start, options) =>
+        await this.moveOccurrenceToStart(occurrence, start, options?.allDay === true),
+      resizeOccurrence: async (occurrence, edge, target) =>
+        await this.resizeOccurrenceToInstant(occurrence, edge, target),
+      goTo: value => this.goTo(value),
+      setView: view => this.setView(view),
+      announce: message => this.announce(message),
+    });
   }
 
   private requestRefresh(): void {
@@ -1425,6 +1558,76 @@ export class CalendarUi {
       this.mutations.moveRequirements(occurrence, false),
       "move",
     );
+  }
+
+  private async moveOccurrenceToStart(
+    occurrence: CalendarOccurrence,
+    startValue: ISODateTime,
+    allDay: boolean,
+  ): Promise<boolean> {
+    const current = this.authoritativeOccurrence(occurrence);
+    if (this.isOccurrencePending(current) || !this.canMoveOccurrenceToPlacement(current, allDay)) {
+      this.announce(`${current.title}: this move is not allowed.`);
+      return false;
+    }
+
+    const requestedStart = parseAbsoluteDateTime(startValue, "Custom view move start");
+    let start: Date;
+    let end: Date;
+    if (allDay) {
+      start = startOfDay(requestedStart, this.timeZone);
+      end = addDays(start, calendarDaySpan(toDate(current.start), toDate(current.end), this.timeZone), this.timeZone);
+    } else {
+      start = requestedStart;
+      const duration = isDateLikeOccurrence(current) ? 60 * 60_000 : durationMs(current);
+      end = new Date(start.getTime() + duration);
+    }
+    if (!await this.allowPlacement(start, end, allDay, current, "move")) return false;
+
+    const patch = allDay
+      ? placementTimePatch(start, end, true, this.timeZone)
+      : { start: start.toISOString(), end: end.toISOString(), allDay: false, precision: "minute" as const };
+    const status = await this.mutations.issueOccurrencePatch(
+      current,
+      patch,
+      "Move",
+      this.mutations.moveRequirements(current, allDay),
+      "move",
+    );
+    return mutationCommitted(status);
+  }
+
+  private async resizeOccurrenceToInstant(
+    occurrence: CalendarOccurrence,
+    edge: CalendarResizeEdge,
+    targetValue: ISODateTime,
+  ): Promise<boolean> {
+    const current = this.authoritativeOccurrence(occurrence);
+    if (this.isOccurrencePending(current) || !this.canResizeOccurrence(current, edge) || isPointOccurrence(current)) {
+      this.announce(`${current.title}: this resize is not allowed.`);
+      return false;
+    }
+
+    const resized = resizeInterval(
+      toDate(current.start),
+      toDate(current.end),
+      parseAbsoluteDateTime(targetValue, `Custom view resize ${edge}`),
+      edge,
+      this.slotMinutes,
+    );
+    if (!await this.allowPlacement(resized.start, resized.end, false, current, "resize")) return false;
+    const status = await this.mutations.issueTimedCommand(
+      {
+        type: "resize-occurrence",
+        occurrence: current,
+        start: resized.start.toISOString(),
+        end: resized.end.toISOString(),
+        scope: "this",
+      },
+      "Resize",
+      [edge === "start" ? "canResizeStart" : "canResizeEnd"],
+    );
+    return mutationCommitted(status);
   }
 
   private setOccurrencePending(occurrenceId: string, operation: string, pending: boolean): void {
