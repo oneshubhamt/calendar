@@ -257,6 +257,7 @@ test("registered custom views own range navigation rendering and use only the bo
         root.dataset.viewId = context.viewId;
         root.dataset.occurrenceCount = String(context.occurrences.length);
         root.dataset.backgroundCount = String(context.backgroundRanges.length);
+        root.dataset.minimumDaysInFirstWeek = String(context.weekNumbering?.minimumDaysInFirstWeek ?? "");
         root.dataset.contextKeys = Object.keys(context).sort().join(",");
         root.dataset.actionKeys = Object.keys(context.actions).sort().join(",");
         root.dataset.collectionsFrozen = String(
@@ -313,6 +314,7 @@ test("registered custom views own range navigation rendering and use only the bo
       initialDate: "2026-11-10",
       initialView: "lean-two-day",
       customViews: [lean, interactive],
+      weekNumbers: { minimumDaysInFirstWeek: 4 },
       commandHandler: commands,
       extensions: [{
         presentOccurrence(occurrence) {
@@ -348,6 +350,7 @@ test("registered custom views own range navigation rendering and use only the bo
   await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-view-id", "interactive-two-day");
   await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-occurrence-count", "1");
   await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-background-count", "1");
+  await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-minimum-days-in-first-week", "4");
   await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-presented-title", "Presented custom event");
   await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-collections-frozen", "true");
   await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-forged-movable", "false");
