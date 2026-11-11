@@ -20,12 +20,12 @@ async function sourceFilesUnder(directory) {
 test("generic dependency direction and host-domain isolation are explicit architecture guards", async () => {
   const corePaths = [
     "../src/core/types.ts","../src/core/authority.ts","../src/core/calendar-engine.ts","../src/core/commands.ts",
-    "../src/core/layout.ts","../src/core/visual-lanes.ts","../src/core/recurrence.ts","../src/core/store.ts","../src/core/interaction.ts",
+    "../src/core/layout.ts","../src/core/visual-lanes.ts","../src/core/horizontal-timeline.ts","../src/core/recurrence.ts","../src/core/store.ts","../src/core/interaction.ts",
   ];
   const viewPaths = [
     "../src/view/types.ts","../src/view/calendar-ui.ts","../src/view/view-renderer.ts","../src/view/view-registry.ts",
-    "../src/view/month-panel.ts","../src/view/render-primitives.ts","../src/view/week-numbering.ts","../src/view/multi-month.ts",
-    "../src/view/external-drop.ts","../src/view/gesture-controller.ts","../src/view/temporal-chrome.ts",
+    "../src/view/month-panel.ts","../src/view/render-primitives.ts","../src/view/week-numbering.ts","../src/view/multi-month.ts","../src/view/timeline.ts",
+    "../src/view/external-drop.ts","../src/view/pointer-gesture.ts","../src/view/gesture-controller.ts","../src/view/temporal-chrome.ts",
   ];
   const core = await Promise.all(corePaths.map(async path => [path, await read(path)]));
   const view = await Promise.all(viewPaths.map(async path => [path, await read(path)]));
@@ -50,41 +50,50 @@ test("optional feature and package boundaries stay explicit", async () => {
   assert.equal(Object.hasOwn(pkg.exports, "./features"), false);
   for (const subpath of [
     "./features/personal","./features/personal-ui","./features/planning","./features/availability",
-    "./features/resource-scheduler","./features/resource-scheduler-ui","./view/multi-month",
+    "./features/resource-scheduler","./features/resource-scheduler-ui","./view/multi-month","./view/timeline",
   ]) assert.equal(typeof pkg.exports[subpath]?.import, "string", `missing explicit feature export ${subpath}`);
   for (const name of [
     "resolveOccurrenceCapabilities","CalendarCommandLifecycle","resolveOccurrencePresentation","CalendarViewRegistry",
     "secondaryTimeScaleLabels","resolveNavigationBounds","createAvailabilityBackgroundProvider",
-    "executeCalendarResourcePlacement","partitionOverlapLanes","createMultiMonthView",
+    "executeCalendarResourcePlacement","partitionOverlapLanes","createMultiMonthView","createTimelineView",
   ]) assert.equal(Calendar[name], undefined, `${name} must remain outside the root API`);
   assert.equal(CalendarCore.partitionOverlapLanes, undefined, "visual lane partitioning must remain internal to core implementation");
 });
 
-test("Resource Scheduler remains optional, headless-first and renderer-separated", async () => {
-  const [types, scheduler, schedulerUi, schedulerRendering, coreTypes, ordinaryView, storage] = await Promise.all([
+test("Resource Scheduler remains optional and reuses generic timeline/gesture mechanics", async () => {
+  const [types, scheduler, schedulerLayout, schedulerUi, schedulerRendering, coreTypes, timelineCore, pointerGestures, ordinaryView, storage] = await Promise.all([
     read("../src/features/resource-scheduler/types.ts"),
     read("../src/features/resource-scheduler/index.ts"),
+    read("../src/features/resource-scheduler/timeline-layout.ts"),
     read("../src/features/resource-scheduler-ui/index.ts"),
     read("../src/features/resource-scheduler-ui/rendering.ts"),
     read("../src/core/types.ts"),
+    read("../src/core/horizontal-timeline.ts"),
+    read("../src/view/pointer-gesture.ts"),
     read("../src/view/calendar-ui.ts"),
     read("../src/storage/indexeddb-repository.ts"),
   ]);
   assert.doesNotMatch(types + scheduler, /(?:\.\.\/\.\.\/)(?:view|storage|interoperability)\//);
   assert.doesNotMatch(types + scheduler, /document\.|HTMLElement|CalendarUi/);
   assert.doesNotMatch(coreTypes + ordinaryView + storage, /features\/resource-scheduler|CalendarResource/);
+  assert.match(schedulerLayout, /layoutHorizontalTimeline/);
+  assert.doesNotMatch(schedulerLayout, /civilMinuteOfInstant|partitionOverlapLanes|function visualOverlap/);
+  assert.match(schedulerRendering, /horizontalTimelineTicks/);
+  assert.match(schedulerUi, /CalendarPointerGestureController/);
   assert.match(schedulerUi, /from "\.\/rendering\.js"/);
   assert.doesNotMatch(schedulerRendering, /executeCalendarResourcePlacement|mutationPort|refreshProjection|confirmWarnings/);
   assert.doesNotMatch(schedulerUi, /\.\.\/\.\.\/(?:storage|interoperability|integration|adapters)\//);
+  assert.doesNotMatch(timelineCore + pointerGestures, /CalendarResource|resource-scheduler/);
 });
 
 test("custom view extensibility remains view-layer only and mutation-safe", async () => {
-  const [coreTypes, viewTypes, registry, ui, multiMonth, viewIndex, rootIndex, storage] = await Promise.all([
+  const [coreTypes, viewTypes, registry, ui, multiMonth, timeline, viewIndex, rootIndex, storage] = await Promise.all([
     read("../src/core/types.ts"),
     read("../src/view/types.ts"),
     read("../src/view/view-registry.ts"),
     read("../src/view/calendar-ui.ts"),
     read("../src/view/multi-month.ts"),
+    read("../src/view/timeline.ts"),
     read("../src/view/index.ts"),
     read("../src/index.ts"),
     read("../src/storage/indexeddb-repository.ts"),
@@ -107,8 +116,12 @@ test("custom view extensibility remains view-layer only and mutation-safe", asyn
   assert.doesNotMatch(ui, /if \(this\.view === "month"\) body\.append|else if \(this\.view === "year"\) body\.append/);
   assert.match(multiMonth, /context\.renderers\.monthPanel\(monthStart\)/);
   assert.doesNotMatch(multiMonth, /dc-day-cell|groupByDay|bindExternalDropTarget|CalendarRepository|storage|interoperability/);
-  assert.doesNotMatch(ui, /from "\.\/multi-month\.js"/);
-  assert.doesNotMatch(viewIndex + rootIndex, /multi-month/);
+  assert.match(timeline, /layoutHorizontalTimeline/);
+  assert.match(timeline, /CalendarPointerGestureController/);
+  assert.match(timeline, /context\.actions\.bindExternalDropTarget/);
+  assert.doesNotMatch(timeline, /CalendarResource|resource-scheduler|CalendarRepository|storage|interoperability/);
+  assert.doesNotMatch(ui, /from "\.\/(?:multi-month|timeline)\.js"/);
+  assert.doesNotMatch(viewIndex + rootIndex, /multi-month|timeline/);
   assert.doesNotMatch(storage, /CalendarCustomView|CalendarUiViewId/);
 });
 
@@ -135,13 +148,14 @@ test("external drop remains a view-layer creation boundary rather than a persist
 });
 
 test("view decomposition keeps mutation, rendering and gesture concerns separated", async () => {
-  const [ui, mutations, occurrenceForm, renderer, monthPanel, renderPrimitives, gestures, temporal] = await Promise.all([
+  const [ui, mutations, occurrenceForm, renderer, monthPanel, renderPrimitives, pointerGestures, gestures, temporal] = await Promise.all([
     read("../src/view/calendar-ui.ts"),
     read("../src/view/mutation-coordinator.ts"),
     read("../src/view/occurrence-form.ts"),
     read("../src/view/view-renderer.ts"),
     read("../src/view/month-panel.ts"),
     read("../src/view/render-primitives.ts"),
+    read("../src/view/pointer-gesture.ts"),
     read("../src/view/gesture-controller.ts"),
     read("../src/view/temporal-chrome.ts"),
   ]);
@@ -149,7 +163,7 @@ test("view decomposition keeps mutation, rendering and gesture concerns separate
   assert.match(ui, /from "\.\/view-renderer\.js"/);
   assert.match(ui, /from "\.\/gesture-controller\.js"/);
   assert.match(ui, /from "\.\/temporal-chrome\.js"/);
-  for (const leaf of [mutations, occurrenceForm, renderer, monthPanel, renderPrimitives, gestures, temporal]) {
+  for (const leaf of [mutations, occurrenceForm, renderer, monthPanel, renderPrimitives, pointerGestures, gestures, temporal]) {
     assert.doesNotMatch(leaf, /from "\.\/calendar-ui\.js"/);
   }
   assert.match(ui, /from "\.\/occurrence-form\.js"/);
@@ -166,7 +180,8 @@ test("view decomposition keeps mutation, rendering and gesture concerns separate
   assert.doesNotMatch(monthPanel, /model\.visibleRange/);
   assert.doesNotMatch(mutations, /HTMLElement|document\.|querySelector|addEventListener/);
   assert.doesNotMatch(ui, /new CalendarCommandLifecycle|evaluateCalendarPlacement\(|previewPatchForCommand|resolveOccurrenceCapabilities\(|private issueOccurrencePatch|private issueTimedCommand|private dispatchOccurrence/);
-  assert.doesNotMatch(gestures, /CalendarCommand|commandHandler|executeCalendarPlacement/);
+  assert.match(gestures, /CalendarPointerGestureController/);
+  assert.doesNotMatch(gestures + pointerGestures, /CalendarCommand|commandHandler|executeCalendarPlacement/);
 });
 
 test("Google interoperability keeps transport, mapping and sync responsibilities behind one public facade", async () => {
