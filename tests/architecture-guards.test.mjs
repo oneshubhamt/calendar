@@ -24,7 +24,7 @@ test("generic dependency direction and host-domain isolation are explicit archit
   ];
   const viewPaths = [
     "../src/view/types.ts","../src/view/calendar-ui.ts","../src/view/view-renderer.ts","../src/view/view-registry.ts",
-    "../src/view/month-panel.ts","../src/view/render-primitives.ts","../src/view/week-numbering.ts",
+    "../src/view/month-panel.ts","../src/view/render-primitives.ts","../src/view/week-numbering.ts","../src/view/multi-month.ts",
     "../src/view/external-drop.ts","../src/view/gesture-controller.ts","../src/view/temporal-chrome.ts",
   ];
   const core = await Promise.all(corePaths.map(async path => [path, await read(path)]));
@@ -50,12 +50,12 @@ test("optional feature and package boundaries stay explicit", async () => {
   assert.equal(Object.hasOwn(pkg.exports, "./features"), false);
   for (const subpath of [
     "./features/personal","./features/personal-ui","./features/planning","./features/availability",
-    "./features/resource-scheduler","./features/resource-scheduler-ui",
+    "./features/resource-scheduler","./features/resource-scheduler-ui","./view/multi-month",
   ]) assert.equal(typeof pkg.exports[subpath]?.import, "string", `missing explicit feature export ${subpath}`);
   for (const name of [
     "resolveOccurrenceCapabilities","CalendarCommandLifecycle","resolveOccurrencePresentation","CalendarViewRegistry",
     "secondaryTimeScaleLabels","resolveNavigationBounds","createAvailabilityBackgroundProvider",
-    "executeCalendarResourcePlacement","partitionOverlapLanes",
+    "executeCalendarResourcePlacement","partitionOverlapLanes","createMultiMonthView",
   ]) assert.equal(Calendar[name], undefined, `${name} must remain outside the root API`);
   assert.equal(CalendarCore.partitionOverlapLanes, undefined, "visual lane partitioning must remain internal to core implementation");
 });
@@ -79,24 +79,36 @@ test("Resource Scheduler remains optional, headless-first and renderer-separated
 });
 
 test("custom view extensibility remains view-layer only and mutation-safe", async () => {
-  const [coreTypes, viewTypes, registry, ui, storage] = await Promise.all([
+  const [coreTypes, viewTypes, registry, ui, multiMonth, viewIndex, rootIndex, storage] = await Promise.all([
     read("../src/core/types.ts"),
     read("../src/view/types.ts"),
     read("../src/view/view-registry.ts"),
     read("../src/view/calendar-ui.ts"),
+    read("../src/view/multi-month.ts"),
+    read("../src/view/index.ts"),
+    read("../src/index.ts"),
     read("../src/storage/indexeddb-repository.ts"),
   ]);
 
   assert.doesNotMatch(coreTypes, /CalendarCustomView|CalendarUiViewId|customViews/);
   assert.match(viewTypes, /interface CalendarCustomViewPlugin/);
   assert.match(viewTypes, /interface CalendarCustomViewActionPort/);
+  assert.match(viewTypes, /interface CalendarCustomViewRenderPort/);
   assert.match(viewTypes, /weekNumbering\?: CalendarResolvedWeekNumbering/);
+  assert.match(viewTypes, /renderers: CalendarCustomViewRenderPort/);
   assert.doesNotMatch(viewTypes, /CalendarRepository|IndexedDb|SyncState|GoogleCalendar/);
   assert.doesNotMatch(registry, /storage|interoperability|integration|adapters|CalendarRepository/);
   assert.match(ui, /new CalendarViewRegistry/);
   assert.match(ui, /weekNumbering: this\.weekNumbering/);
+  assert.match(ui, /renderers: this\.customViewRenderers\(\)/);
+  assert.match(ui, /monthPanel: \(monthStart: Date\)/);
+  assert.match(ui, /Month panel must be contained within the active custom view range/);
   assert.match(ui, /body\.append\(this\.renderActiveView\(\)\)/);
   assert.doesNotMatch(ui, /if \(this\.view === "month"\) body\.append|else if \(this\.view === "year"\) body\.append/);
+  assert.match(multiMonth, /context\.renderers\.monthPanel\(monthStart\)/);
+  assert.doesNotMatch(multiMonth, /dc-day-cell|groupByDay|bindExternalDropTarget|CalendarRepository|storage|interoperability/);
+  assert.doesNotMatch(ui, /from "\.\/multi-month\.js"/);
+  assert.doesNotMatch(viewIndex + rootIndex, /multi-month/);
   assert.doesNotMatch(storage, /CalendarCustomView|CalendarUiViewId/);
 });
 
