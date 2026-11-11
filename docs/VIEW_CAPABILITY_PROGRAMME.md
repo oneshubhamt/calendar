@@ -242,6 +242,8 @@ Targeted QA:
 
 ### VC-C — Week-number primitive and shared month panel
 
+**Status:** complete on `working`.
+
 **Objective:** add correct week numbers and prepare Month mechanics for Multi-Month without duplication.
 
 Work:
