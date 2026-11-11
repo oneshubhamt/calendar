@@ -87,3 +87,15 @@ test("Resource TimeGrid respects collapsed hierarchy, validates bounds and rejec
     start:"2026-01-01T00:00:00Z",end:"2026-02-15T00:00:00Z",
   },{timeZone:"UTC"}),/exceeds 31/i);
 });
+
+
+test("Resource TimeGrid availability fails closed on malformed or non-assignable projections", () => {
+  const range={start:"2026-11-10T00:00:00Z",end:"2026-11-11T00:00:00Z"};
+  const base={id:"open",definitionId:"definition",resourceId:"a",state:"available",start:"2026-11-10T09:00:00Z",end:"2026-11-10T10:00:00Z"};
+  const layout=availability=>layoutResourceTimeGrid(resources,[],[],range,{timeZone:"UTC",availability});
+  assert.throws(()=>layout([{...base,resourceId:"missing"}]),/unknown or non-assignable resource/i);
+  assert.throws(()=>layout([{...base,resourceId:"group"}]),/unknown or non-assignable resource/i);
+  assert.throws(()=>layout([{...base,state:"maybe"}]),/state is invalid/i);
+  assert.throws(()=>layout([{...base,end:base.start}]),/must end after/i);
+  assert.throws(()=>layout([base,{...base,resourceId:"b"}]),/duplicate Resource TimeGrid availability id/i);
+});

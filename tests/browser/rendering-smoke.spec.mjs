@@ -117,6 +117,7 @@ test("structured presentation, inline actions and embedded chrome behave through
       id: "structured", calendarId: "personal", title: "Underlying title",
       start: "2026-11-10T09:00:00.000Z", end: "2026-11-10T10:00:00.000Z",
       kind: "event", ownership: "calendar", editPolicy: "full",
+      metadata: { nested: { value: "safe" } },
     };
     let actionCalls = 0;
     let openCalls = 0;
@@ -268,6 +269,19 @@ test("registered custom views own range navigation rendering and use only the bo
           && Object.isFrozen(context.backgroundRanges),
         );
         const occurrence = context.occurrences[0];
+        root.dataset.occurrenceFrozen = String(Boolean(
+          occurrence
+          && Object.isFrozen(occurrence)
+          && Object.isFrozen(occurrence.metadata)
+          && Object.isFrozen(occurrence.metadata?.nested),
+        ));
+        if (occurrence) {
+          try { occurrence.title = "mutated"; } catch {}
+          try { occurrence.metadata.nested.value = "mutated"; } catch {}
+          root.dataset.occurrenceOwned = String(
+            occurrence.title === "Custom event" && occurrence.metadata?.nested?.value === "safe",
+          );
+        }
         if (!occurrence) return root;
         root.dataset.forgedMovable = String(context.actions.canMoveOccurrence({
           ...occurrence,
@@ -355,6 +369,8 @@ test("registered custom views own range navigation rendering and use only the bo
   await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-minimum-days-in-first-week", "4");
   await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-presented-title", "Presented custom event");
   await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-collections-frozen", "true");
+  await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-occurrence-frozen", "true");
+  await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-occurrence-owned", "true");
   await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-forged-movable", "false");
 
   const exposed = await page.locator(".custom-two-day-view").evaluate(node => ({
@@ -1357,8 +1373,103 @@ test("external DOM drops create through Calendar authority while internal drag r
 });
 
 
+
+test("external drop and in-page print behavior remain dormant by default", async ({ page }) => {
+  await page.goto("/tests/browser/harness.html");
+  const result = await page.evaluate(async () => {
+    const [{ CalendarEngine }, { MemoryCalendarRepository }, { RepositoryCommandHandler }, { CalendarUi }, { setCalendarExternalDropData }] = await Promise.all([
+      import("/dist/core/calendar-engine.js"),
+      import("/dist/core/store.js"),
+      import("/dist/core/commands.js"),
+      import("/dist/view/calendar-ui.js"),
+      import("/dist/view/external-drop.js"),
+    ]);
+    const source={id:"personal",title:"Personal",visible:true};
+    const repository=new MemoryCalendarRepository([source],[]);
+    const host=document.getElementById("browser-test-host");
+    const calendar=new CalendarUi(host,new CalendarEngine(repository),{
+      locale:"en-US",timeZone:"UTC",initialDate:"2026-11-10",initialView:"month",
+      commandHandler:new RepositoryCommandHandler(repository),
+    });
+    await calendar.refresh();
+    const cell=host.querySelector(".dc-day-cell");
+    const transfer=new DataTransfer();
+    setCalendarExternalDropData(transfer,{title:"Should stay external"});
+    const before=repository.read().revision;
+    cell.dispatchEvent(new DragEvent("dragover",{bubbles:true,cancelable:true,dataTransfer:transfer}));
+    cell.dispatchEvent(new DragEvent("drop",{bubbles:true,cancelable:true,dataTransfer:transfer}));
+    await new Promise(resolve=>setTimeout(resolve,0));
+    const printStyles=host.querySelectorAll("style[data-calendar-print-styles='true']").length;
+    return {
+      revisionBefore:before,
+      revisionAfter:repository.read().revision,
+      externalTarget:cell.classList.contains("is-external-drop-target"),
+      printStyles,
+      snapshotStyles:calendar.createPrintSnapshot().querySelectorAll("style[data-calendar-print-styles='true']").length,
+    };
+  });
+  expect(result).toEqual({
+    revisionBefore:0,
+    revisionAfter:0,
+    externalTarget:false,
+    printStyles:0,
+    snapshotStyles:1,
+  });
+
+  await page.emulateMedia({media:"print"});
+  const live = await page.evaluate(() => {
+    const toolbar=document.querySelector("#browser-test-host .dc-toolbar");
+    const button=toolbar?.querySelector("button");
+    return {
+      toolbar:toolbar instanceof HTMLElement ? getComputedStyle(toolbar).display : "missing",
+      button:button instanceof HTMLElement ? getComputedStyle(button).display : "missing",
+    };
+  });
+  expect(live.toolbar).toBe("flex");
+  expect(live.button).not.toBe("none");
+});
+
+test("custom-view render instances are disposed on refresh, view switch and Calendar destruction", async ({ page }) => {
+  await page.goto("/tests/browser/harness.html");
+  const counts = await page.evaluate(async () => {
+    const [{ CalendarEngine }, { MemoryCalendarRepository }, { CalendarUi }] = await Promise.all([
+      import("/dist/core/calendar-engine.js"),
+      import("/dist/core/store.js"),
+      import("/dist/view/calendar-ui.js"),
+    ]);
+    const source={id:"personal",title:"Personal",visible:true};
+    let renders=0, disposes=0;
+    const plugin={
+      id:"lifecycle-probe",label:"Probe",
+      range(context){const start=new Date(context.anchor);start.setUTCHours(0,0,0,0);return {start:start.toISOString(),end:new Date(start.getTime()+86400000).toISOString()};},
+      shiftAnchor(context,direction){return new Date(context.anchor.getTime()+direction*86400000);},
+      title(){return "Probe";},
+      render(){renders+=1;const node=document.createElement("section");node.className="lifecycle-probe";return node;},
+      dispose(element){if(!element.classList.contains("lifecycle-probe")) throw new Error("wrong element");disposes+=1;},
+    };
+    const calendar=new CalendarUi(document.getElementById("browser-test-host"),new CalendarEngine(new MemoryCalendarRepository([source],[])),{
+      locale:"en-US",timeZone:"UTC",initialDate:"2026-11-10",initialView:"lifecycle-probe",customViews:[plugin],
+    });
+    await calendar.refresh();
+    const afterInitial={renders,disposes};
+    await calendar.refresh();
+    const afterRefresh={renders,disposes};
+    calendar.setView("month");
+    await calendar.refresh();
+    const afterSwitch={renders,disposes};
+    calendar.setView("lifecycle-probe");
+    await calendar.refresh();
+    calendar.destroy();
+    const afterDestroy={renders,disposes};
+    return {afterInitial,afterRefresh,afterSwitch,afterDestroy};
+  });
+  expect(counts.afterRefresh.disposes).toBeGreaterThan(counts.afterInitial.disposes);
+  expect(counts.afterSwitch.disposes).toBeGreaterThanOrEqual(counts.afterRefresh.disposes);
+  expect(counts.afterDestroy.disposes).toBe(counts.afterDestroy.renders);
+});
+
 test("print snapshot is detached, read-only, isolated and print media expands clipped surfaces", async ({ page }) => {
-  await mountVisualCalendar(page, { view: "week", scrollHour: 8 });
+  await mountVisualCalendar(page, { view: "week", scrollHour: 8, print: true });
 
   const structural = await page.evaluate(async () => {
     const first = globalThis.__visualCalendar.calendar;

@@ -42,7 +42,7 @@ export default defineConfig({
     },
     {
       name: "firefox",
-      testMatch: ["**/storage.spec.mjs", "**/rendering-smoke.spec.mjs"],
+      testMatch: ["**/storage.spec.mjs", "**/rendering-smoke.spec.mjs", "**/resource-scheduler.spec.mjs", "**/resource-time-grid.spec.mjs"],
       use: { ...devices["Desktop Firefox"], viewport: { width: 1440, height: 1000 } },
     },
     {

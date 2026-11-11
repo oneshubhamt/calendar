@@ -121,6 +121,40 @@ function renderIdentity(occurrenceId: string, resourceId: CalendarResourceId, da
   return JSON.stringify([occurrenceId, resourceId, dayKeyValue]);
 }
 
+function validatedAvailability(
+  resources: readonly CalendarResource[],
+  values: readonly CalendarResourceAvailabilityRange[] | undefined,
+): readonly CalendarResourceAvailabilityRange[] {
+  if (values === undefined) return [];
+  if (!Array.isArray(values)) throw new TypeError("Resource TimeGrid availability must be an array");
+  const assignable = new Set(
+    flattenCalendarResources(resources)
+      .filter(row => row.acceptsAssignments)
+      .map(row => row.resource.id),
+  );
+  const ids = new Set<string>();
+  return values.map((value, index) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new TypeError(`Resource TimeGrid availability ${index + 1} must be an object`);
+    }
+    if (typeof value.id !== "string" || !value.id.trim()) {
+      throw new Error(`Resource TimeGrid availability ${index + 1} id is required`);
+    }
+    if (ids.has(value.id)) throw new Error(`Duplicate Resource TimeGrid availability id: ${value.id}`);
+    ids.add(value.id);
+    if (typeof value.resourceId !== "string" || !assignable.has(value.resourceId)) {
+      throw new Error(`Resource TimeGrid availability ${value.id} references an unknown or non-assignable resource`);
+    }
+    if (value.state !== "available" && value.state !== "unavailable") {
+      throw new Error(`Resource TimeGrid availability ${value.id} state is invalid`);
+    }
+    const start = parseAbsoluteDateTime(value.start, `Resource TimeGrid availability ${value.id} start`).getTime();
+    const end = parseAbsoluteDateTime(value.end, `Resource TimeGrid availability ${value.id} end`).getTime();
+    if (end <= start) throw new RangeError(`Resource TimeGrid availability ${value.id} must end after it starts`);
+    return value;
+  });
+}
+
 function clippedTimed(
   item: TimedLayoutItem,
   startMinute: number,
@@ -175,7 +209,7 @@ export function layoutResourceTimeGrid(
     }
   }
   const availabilityByResource = new Map<CalendarResourceId, CalendarResourceAvailabilityRange[]>();
-  for (const item of options.availability ?? []) {
+  for (const item of validatedAvailability(resources, options.availability)) {
     const bucket = availabilityByResource.get(item.resourceId) ?? [];
     bucket.push(item);
     availabilityByResource.set(item.resourceId, bucket);

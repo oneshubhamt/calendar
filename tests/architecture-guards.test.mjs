@@ -50,7 +50,7 @@ test("optional feature and package boundaries stay explicit", async () => {
   assert.equal(Object.hasOwn(pkg.exports, "./features"), false);
   for (const subpath of [
     "./features/personal","./features/personal-ui","./features/planning","./features/availability",
-    "./features/resource-scheduler","./features/resource-scheduler-ui","./features/resource-time-grid-ui","./view/multi-month","./view/timeline",
+    "./features/resource-scheduler","./features/resource-scheduler-ui","./features/resource-availability","./features/resource-time-grid","./features/resource-time-grid-ui","./view/multi-month","./view/timeline",
   ]) assert.equal(typeof pkg.exports[subpath]?.import, "string", `missing explicit feature export ${subpath}`);
   for (const name of [
     "resolveOccurrenceCapabilities","CalendarCommandLifecycle","resolveOccurrencePresentation","CalendarViewRegistry",
@@ -69,8 +69,8 @@ test("Resource Scheduler remains optional and reuses generic temporal/gesture me
     read("../src/features/resource-scheduler/types.ts"),
     read("../src/features/resource-scheduler/index.ts"),
     read("../src/features/resource-scheduler/timeline-layout.ts"),
-    read("../src/features/resource-scheduler/availability.ts"),
-    read("../src/features/resource-scheduler/time-grid-layout.ts"),
+    read("../src/features/resource-availability.ts"),
+    read("../src/features/resource-time-grid/index.ts"),
     read("../src/features/resource-scheduler/interaction-execution.ts"),
     read("../src/features/resource-scheduler-ui/index.ts"),
     read("../src/features/resource-scheduler-ui/rendering.ts"),
@@ -93,6 +93,8 @@ test("Resource Scheduler remains optional and reuses generic temporal/gesture me
   assert.doesNotMatch(resourceTimeGridLayout, /civilMinuteOfInstant|partitionOverlapLanes|function visualOverlap/);
   assert.match(resourceAvailability, /expandAvailabilityDefinitions/);
   assert.match(resourceAvailability, /createAvailabilityPlacementGuard/);
+  assert.doesNotMatch(scheduler, /resource-availability|resource-time-grid|availability\.js|time-grid-layout/);
+  assert.doesNotMatch(resourceAvailability + resourceTimeGridLayout, /(?:\.\.\/)(?:view|storage|interoperability|integration|adapters)\//);
   assert.match(schedulerRendering, /horizontalTimelineTicks/);
   assert.match(schedulerUi, /CalendarPointerGestureController/);
   assert.match(timeGridUi, /CalendarPointerGestureController/);
@@ -106,6 +108,26 @@ test("Resource Scheduler remains optional and reuses generic temporal/gesture me
   assert.doesNotMatch(schedulerRendering + timeGridRendering, /mutationPort|refreshProjection|confirmWarnings/);
   assert.doesNotMatch(schedulerUi + timeGridUi, /\.\.\/\.\.\/(?:storage|interoperability|integration|adapters)\//);
   assert.doesNotMatch(timelineCore + pointerGestures, /CalendarResource|resource-scheduler/);
+});
+
+
+
+test("optional view capabilities are dormant unless explicitly selected", async () => {
+  const [ui, types, baseStyles, printStyles, resourceScheduler] = await Promise.all([
+    read("../src/view/calendar-ui.ts"),
+    read("../src/view/types.ts"),
+    read("../src/view/styles.ts"),
+    read("../src/view/print.ts"),
+    read("../src/features/resource-scheduler/index.ts"),
+  ]);
+  assert.match(types, /readonly externalDrop\?: boolean/);
+  assert.match(types, /readonly print\?: boolean/);
+  assert.match(ui, /externalDropEnabled = options\.externalDrop === true \|\| options\.externalDropDecoder !== undefined/);
+  assert.match(ui, /if \(!this\.externalDropEnabled\) return/);
+  assert.doesNotMatch(baseStyles, /@media print|dc-print-snapshot/);
+  assert.match(printStyles, /@media print/);
+  assert.match(ui, /options\.print === true/);
+  assert.doesNotMatch(resourceScheduler, /resource-availability|resource-time-grid/);
 });
 
 test("custom view extensibility remains view-layer only and mutation-safe", async () => {
