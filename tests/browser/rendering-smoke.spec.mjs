@@ -182,3 +182,192 @@ test("DST fall-back day exposes duplicated local hour geometry without browser-s
   await expect(page.getByText("First 1:30", { exact: true })).toBeVisible();
   await expect(page.getByText("Second 1:30", { exact: true })).toBeVisible();
 });
+
+
+test("registered custom views own range navigation rendering and use only the bounded Calendar action port", async ({ page }) => {
+  await page.goto("/tests/browser/harness.html");
+  await page.evaluate(async () => {
+    const [{ CalendarEngine }, { MemoryCalendarRepository }, { RepositoryCommandHandler }, { CalendarUi }] = await Promise.all([
+      import("/dist/core/calendar-engine.js"),
+      import("/dist/core/store.js"),
+      import("/dist/core/commands.js"),
+      import("/dist/view/calendar-ui.js"),
+    ]);
+
+    const source = { id: "personal", title: "Personal", visible: true, removable: true };
+    const item = {
+      id: "custom-event", calendarId: "personal", title: "Custom event",
+      start: "2026-11-10T09:00:00.000Z", end: "2026-11-10T10:00:00.000Z",
+      kind: "event", ownership: "calendar", editPolicy: "full",
+    };
+    const repository = new MemoryCalendarRepository([source], [item]);
+    let backgroundCalls = 0;
+    const backgrounds = {
+      id: "custom-backgrounds",
+      projectBackgroundRanges() {
+        backgroundCalls += 1;
+        return [{
+          id: "background",
+          start: "2026-11-10T08:00:00.000Z",
+          end: "2026-11-10T12:00:00.000Z",
+          label: "Custom background",
+        }];
+      },
+    };
+    const engine = new CalendarEngine(repository, [], [], [backgrounds]);
+    const commands = new RepositoryCommandHandler(repository);
+    const viewChanges = [];
+    const rangeChanges = [];
+    const created = [];
+    let openCalls = 0;
+
+    const rangeForTwoDays = context => {
+      const start = new Date(context.anchor);
+      start.setUTCHours(0, 0, 0, 0);
+      const end = new Date(start.getTime() + 2 * 86400000);
+      return { start: start.toISOString(), end: end.toISOString() };
+    };
+    const shiftTwoDays = (context, direction) => new Date(context.anchor.getTime() + direction * 2 * 86400000);
+
+    const lean = {
+      id: "lean-two-day",
+      label: "Lean",
+      range: rangeForTwoDays,
+      shiftAnchor: shiftTwoDays,
+      title: context => `Lean ${context.anchor.toISOString().slice(0, 10)}`,
+      includeBackgroundRanges: false,
+      render(context) {
+        const root = document.createElement("section");
+        root.className = "custom-lean-view";
+        root.dataset.backgroundCount = String(context.backgroundRanges.length);
+        return root;
+      },
+    };
+
+    const interactive = {
+      id: "interactive-two-day",
+      label: "Two Day",
+      range: rangeForTwoDays,
+      shiftAnchor: shiftTwoDays,
+      title: context => `Two Day ${context.anchor.toISOString().slice(0, 10)}`,
+      includeBackgroundRanges: true,
+      render(context) {
+        const root = document.createElement("section");
+        root.className = "custom-two-day-view";
+        root.dataset.viewId = context.viewId;
+        root.dataset.occurrenceCount = String(context.occurrences.length);
+        root.dataset.backgroundCount = String(context.backgroundRanges.length);
+        root.dataset.contextKeys = Object.keys(context).sort().join(",");
+        root.dataset.actionKeys = Object.keys(context.actions).sort().join(",");
+        const occurrence = context.occurrences[0];
+        if (!occurrence) return root;
+
+        const open = document.createElement("button");
+        open.textContent = "Open custom event";
+        open.addEventListener("click", () => void context.actions.openOccurrence(occurrence));
+
+        const create = document.createElement("button");
+        create.textContent = "Create custom event";
+        create.addEventListener("click", () => void context.actions.createFromSelection({
+          start: "2026-11-10T14:00:00.000Z",
+          end: "2026-11-10T15:00:00.000Z",
+          allDay: false,
+        }));
+
+        const move = document.createElement("button");
+        move.textContent = "Move custom event";
+        move.addEventListener("click", () => void context.actions.moveOccurrence(
+          occurrence,
+          "2026-11-10T11:00:00.000Z",
+        ));
+
+        const resize = document.createElement("button");
+        resize.textContent = "Resize custom event";
+        resize.addEventListener("click", () => void context.actions.resizeOccurrence(
+          occurrence,
+          "end",
+          new Date(Date.parse(occurrence.start) + 2 * 60 * 60_000).toISOString(),
+        ));
+
+        root.append(open, create, move, resize);
+        return root;
+      },
+    };
+
+    const calendar = new CalendarUi(document.getElementById("browser-test-host"), engine, {
+      locale: "en-US",
+      timeZone: "UTC",
+      initialDate: "2026-11-10",
+      initialView: "lean-two-day",
+      customViews: [lean, interactive],
+      commandHandler: commands,
+      callbacks: {
+        handleOpen() { openCalls += 1; return true; },
+        handleCreate(selection) { created.push(selection); return true; },
+        onViewChange(view) { viewChanges.push(view); },
+        onRangeChange(range, view) { rangeChanges.push({ range, view }); },
+      },
+    });
+    await calendar.refresh();
+    globalThis.__customViewProbe = {
+      calendar,
+      repository,
+      backgroundCalls: () => backgroundCalls,
+      viewChanges,
+      rangeChanges,
+      created,
+      openCalls: () => openCalls,
+    };
+  });
+
+  await expect(page.locator(".custom-lean-view")).toHaveAttribute("data-background-count", "0");
+  expect(await page.evaluate(() => globalThis.__customViewProbe.backgroundCalls())).toBe(0);
+
+  await page.getByRole("button", { name: "Two Day" }).click();
+  await expect(page.locator(".custom-two-day-view")).toBeVisible();
+  await expect(page.locator("[data-role='title']")).toHaveText("Two Day 2026-11-10");
+  await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-view-id", "interactive-two-day");
+  await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-occurrence-count", "1");
+  await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-background-count", "1");
+
+  const exposed = await page.locator(".custom-two-day-view").evaluate(node => ({
+    context: node.dataset.contextKeys,
+    actions: node.dataset.actionKeys,
+  }));
+  expect(exposed.context).not.toMatch(/repository|storage|engine/i);
+  expect(exposed.actions).not.toMatch(/repository|storage|engine|commandHandler/i);
+  expect(exposed.actions).toContain("moveOccurrence");
+  expect(exposed.actions).toContain("resizeOccurrence");
+
+  await page.getByRole("button", { name: "Open custom event" }).click();
+  expect(await page.evaluate(() => globalThis.__customViewProbe.openCalls())).toBe(1);
+
+  await page.getByRole("button", { name: "Create custom event" }).click();
+  await expect.poll(async () => await page.evaluate(() => globalThis.__customViewProbe.created.length)).toBe(1);
+  expect(await page.evaluate(() => globalThis.__customViewProbe.created[0])).toEqual({
+    start: "2026-11-10T14:00:00.000Z",
+    end: "2026-11-10T15:00:00.000Z",
+    allDay: false,
+  });
+
+  await page.getByRole("button", { name: "Move custom event" }).click();
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__customViewProbe.repository.read().items[0].start,
+  )).toBe("2026-11-10T11:00:00.000Z");
+
+  await page.getByRole("button", { name: "Resize custom event" }).click();
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__customViewProbe.repository.read().items[0].end,
+  )).toBe("2026-11-10T13:00:00.000Z");
+
+  await page.getByRole("button", { name: "Next period" }).click();
+  await expect(page.locator("[data-role='title']")).toHaveText("Two Day 2026-11-12");
+  expect(await page.evaluate(() => globalThis.__customViewProbe.rangeChanges.at(-1))).toEqual({
+    range: { start: "2026-11-12T00:00:00.000Z", end: "2026-11-14T00:00:00.000Z" },
+    view: "interactive-two-day",
+  });
+  expect(await page.evaluate(() => globalThis.__customViewProbe.viewChanges)).toContain("interactive-two-day");
+
+  await page.getByRole("button", { name: "Month", exact: true }).click();
+  await expect(page.locator(".dc-month-grid")).toBeVisible();
+});
