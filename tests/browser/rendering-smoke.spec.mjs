@@ -634,11 +634,13 @@ test("external DOM drops create through Calendar authority while internal drag r
     globalThis.__externalDropProbe.repository.read().items.some(item => item.title === "Locked external"),
   )).toBe(false);
 
-  await page.evaluate(() => globalThis.__externalDropProbe.dropMonth("external-malformed", "2026-11-12"));
+  const beforeMalformed = await page.evaluate(() => globalThis.__externalDropProbe.repository.read().items.length);
+  const malformedResult = await page.evaluate(() =>
+    globalThis.__externalDropProbe.dropMonth("external-malformed", "2026-11-12"),
+  );
+  expect(malformedResult.accepted).toBe(true);
   await page.waitForTimeout(20);
-  expect(await page.evaluate(() =>
-    globalThis.__externalDropProbe.repository.read().items.some(item => item.title === "external-malformed"),
-  )).toBe(false);
+  expect(await page.evaluate(() => globalThis.__externalDropProbe.repository.read().items.length)).toBe(beforeMalformed);
 
   const customResult = await page.evaluate(() => globalThis.__externalDropProbe.dropMonth("external-custom", "2026-11-13"));
   expect(customResult.accepted).toBe(true);
