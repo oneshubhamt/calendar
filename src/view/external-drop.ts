@@ -1,5 +1,4 @@
 import type {
-  CalendarDisplay,
   CalendarId,
   CalendarItemKind,
   CalendarMetadata,
@@ -20,6 +19,9 @@ const MAX_METADATA_STRING_LENGTH = 65_536;
 const MAX_METADATA_KEY_LENGTH = 256;
 const MAX_DECODER_TYPES = 16;
 const MAX_MIME_LENGTH = 256;
+const MIME_TYPE = /^[A-Za-z0-9!#const MAX_MIME_LENGTH = 256;
+^_.+-]+\/[A-Za-z0-9!#const MAX_MIME_LENGTH = 256;
+^_.+-]+$/u;
 
 export interface CalendarExternalDropTemplate {
   readonly title: string;
@@ -33,7 +35,6 @@ export interface CalendarExternalDropTemplate {
   readonly durationDays?: number | undefined;
   /** Point is supported only on timed targets. */
   readonly temporalForm?: CalendarTemporalForm | undefined;
-  readonly display?: CalendarDisplay | undefined;
   readonly metadata?: CalendarMetadata | undefined;
 }
 
@@ -126,27 +127,6 @@ function ownMetadata(value: unknown): CalendarMetadata | undefined | null {
   }
 }
 
-function ownDisplay(value: unknown): CalendarDisplay | undefined | null {
-  if (value === undefined) return undefined;
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const raw = value as Record<string, unknown>;
-  const color = boundedOptionalText(raw.color, 2_048);
-  const textColor = boundedOptionalText(raw.textColor, 2_048);
-  const icon = boundedOptionalText(raw.icon, 2_048);
-  const className = boundedOptionalText(raw.className, 2_048);
-  if ([color, textColor, icon, className].includes(null)) return null;
-  if (raw.dimmed !== undefined && typeof raw.dimmed !== "boolean") return null;
-  if (raw.emphasis !== undefined && !["normal", "strong", "critical"].includes(String(raw.emphasis))) return null;
-  return Object.freeze({
-    ...(color ? { color } : {}),
-    ...(textColor ? { textColor } : {}),
-    ...(icon ? { icon } : {}),
-    ...(className ? { className } : {}),
-    ...(raw.dimmed !== undefined ? { dimmed: raw.dimmed as boolean } : {}),
-    ...(raw.emphasis !== undefined ? { emphasis: raw.emphasis as "normal" | "strong" | "critical" } : {}),
-  });
-}
-
 /** Own and validate untrusted template-like data. Invalid input returns undefined. */
 export function normalizeCalendarExternalDropTemplate(value: unknown): CalendarExternalDropTemplate | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
@@ -163,7 +143,6 @@ export function normalizeCalendarExternalDropTemplate(value: unknown): CalendarE
     : ["interval", "point"].includes(String(raw.temporalForm))
       ? raw.temporalForm as CalendarTemporalForm
       : null;
-  const display = ownDisplay(raw.display);
   const metadata = ownMetadata(raw.metadata);
 
   if (
@@ -175,7 +154,6 @@ export function normalizeCalendarExternalDropTemplate(value: unknown): CalendarE
     || durationMinutes === null
     || durationDays === null
     || temporalForm === null
-    || display === null
     || metadata === null
   ) return undefined;
 
@@ -188,7 +166,6 @@ export function normalizeCalendarExternalDropTemplate(value: unknown): CalendarE
     ...(durationMinutes !== undefined ? { durationMinutes } : {}),
     ...(durationDays !== undefined ? { durationDays } : {}),
     ...(temporalForm !== undefined ? { temporalForm } : {}),
-    ...(display !== undefined ? { display } : {}),
     ...(metadata !== undefined ? { metadata } : {}),
   });
 }
@@ -225,8 +202,10 @@ export function decodeCalendarExternalDropData(
 
 export function dataTransferHasType(dataTransfer: DataTransfer | null, type: string): boolean {
   if (!dataTransfer) return false;
+  const expected = type.trim().toLowerCase();
+  if (!expected) return false;
   try {
-    return Array.from(dataTransfer.types ?? []).includes(type);
+    return Array.from(dataTransfer.types ?? []).some(candidate => candidate.toLowerCase() === expected);
   } catch {
     return false;
   }
@@ -239,7 +218,10 @@ export function resolveCalendarExternalDropDecoder(
   if (!decoder || typeof decoder !== "object" || typeof decoder.decode !== "function" || !Array.isArray(decoder.types)) {
     throw new TypeError("Calendar external-drop decoder is invalid");
   }
-  const types = [...new Set(decoder.types.map(type => boundedRequiredText(type, MAX_MIME_LENGTH)))];
+  const types = [...new Set(decoder.types.map(type => {
+    const text = boundedRequiredText(type, MAX_MIME_LENGTH)?.toLowerCase();
+    return text && MIME_TYPE.test(text) ? text : undefined;
+  }))];
   if (
     types.length === 0
     || types.length > MAX_DECODER_TYPES
