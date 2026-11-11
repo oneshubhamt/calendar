@@ -201,6 +201,7 @@ function renderTimeline(
   const geometry = resolveHorizontalTimelineRangeGeometry(context.visibleRange, context.timeZone);
   const timelineWidth = Math.max(options.minWidth, geometry.widthMinutes * options.pixelsPerHour / 60);
   const scale = timelineWidth / geometry.widthMinutes;
+  const ticks = horizontalTimelineTicks(geometry, options.axisTickMinutes);
   const eventLayouts = layoutHorizontalTimeline(
     context.occurrences.map(occurrence => ({
       id: occurrence.occurrenceId,
@@ -253,7 +254,7 @@ function renderTimeline(
     minute: "2-digit",
     timeZone: context.timeZone,
   });
-  for (const tickPoint of horizontalTimelineTicks(geometry, options.axisTickMinutes)) {
+  for (const tickPoint of ticks) {
     const tick = document.createElement("div");
     tick.className = "dc-timeline-axis-tick";
     tick.textContent = tickFormatter.format(new Date(tickPoint.instant));
@@ -279,7 +280,7 @@ function renderTimeline(
   track.style.overflow = "hidden";
   track.setAttribute("aria-label", `${eventLayouts.length} calendar item${eventLayouts.length === 1 ? "" : "s"}`);
 
-  for (const tickPoint of horizontalTimelineTicks(geometry, options.axisTickMinutes)) {
+  for (const tickPoint of ticks) {
     const line = document.createElement("span");
     line.className = "dc-timeline-gridline";
     line.setAttribute("aria-hidden", "true");
