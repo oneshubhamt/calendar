@@ -261,6 +261,10 @@ test("registered custom views own range navigation rendering and use only the bo
         root.dataset.actionKeys = Object.keys(context.actions).sort().join(",");
         const occurrence = context.occurrences[0];
         if (!occurrence) return root;
+        const presentation = context.actions.occurrencePresentation(occurrence);
+        root.dataset.presentedTitle = typeof presentation.title === "string"
+          ? presentation.title
+          : presentation.title?.text ?? occurrence.title;
 
         const open = document.createElement("button");
         open.textContent = "Open custom event";
@@ -301,6 +305,12 @@ test("registered custom views own range navigation rendering and use only the bo
       initialView: "lean-two-day",
       customViews: [lean, interactive],
       commandHandler: commands,
+      extensions: [{
+        presentOccurrence(occurrence) {
+          if (occurrence.id !== "custom-event") return undefined;
+          return { title: "Presented custom event", badges: [{ label: "Custom badge" }] };
+        },
+      }],
       callbacks: {
         handleOpen() { openCalls += 1; return true; },
         handleCreate(selection) { created.push(selection); return true; },
@@ -329,6 +339,7 @@ test("registered custom views own range navigation rendering and use only the bo
   await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-view-id", "interactive-two-day");
   await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-occurrence-count", "1");
   await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-background-count", "1");
+  await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-presented-title", "Presented custom event");
 
   const exposed = await page.locator(".custom-two-day-view").evaluate(node => ({
     context: node.dataset.contextKeys,
@@ -338,6 +349,7 @@ test("registered custom views own range navigation rendering and use only the bo
   expect(exposed.actions).not.toMatch(/repository|storage|engine|commandHandler/i);
   expect(exposed.actions).toContain("moveOccurrence");
   expect(exposed.actions).toContain("resizeOccurrence");
+  expect(exposed.actions).toContain("occurrencePresentation");
 
   await page.getByRole("button", { name: "Open custom event" }).click();
   expect(await page.evaluate(() => globalThis.__customViewProbe.openCalls())).toBe(1);
