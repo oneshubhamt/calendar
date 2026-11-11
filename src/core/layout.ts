@@ -1,6 +1,7 @@
 import type { CalendarBackgroundRange, CalendarOccurrence, CalendarRange, ISODateTime } from "./types.js";
 import { addDays, dateKey, startOfDay, toDate } from "./time.js";
 import { civilMinuteOfInstant } from "./civil-timeline.js";
+import { partitionOverlapLanes, type OverlapLaneCluster } from "./visual-lanes.js";
 
 export interface TimedLayoutItem {
   readonly occurrence: CalendarOccurrence;
@@ -100,7 +101,6 @@ interface ClusterItem {
   readonly topMinutes: number;
   readonly heightMinutes: number;
   readonly point: boolean;
-  column: number;
 }
 
 function isTimed(item: CalendarOccurrence): boolean {
@@ -114,30 +114,20 @@ function overlaps(a: ClusterItem, b: ClusterItem): boolean {
   return a.start < b.end && a.end > b.start;
 }
 
-function layoutCluster(cluster: ClusterItem[]): TimedLayoutItem[] {
-  const byColumn: ClusterItem[][] = [];
-  for (const item of cluster) {
-    let column = byColumn.findIndex(existing => existing.every(other => !overlaps(item, other)));
-    if (column < 0) {
-      column = byColumn.length;
-      byColumn.push([]);
-    }
-    item.column = column;
-    byColumn[column]!.push(item);
-  }
-  const columnCount = Math.max(1, byColumn.length);
+function layoutCluster(cluster: OverlapLaneCluster<ClusterItem>): TimedLayoutItem[] {
+  const columnCount = Math.max(1, cluster.lanes.length);
 
-  return cluster.map(item => {
+  return cluster.placements.map(({ item, lane }) => {
     let span = 1;
-    for (let column = item.column + 1; column < columnCount; column += 1) {
-      if (byColumn[column]!.some(other => overlaps(item, other))) break;
+    for (let column = lane + 1; column < columnCount; column += 1) {
+      if (cluster.lanes[column]!.some(other => overlaps(item, other))) break;
       span += 1;
     }
     return {
       occurrence: item.occurrence,
       topMinutes: item.topMinutes,
       heightMinutes: item.heightMinutes,
-      column: item.column,
+      column: lane,
       columnCount,
       columnSpan: span,
       temporalForm: item.point ? "point" : "interval",
@@ -174,24 +164,11 @@ export function layoutTimedDay(items: readonly CalendarOccurrence[], day: ISODat
         topMinutes,
         heightMinutes: point ? 0 : Math.max(1, civilHeight > 0 ? civilHeight : elapsedHeight),
         point,
-        column: 0,
       };
     })
     .sort((a, b) => a.start - b.start || Number(a.point) - Number(b.point) || b.end - a.end || a.occurrence.title.localeCompare(b.occurrence.title));
 
-  const result: TimedLayoutItem[] = [];
-  let cluster: ClusterItem[] = [];
-  const flush = () => {
-    if (!cluster.length) return;
-    result.push(...layoutCluster(cluster));
-    cluster = [];
-  };
-
-  for (const item of relevant) {
-    if (cluster.length && !cluster.some(other => overlaps(item, other))) flush();
-    cluster.push(item);
-  }
-  flush();
+  const result = partitionOverlapLanes(relevant, overlaps).flatMap(layoutCluster);
   return assignVisualLanes(result);
 }
 
