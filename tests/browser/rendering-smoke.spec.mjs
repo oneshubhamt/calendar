@@ -721,6 +721,17 @@ test("optional Multi-Month composes canonical Month panels across years with one
   await page.getByRole("button", { name: "Previous period" }).click();
   await expect(page.locator(".dc-multi-month-title").first()).toHaveText("November 2026");
 
+  const desktopLayout = await page.locator(".dc-multi-month-section").evaluateAll(nodes =>
+    nodes.slice(0, 3).map(node => {
+      const rect = node.getBoundingClientRect();
+      return { left: rect.left, top: rect.top, width: rect.width };
+    }),
+  );
+  expect(desktopLayout).toHaveLength(3);
+  expect(Math.max(...desktopLayout.map(item => item.top)) - Math.min(...desktopLayout.map(item => item.top))).toBeLessThanOrEqual(1);
+  const desktopCapture = await page.locator(".dc-multi-month").screenshot();
+  expect(desktopCapture.byteLength).toBeGreaterThan(2_000);
+
   await page.setViewportSize({ width: 390, height: 820 });
   const responsive = await page.locator(".dc-multi-month-section").evaluateAll(nodes =>
     nodes.slice(0, 2).map(node => {
