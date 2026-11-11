@@ -1,0 +1,44 @@
+name: Working VC-C verification
+
+on:
+  push:
+    branches:
+      - "working"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: working-vcc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Week numbers and Month panel QA
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Use pinned npm
+        run: npm install --global npm@12.2.2
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Targeted VC-C Node and architecture tests
+        run: node --test tests/week-numbering.test.mjs tests/architecture-guards.test.mjs tests/view-capabilities.test.mjs
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Month rendering smoke
+        run: npx playwright test --config=playwright.config.mjs tests/browser/rendering-smoke.spec.mjs
+      - name: Complete repository gate
+        run: npm run check
+      - name: Complete browser QA
+        run: npm run qa:browser
