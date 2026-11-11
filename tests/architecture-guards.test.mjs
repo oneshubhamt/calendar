@@ -165,7 +165,7 @@ test("recurrence, availability and passive background dependency boundaries rema
 
 test("published package remains production-only", async () => {
   const pkg = JSON.parse(await read("../package.json"));
-  assert.deepEqual(pkg.files, ["dist","docs","README.md"]);
+  assert.deepEqual(pkg.files, ["dist","docs/ARCHITECTURE.md","README.md"]);
   assert.equal(Object.hasOwn(pkg.exports, "./fixtures/director"), false);
   assert.equal(Object.hasOwn(pkg.exports, "./package-contract"), false);
 });
