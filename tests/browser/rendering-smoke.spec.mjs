@@ -747,6 +747,229 @@ test("optional Multi-Month composes canonical Month panels across years with one
   expect(capture.byteLength).toBeGreaterThan(2_000);
 });
 
+test("optional Timeline renders and mutates through generic horizontal mechanics", async ({ page }) => {
+  await page.setViewportSize({ width: 980, height: 760 });
+  await page.goto("/tests/browser/harness.html");
+  await page.evaluate(async () => {
+    const [
+      { CalendarEngine },
+      { MemoryCalendarRepository },
+      { RepositoryCommandHandler },
+      { CalendarUi },
+      { createTimelineView },
+      { setCalendarExternalDropData },
+    ] = await Promise.all([
+      import("/dist/core/calendar-engine.js"),
+      import("/dist/core/store.js"),
+      import("/dist/core/commands.js"),
+      import("/dist/view/calendar-ui.js"),
+      import("/dist/view/timeline.js"),
+      import("/dist/view/external-drop.js"),
+    ]);
+
+    const source = { id: "personal", title: "Personal", visible: true, removable: true };
+    const items = [
+      {
+        id: "timeline-a", calendarId: "personal", title: "Timeline A",
+        start: "2026-11-10T09:00:00.000Z", end: "2026-11-10T11:00:00.000Z",
+        kind: "event", ownership: "calendar", editPolicy: "full",
+      },
+      {
+        id: "timeline-b", calendarId: "personal", title: "Timeline B",
+        start: "2026-11-10T10:00:00.000Z", end: "2026-11-10T12:00:00.000Z",
+        kind: "event", ownership: "calendar", editPolicy: "full",
+      },
+      {
+        id: "timeline-point", calendarId: "personal", title: "Timeline point",
+        start: "2026-11-10T10:30:00.000Z", end: "2026-11-10T10:30:00.000Z",
+        temporalForm: "point",
+        kind: "event", ownership: "calendar", editPolicy: "full",
+      },
+    ];
+    const repository = new MemoryCalendarRepository([source], items);
+    let projectionCalls = 0;
+    const projectedRanges = [];
+    const projection = {
+      id: "timeline-query-probe",
+      project(range) {
+        projectionCalls += 1;
+        projectedRanges.push({ ...range });
+        return [];
+      },
+    };
+    let backgroundCalls = 0;
+    const backgrounds = {
+      id: "timeline-backgrounds",
+      projectBackgroundRanges() {
+        backgroundCalls += 1;
+        return [{
+          id: "focus-window",
+          start: "2026-11-10T08:00:00.000Z",
+          end: "2026-11-10T13:00:00.000Z",
+          label: "Focus window",
+        }];
+      },
+    };
+    const engine = new CalendarEngine(repository, [projection], [], [backgrounds]);
+    const createdSelections = [];
+    let openCalls = 0;
+    const calendar = new CalendarUi(document.getElementById("browser-test-host"), engine, {
+      locale: "en-US",
+      timeZone: "UTC",
+      initialDate: "2026-11-10T12:00:00.000Z",
+      initialView: "timeline",
+      customViews: [createTimelineView({
+        spanDays: 2,
+        stepDays: 2,
+        pixelsPerHour: 120,
+        minWidth: 1600,
+        axisTickMinutes: 360,
+      })],
+      defaultCalendarId: "personal",
+      commandHandler: new RepositoryCommandHandler(repository),
+      slotMinutes: 15,
+      snapPolicy: { move: "round", resize: "round", selection: "round", keyboardStepMinutes: 15 },
+      callbacks: {
+        handleOpen() { openCalls += 1; return true; },
+        handleCreate(selection) { createdSelections.push({ ...selection }); return true; },
+      },
+    });
+    projectionCalls = 0;
+    backgroundCalls = 0;
+    projectedRanges.length = 0;
+    await calendar.refresh();
+
+    const dispatchExternal = title => {
+      const track = document.querySelector(".dc-timeline-track");
+      if (!(track instanceof HTMLElement)) throw new Error("Timeline track missing");
+      const transfer = new DataTransfer();
+      setCalendarExternalDropData(transfer, { title, durationMinutes: 45 });
+      const rect = track.getBoundingClientRect();
+      const init = {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: transfer,
+        clientX: rect.left + rect.width * 0.35,
+        clientY: rect.top + 30,
+      };
+      track.dispatchEvent(new DragEvent("dragenter", init));
+      track.dispatchEvent(new DragEvent("dragover", init));
+      track.dispatchEvent(new DragEvent("drop", init));
+    };
+
+    const doubleClickTrack = () => {
+      const track = document.querySelector(".dc-timeline-track");
+      if (!(track instanceof HTMLElement)) throw new Error("Timeline track missing");
+      const rect = track.getBoundingClientRect();
+      track.dispatchEvent(new MouseEvent("dblclick", {
+        bubbles: true,
+        cancelable: true,
+        clientX: rect.left + rect.width * 0.55,
+        clientY: rect.top + 80,
+      }));
+    };
+
+    const pointerMove = (occurrenceId, dx) => {
+      const event = document.querySelector(`.dc-timeline-event[data-occurrence-id="${occurrenceId}"]`);
+      if (!(event instanceof HTMLElement)) throw new Error("Timeline pointer fixture missing");
+      const rect = event.getBoundingClientRect();
+      const pointerId = 77;
+      event.dispatchEvent(new PointerEvent("pointerdown", {
+        bubbles: true, cancelable: true, pointerId, pointerType: "mouse", button: 0,
+        clientX: rect.left + 10, clientY: rect.top + 10,
+      }));
+      window.dispatchEvent(new PointerEvent("pointermove", {
+        bubbles: true, cancelable: true, pointerId, pointerType: "mouse", button: 0,
+        clientX: rect.left + 10 + dx, clientY: rect.top + 10,
+      }));
+      window.dispatchEvent(new PointerEvent("pointerup", {
+        bubbles: true, cancelable: true, pointerId, pointerType: "mouse", button: 0,
+        clientX: rect.left + 10 + dx, clientY: rect.top + 10,
+      }));
+    };
+
+    globalThis.__timelineProbe = {
+      calendar,
+      repository,
+      projectionCalls: () => projectionCalls,
+      backgroundCalls: () => backgroundCalls,
+      projectedRanges,
+      createdSelections,
+      openCalls: () => openCalls,
+      dispatchExternal,
+      doubleClickTrack,
+      pointerMove,
+    };
+  });
+
+  await expect(page.locator(".dc-timeline")).toBeVisible();
+  await expect(page.locator("[data-role='title']")).toHaveText("Nov 10, 2026 – Nov 11, 2026");
+  await expect(page.locator(".dc-timeline-event")).toHaveCount(3);
+  await expect(page.locator(".dc-timeline-event.is-point")).toHaveCount(1);
+  await expect(page.locator(".dc-timeline-background")).toHaveCount(1);
+  await expect(page.getByText("Focus window", { exact: true })).toBeVisible();
+  await expect(page.locator(".dc-timeline-axis-tick")).not.toHaveCount(0);
+  expect(await page.evaluate(() => globalThis.__timelineProbe.projectionCalls())).toBe(1);
+  expect(await page.evaluate(() => globalThis.__timelineProbe.backgroundCalls())).toBe(1);
+  expect(await page.evaluate(() => globalThis.__timelineProbe.projectedRanges[0])).toEqual({
+    start: "2026-11-10T00:00:00.000Z",
+    end: "2026-11-12T00:00:00.000Z",
+  });
+
+  const laneTops = await page.locator(".dc-timeline-event").evaluateAll(nodes =>
+    nodes.map(node => Number.parseFloat(node.style.top)),
+  );
+  expect(new Set(laneTops).size).toBe(3);
+  expect(await page.locator(".dc-timeline-event.is-point").evaluate(node => node.style.width)).toBe("10px");
+
+  await page.locator('.dc-timeline-event[data-occurrence-id="item:timeline-a"]').click();
+  expect(await page.evaluate(() => globalThis.__timelineProbe.openCalls())).toBe(1);
+
+  const eventA = page.locator('.dc-timeline-event[data-occurrence-id="item:timeline-a"]');
+  await eventA.focus();
+  await page.keyboard.press("Alt+ArrowRight");
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__timelineProbe.repository.read().items.find(item => item.id === "timeline-a")?.start,
+  )).toBe("2026-11-10T09:15:00.000Z");
+
+  const resizeEnd = page.getByRole("separator", { name: "Resize end of Timeline A" });
+  await resizeEnd.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__timelineProbe.repository.read().items.find(item => item.id === "timeline-a")?.end,
+  )).toBe("2026-11-10T11:15:00.000Z");
+
+  await page.evaluate(() => globalThis.__timelineProbe.pointerMove("item:timeline-b", 60));
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__timelineProbe.repository.read().items.find(item => item.id === "timeline-b")?.start,
+  )).toBe("2026-11-10T10:30:00.000Z");
+
+  await page.evaluate(() => globalThis.__timelineProbe.dispatchExternal("External timeline"));
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__timelineProbe.repository.read().items.some(item => item.title === "External timeline"),
+  )).toBe(true);
+
+  await page.evaluate(() => globalThis.__timelineProbe.doubleClickTrack());
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__timelineProbe.createdSelections.length,
+  )).toBe(1);
+  expect(await page.evaluate(() => globalThis.__timelineProbe.createdSelections[0].allDay)).toBe(false);
+
+  await page.getByRole("button", { name: "Next period" }).click();
+  await expect(page.locator("[data-role='title']")).toHaveText("Nov 12, 2026 – Nov 13, 2026");
+  await page.getByRole("button", { name: "Previous period" }).click();
+  await expect(page.locator("[data-role='title']")).toHaveText("Nov 10, 2026 – Nov 11, 2026");
+
+  await page.setViewportSize({ width: 390, height: 760 });
+  const scroll = await page.locator(".dc-timeline-scroll").evaluate(node => ({
+    clientWidth: node.clientWidth,
+    scrollWidth: node.scrollWidth,
+  }));
+  expect(scroll.scrollWidth).toBeGreaterThan(scroll.clientWidth);
+  const capture = await page.locator(".dc-timeline").screenshot();
+  expect(capture.byteLength).toBeGreaterThan(2_000);
+});
+
 test("external DOM drops create through Calendar authority while internal drag remains a move", async ({ page }) => {
   await page.goto("/tests/browser/harness.html");
   await page.evaluate(async () => {
