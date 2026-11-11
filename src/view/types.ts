@@ -1,3 +1,4 @@
+import type { CalendarExternalDropDecoder } from "./external-drop.js";
 import type { CalendarClock } from "../core/time.js";
 import type {
   CalendarAgendaSpan,
@@ -61,6 +62,10 @@ export interface CalendarCustomViewActionPort {
   occurrencePresentation(occurrence: CalendarOccurrence): CalendarCustomViewOccurrencePresentation;
   openOccurrence(occurrence: CalendarOccurrence): Promise<void>;
   createFromSelection(selection: CalendarSelection): Promise<void>;
+  /** True only when this DataTransfer advertises a supported external-drop MIME type and Calendar can create. */
+  canAcceptExternalDrop(dataTransfer: DataTransfer | null): boolean;
+  /** Decode synchronously, then create through Calendar's canonical source/placement/command path. */
+  dropExternal(dataTransfer: DataTransfer | null, selection: CalendarSelection): Promise<boolean>;
   /**
    * Move an occurrence to a new start instant. Calendar preserves ordinary duration,
    * uses one hour when converting a date-like occurrence to timed form, and preserves
@@ -345,6 +350,8 @@ export interface CalendarUiOptions {
   readonly defaultOwnership?: CalendarOwnership;
   readonly defaultEditPolicy?: EditPolicy;
   readonly itemFactory?: CalendarItemFactory;
+  /** Optional host-owned external drag formats. Calendar's standard MIME format is always supported. */
+  readonly externalDropDecoder?: CalendarExternalDropDecoder;
   readonly extensions?: readonly CalendarUiExtension[];
   readonly addons?: readonly CalendarUiAddon[];
   readonly allowCreate?: boolean;
