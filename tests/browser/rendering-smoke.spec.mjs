@@ -432,7 +432,17 @@ test("external DOM drops create through Calendar authority while internal drag r
       ownership: "calendar",
       editPolicy: "full",
     };
-    const repository = new MemoryCalendarRepository(sources, [initial]);
+    const collision = {
+      id: "collision",
+      calendarId: "personal",
+      title: "Collision fixture",
+      start: "2026-11-10T12:00:00.000Z",
+      end: "2026-11-10T13:00:00.000Z",
+      kind: "event",
+      ownership: "calendar",
+      editPolicy: "full",
+    };
+    const repository = new MemoryCalendarRepository(sources, [initial, collision]);
     const purposes = [];
     let decoderCalls = 0;
     const calendar = new CalendarUi(
@@ -448,10 +458,13 @@ test("external DOM drops create through Calendar authority while internal drag r
         slotMinutes: 30,
         snapPolicy: { selection: "floor", move: "round", resize: "round", keyboardStepMinutes: 30 },
         commandHandler: new RepositoryCommandHandler(repository),
+        navigationBounds: { min: "2026-11-01", max: "2026-11-15" },
+        collisionPolicy: { mode: "prevent", includeAllDay: false },
         itemFactory({ id, now, purpose, draft }) {
           purposes.push(purpose);
           return {
             ...draft,
+            ...(draft.title === "Factory redirect" ? { calendarId: "locked" } : {}),
             id,
             ownership: "calendar",
             editPolicy: "full",
@@ -519,6 +532,16 @@ test("external DOM drops create through Calendar authority while internal drag r
     addSource("external-timed", dataTransfer => setCalendarExternalDropData(dataTransfer, {
       title: "Timed external",
       durationMinutes: 90,
+    }));
+    addSource("external-collision", dataTransfer => setCalendarExternalDropData(dataTransfer, {
+      title: "Collision external",
+      durationMinutes: 60,
+    }));
+    addSource("external-out-of-bounds", dataTransfer => setCalendarExternalDropData(dataTransfer, {
+      title: "Out of bounds external",
+    }));
+    addSource("external-factory-redirect", dataTransfer => setCalendarExternalDropData(dataTransfer, {
+      title: "Factory redirect",
     }));
 
     const dispatchDrag = (source, target, clientY) => {
@@ -603,7 +626,7 @@ test("external DOM drops create through Calendar authority while internal drag r
   await expect.poll(async () => await page.evaluate(() =>
     globalThis.__externalDropProbe.repository.read().items.find(item => item.id === "internal")?.start,
   )).toBe("2026-11-06");
-  expect(await page.evaluate(() => globalThis.__externalDropProbe.repository.read().items.length)).toBe(1);
+  expect(await page.evaluate(() => globalThis.__externalDropProbe.repository.read().items.length)).toBe(2);
 
   const monthResult = await page.evaluate(() => globalThis.__externalDropProbe.dropMonth("external-month", "2026-11-10"));
   expect(monthResult.accepted).toBe(true);
@@ -641,6 +664,20 @@ test("external DOM drops create through Calendar authority while internal drag r
   expect(malformedResult.accepted).toBe(true);
   await page.waitForTimeout(20);
   expect(await page.evaluate(() => globalThis.__externalDropProbe.repository.read().items.length)).toBe(beforeMalformed);
+
+  const outOfBoundsResult = await page.evaluate(() =>
+    globalThis.__externalDropProbe.dropMonth("external-out-of-bounds", "2026-11-16"),
+  );
+  expect(outOfBoundsResult.accepted).toBe(false);
+  expect(await page.evaluate(() =>
+    globalThis.__externalDropProbe.repository.read().items.some(item => item.title === "Out of bounds external"),
+  )).toBe(false);
+
+  await page.evaluate(() => globalThis.__externalDropProbe.dropMonth("external-factory-redirect", "2026-11-12"));
+  await page.waitForTimeout(20);
+  expect(await page.evaluate(() =>
+    globalThis.__externalDropProbe.repository.read().items.some(item => item.title === "Factory redirect"),
+  )).toBe(false);
 
   const customResult = await page.evaluate(() => globalThis.__externalDropProbe.dropMonth("external-custom", "2026-11-13"));
   expect(customResult.accepted).toBe(true);
@@ -683,7 +720,18 @@ test("external DOM drops create through Calendar authority while internal drag r
     temporalKind: "instant",
   });
 
+  const beforeCollision = await page.evaluate(() => globalThis.__externalDropProbe.repository.read().items.length);
+  const collisionResult = await page.evaluate(() =>
+    globalThis.__externalDropProbe.dropTimed("external-collision", 245),
+  );
+  expect(collisionResult.accepted).toBe(true);
+  await page.waitForTimeout(20);
+  expect(await page.evaluate(() => globalThis.__externalDropProbe.repository.read().items.length)).toBe(beforeCollision);
+  expect(await page.evaluate(() =>
+    globalThis.__externalDropProbe.repository.read().items.some(item => item.title === "Collision external"),
+  )).toBe(false);
+
   expect(await page.evaluate(() =>
     globalThis.__externalDropProbe.purposes.filter(value => value === "external-drop").length,
-  )).toBeGreaterThanOrEqual(4);
+  )).toBeGreaterThanOrEqual(6);
 });
