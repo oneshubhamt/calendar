@@ -8,7 +8,6 @@ import type {
 } from "../core/types.js";
 
 import { isDateLikeOccurrence } from "./occurrence-form.js";
-export { isDateLikeOccurrence } from "./occurrence-form.js";
 import type { CalendarSelection } from "./types.js";
 import type { ResolvedCalendarOccurrencePresentation } from "./presentation.js";
 import { groupAgendaByDay, groupAllDayBackgroundRangesByDay, groupByDay } from "../core/layout.js";
