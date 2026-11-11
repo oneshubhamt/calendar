@@ -18,6 +18,8 @@ import {
   el,
   formatTime,
   sameLocalDay,
+  SHORT_WEEKDAY_NAMES,
+  weekdayOrder,
 } from "./render-primitives.js";
 
 export {
@@ -28,9 +30,9 @@ export {
   formatTime,
   humanizeKind,
   sameLocalDay,
+  SHORT_WEEKDAY_NAMES,
+  weekdayOrder,
 } from "./render-primitives.js";
-
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 export interface CalendarStaticRenderModel {
   readonly locale: string;
@@ -104,7 +106,7 @@ export function renderYearView(model: CalendarStaticRenderModel, actions: Calend
     });
     month.append(heading);
     const weekdays = el("div", "dc-year-weekdays");
-    for (const weekday of weekdayOrder(model.weekStartsOn)) weekdays.append(el("span", undefined, DAY_NAMES[weekday]!.slice(0, 1)));
+    for (const weekday of weekdayOrder(model.weekStartsOn)) weekdays.append(el("span", undefined, SHORT_WEEKDAY_NAMES[weekday]!.slice(0, 1)));
     month.append(weekdays);
     const days = el("div", "dc-year-days");
     const monthRange = rangeForView(monthStart, "month", model.weekStartsOn, model.timeZone);
@@ -197,8 +199,4 @@ export function renderAgendaView(model: CalendarStaticRenderModel, actions: Cale
     container.append(section);
   }
   return container;
-}
-
-function weekdayOrder(weekStartsOn: Weekday): readonly Weekday[] {
-  return Array.from({ length: 7 }, (_, index) => ((weekStartsOn + index) % 7) as Weekday);
 }
