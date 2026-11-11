@@ -617,6 +617,7 @@ test("optional Multi-Month composes canonical Month panels across years with one
       initialDate: "2026-11-15T12:00:00.000Z",
       initialView: "multi-month",
       customViews: [view],
+      externalDrop: true,
       weekStartsOn: 1,
       weekNumbers: { minimumDaysInFirstWeek: 4 },
       defaultCalendarId: "personal",
@@ -834,6 +835,7 @@ test("optional Timeline renders and mutates through generic horizontal mechanics
       timeZone: "UTC",
       initialDate: "2026-11-10T12:00:00.000Z",
       initialView: "timeline",
+      externalDrop: true,
       customViews: [createTimelineView({
         spanDays: 2,
         stepDays: 2,
