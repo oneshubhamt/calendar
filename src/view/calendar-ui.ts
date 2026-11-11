@@ -367,7 +367,7 @@ export class CalendarUi {
   }
 
   private customViewActions(): CalendarCustomViewActionPort {
-    return Object.freeze({
+    const actions: CalendarCustomViewActionPort = {
       canCreateItems: () => this.canCreateItems(),
       canOpenOccurrence: occurrence => this.canOpenOccurrence(occurrence),
       canMoveOccurrence: occurrence => this.canMoveOccurrence(occurrence),
@@ -382,7 +382,8 @@ export class CalendarUi {
       goTo: value => this.goTo(value),
       setView: view => this.setView(view),
       announce: message => this.announce(message),
-    });
+    };
+    return Object.freeze(actions);
   }
 
   private requestRefresh(): void {
