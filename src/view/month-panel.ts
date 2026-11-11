@@ -8,19 +8,16 @@ import {
   dayLevelBackgroundLayer,
   el,
   sameLocalDay,
+  SHORT_WEEKDAY_NAMES,
+  weekdayOrder,
 } from "./render-primitives.js";
 import type { CalendarStaticRenderActions, CalendarStaticRenderModel } from "./view-renderer.js";
-
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 export interface CalendarMonthPanelOptions {
   readonly monthStart: Date;
   readonly range: CalendarRange;
 }
 
-function weekdayOrder(weekStartsOn: Weekday): readonly Weekday[] {
-  return Array.from({ length: 7 }, (_, index) => ((weekStartsOn + index) % 7) as Weekday);
-}
 
 function weekNumberCell(
   date: Date,
