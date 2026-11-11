@@ -1,0 +1,44 @@
+name: Working VC-E verification
+
+on:
+  push:
+    branches:
+      - "working"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: working-vce-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Generic Timeline QA
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Use pinned npm
+        run: npm install --global npm@12.2.2
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Targeted VC-E Node and architecture tests
+        run: node --test tests/timeline.test.mjs tests/resource-scheduler-layout.test.mjs tests/resource-scheduler-interaction.test.mjs tests/resource-scheduler-placement.test.mjs tests/resource-scheduler-integrity.test.mjs tests/point-temporal-layout.test.mjs tests/architecture-guards.test.mjs tests/view-capabilities.test.mjs
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Timeline and gesture browser smoke
+        run: npx playwright test --config=playwright.config.mjs tests/browser/rendering-smoke.spec.mjs tests/browser/resource-scheduler.spec.mjs
+      - name: Complete repository gate
+        run: npm run check
+      - name: Complete browser QA
+        run: npm run qa:browser
