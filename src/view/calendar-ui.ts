@@ -38,6 +38,7 @@ import { addDays, addMonths, addYears, dateKey, parseAbsoluteDateTime, rangeForV
 import { instantToPlain } from "../core/temporal.js";
 import { civilMinuteOfInstant, civilMinuteResolution, instantAtCivilMinute, shiftCivilMinutes } from "../core/civil-timeline.js";
 import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from "./time-zone-scale.js";
+import { resolveCalendarWeekNumbering, type ResolvedCalendarWeekNumbering } from "./week-numbering.js";
 import { CalendarTemporalChrome } from "./temporal-chrome.js";
 import {
   backgroundAriaSuffix,
@@ -148,6 +149,7 @@ export class CalendarUi {
   private readonly secondaryTimeZone: string | undefined;
   private readonly dstOverlapDisambiguation: CalendarOverlapDisambiguation;
   private readonly weekStartsOn: Weekday;
+  private readonly weekNumbering: ResolvedCalendarWeekNumbering | undefined;
   private readonly slotMinutes: number;
   private readonly snapPolicy: Required<CalendarSnapPolicy>;
   private readonly collisionPolicy: CalendarCollisionPolicy;
@@ -191,6 +193,7 @@ export class CalendarUi {
     this.secondaryTimeZone = resolveSecondaryTimeZone(options.secondaryTimeZone);
     this.dstOverlapDisambiguation = options.dstOverlapDisambiguation ?? "earlier";
     this.weekStartsOn = options.weekStartsOn ?? 1;
+    this.weekNumbering = resolveCalendarWeekNumbering(this.locale, options.weekNumbers);
     this.slotMinutes = options.slotMinutes ?? 15;
     this.snapPolicy = normalizeSnapPolicy(options.snapPolicy, this.slotMinutes);
     this.collisionPolicy = options.collisionPolicy ?? { mode: "allow", includeAllDay: false };
@@ -1402,6 +1405,7 @@ export class CalendarUi {
       locale: this.locale,
       timeZone: this.timeZone,
       weekStartsOn: this.weekStartsOn,
+      ...(this.weekNumbering ? { weekNumbering: this.weekNumbering } : {}),
       anchor: this.anchor,
       visibleRange: this.visibleRange,
       agendaSpan: this.agendaSpan,
