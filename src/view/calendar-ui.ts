@@ -21,6 +21,7 @@ import type {
   CalendarCustomViewOccurrencePresentation,
   CalendarCustomViewPlugin,
   CalendarCustomViewRenderContext,
+  CalendarCustomViewRenderPort,
   CalendarItemFactoryInput,
   CalendarKindOption,
   CalendarPlacementValidationPort,
@@ -392,6 +393,31 @@ export class CalendarUi {
       backgroundRanges: Object.freeze([...this.backgroundRanges]),
       now: this.clock.now(),
       actions: this.customViewActions(),
+      renderers: this.customViewRenderers(),
+    });
+  }
+
+  private customViewRenderers(): CalendarCustomViewRenderPort {
+    return Object.freeze({
+      monthPanel: monthStart => {
+        if (!(monthStart instanceof Date) || Number.isNaN(monthStart.getTime())) {
+          throw new TypeError("Month panel start must be a valid Date");
+        }
+        const anchor = new Date(monthStart.getTime());
+        const range = rangeForView(anchor, "month", this.weekStartsOn, this.timeZone);
+        const panelStart = parseAbsoluteDateTime(range.start, "Month panel range start").getTime();
+        const panelEnd = parseAbsoluteDateTime(range.end, "Month panel range end").getTime();
+        const visibleStart = parseAbsoluteDateTime(this.visibleRange.start, "Calendar visible range start").getTime();
+        const visibleEnd = parseAbsoluteDateTime(this.visibleRange.end, "Calendar visible range end").getTime();
+        if (panelStart < visibleStart || panelEnd > visibleEnd) {
+          throw new RangeError("Month panel must be contained within the active custom view range");
+        }
+        return renderMonthView({
+          ...this.staticRenderModel(),
+          anchor,
+          visibleRange: range,
+        }, this.staticRenderActions());
+      },
     });
   }
 
