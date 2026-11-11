@@ -59,7 +59,6 @@ interface TimelineGestureData extends CalendarPointerGestureData {
   readonly occurrence: CalendarOccurrence;
   readonly mode: "move" | "resize-start" | "resize-end";
   readonly scale: number;
-  readonly originalLeft: number;
   readonly originalWidth: number;
   readonly touch: boolean;
 }
@@ -280,6 +279,21 @@ function renderTimeline(
   track.style.overflow = "hidden";
   track.setAttribute("aria-label", `${eventLayouts.length} calendar item${eventLayouts.length === 1 ? "" : "s"}`);
 
+  for (const tickPoint of horizontalTimelineTicks(geometry, options.axisTickMinutes)) {
+    const line = document.createElement("span");
+    line.className = "dc-timeline-gridline";
+    line.setAttribute("aria-hidden", "true");
+    line.style.position = "absolute";
+    line.style.left = `${clamp(tickPoint.coordinate * scale, 0, timelineWidth)}px`;
+    line.style.top = "0";
+    line.style.bottom = "0";
+    line.style.borderInlineStart = "1px solid var(--dc-border)";
+    line.style.opacity = ".55";
+    line.style.pointerEvents = "none";
+    line.style.zIndex = "0";
+    track.append(line);
+  }
+
   const backgroundLayouts = layoutHorizontalTimeline(
     context.backgroundRanges.map((range, index) => ({
       id: `background:${index}:${range.id}`,
@@ -458,7 +472,6 @@ function renderTimeline(
         occurrence,
         mode,
         scale,
-        originalLeft: Number.parseFloat(event.style.left),
         originalWidth: Number.parseFloat(event.style.width),
         touch: pointerEvent.pointerType === "touch",
       });
