@@ -209,6 +209,8 @@ Targeted QA:
 
 ### VC-B — External drag/drop creation boundary
 
+**Status:** complete on `working`.
+
 **Objective:** allow arbitrary DOM elements to create Calendar events by dropping onto valid Calendar targets.
 
 Work:
