@@ -392,6 +392,9 @@ export class CalendarUi {
       occurrences: Object.freeze([...this.displayOccurrences()]),
       backgroundRanges: Object.freeze([...this.backgroundRanges]),
       now: this.clock.now(),
+      slotMinutes: this.slotMinutes,
+      snapPolicy: this.snapPolicy,
+      dstOverlapDisambiguation: this.dstOverlapDisambiguation,
       actions: this.customViewActions(),
       renderers: this.customViewRenderers(),
     });
