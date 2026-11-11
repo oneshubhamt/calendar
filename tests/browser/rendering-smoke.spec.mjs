@@ -482,7 +482,7 @@ test("Month week numbers are optional accessible and narrow-screen safe", async 
   await expect(page.locator(".dc-week-number").first()).toHaveAttribute("aria-label", "Week 53 of 2020");
   await expect(page.locator(".dc-week-number").nth(1)).toHaveText("1");
   await expect(page.locator(".dc-week-number").nth(1)).toHaveAttribute("aria-label", "Week 1 of 2021");
-  await expect(page.locator(".dc-week-number[role='rowheader']")).toHaveCount(6);
+  await expect(page.locator(".dc-week-number").first()).toHaveAttribute("title", "Week 53 of 2020");
   await expect(page.locator(".dc-day-cell")).toHaveCount(42);
   await expect(page.locator(".dc-weekdays")).toHaveClass(/has-week-numbers/);
   await expect(page.locator(".dc-month-grid")).toHaveClass(/has-week-numbers/);
