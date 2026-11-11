@@ -117,7 +117,6 @@ test("structured presentation, inline actions and embedded chrome behave through
       id: "structured", calendarId: "personal", title: "Underlying title",
       start: "2026-11-10T09:00:00.000Z", end: "2026-11-10T10:00:00.000Z",
       kind: "event", ownership: "calendar", editPolicy: "full",
-      metadata: { nested: { value: "safe" } },
     };
     let actionCalls = 0;
     let openCalls = 0;
@@ -200,6 +199,7 @@ test("registered custom views own range navigation rendering and use only the bo
       id: "custom-event", calendarId: "personal", title: "Custom event",
       start: "2026-11-10T09:00:00.000Z", end: "2026-11-10T10:00:00.000Z",
       kind: "event", ownership: "calendar", editPolicy: "full",
+      metadata: { nested: { value: "safe" } },
     };
     const repository = new MemoryCalendarRepository([source], [item]);
     let backgroundCalls = 0;
