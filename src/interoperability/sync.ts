@@ -224,7 +224,9 @@ export function linkAfterSync(
     identity: remote.identity,
     baseLocalFingerprint: fingerprintCalendarItem(localItem),
     baseRemoteFingerprint: remote.fingerprint,
-    ...(remote.item ? { baseRemoteItem: remote.item } : {}),
+    // Only recurring masters need the prior remote projection to fold detached-instance
+    // deltas on a later incremental pull. Ordinary links keep fingerprints only.
+    ...(remote.item?.recurrence ? { baseRemoteItem: remote.item } : {}),
     status: "clean",
     lastSyncedAt: now,
   };
