@@ -18,6 +18,7 @@ import type {
 import type {
   CalendarCreateDraft,
   CalendarCustomViewActionPort,
+  CalendarCustomViewOccurrencePresentation,
   CalendarCustomViewPlugin,
   CalendarCustomViewRenderContext,
   CalendarItemFactoryInput,
@@ -373,10 +374,11 @@ export class CalendarUi {
       canMoveOccurrence: occurrence => this.canMoveOccurrence(occurrence),
       canResizeOccurrence: (occurrence, edge) => this.canResizeOccurrence(occurrence, edge),
       isOccurrencePending: occurrence => this.isOccurrencePending(occurrence),
+      occurrencePresentation: occurrence => this.customViewOccurrencePresentation(occurrence),
       openOccurrence: async occurrence => await this.openDetails(this.authoritativeOccurrence(occurrence)),
       createFromSelection: async selection => await this.createFromSelection(selection),
       moveOccurrence: async (occurrence, start, options) =>
-        await this.moveOccurrenceToStart(occurrence, start, options?.allDay === true),
+        await this.moveOccurrenceToStart(occurrence, start, options?.allDay ?? isDateLikeOccurrence(occurrence)),
       resizeOccurrence: async (occurrence, edge, target) =>
         await this.resizeOccurrenceToInstant(occurrence, edge, target),
       goTo: value => this.goTo(value),
@@ -384,6 +386,23 @@ export class CalendarUi {
       announce: message => this.announce(message),
     };
     return Object.freeze(actions);
+  }
+
+  private customViewOccurrencePresentation(
+    occurrence: CalendarOccurrence,
+  ): CalendarCustomViewOccurrencePresentation {
+    const presentation = this.occurrencePresentation(this.authoritativeOccurrence(occurrence));
+    return Object.freeze({
+      classNames: Object.freeze([...presentation.classNames]),
+      data: Object.freeze({ ...presentation.data }),
+      ...(presentation.accessibleLabel ? { accessibleLabel: presentation.accessibleLabel } : {}),
+      ...(presentation.icon ? { icon: Object.freeze({ ...presentation.icon }) } : {}),
+      ...(presentation.leading ? { leading: Object.freeze({ ...presentation.leading }) } : {}),
+      ...(presentation.title ? { title: Object.freeze({ ...presentation.title }) } : {}),
+      ...(presentation.subtitle ? { subtitle: Object.freeze({ ...presentation.subtitle }) } : {}),
+      ...(presentation.trailing ? { trailing: Object.freeze({ ...presentation.trailing }) } : {}),
+      badges: Object.freeze(presentation.badges.map(badge => Object.freeze({ ...badge }))),
+    });
   }
 
   private requestRefresh(): void {
@@ -1604,7 +1623,12 @@ export class CalendarUi {
     targetValue: ISODateTime,
   ): Promise<boolean> {
     const current = this.authoritativeOccurrence(occurrence);
-    if (this.isOccurrencePending(current) || !this.canResizeOccurrence(current, edge) || isPointOccurrence(current)) {
+    if (
+      this.isOccurrencePending(current)
+      || !this.canResizeOccurrence(current, edge)
+      || isPointOccurrence(current)
+      || isDateLikeOccurrence(current)
+    ) {
       this.announce(`${current.title}: this resize is not allowed.`);
       return false;
     }
