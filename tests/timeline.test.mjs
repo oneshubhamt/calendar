@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  horizontalTimelineTickStepMinutes,
   horizontalTimelineTicks,
   layoutHorizontalTimeline,
   resolveHorizontalTimelineRangeGeometry,
@@ -79,6 +80,8 @@ test("horizontal axis ticks remain bounded and deduplicate folded civil coordina
     start: "2026-11-01T04:00:00.000Z",
     end: "2026-11-02T05:00:00.000Z",
   }, "America/New_York");
+  assert.equal(horizontalTimelineTickStepMinutes(geometry, 60), 60);
+  assert.equal(horizontalTimelineTickStepMinutes(geometry, 1, 10), 150);
   const ticks = horizontalTimelineTicks(geometry, 60);
   assert.ok(ticks.length <= 25);
   assert.equal(new Set(ticks.map(tick => tick.coordinate.toFixed(6))).size, ticks.length);
