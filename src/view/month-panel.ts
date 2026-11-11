@@ -1,4 +1,4 @@
-import type { CalendarRange, Weekday } from "../core/types.js";
+import type { CalendarRange } from "../core/types.js";
 import { groupAllDayBackgroundRangesByDay, groupByDay } from "../core/layout.js";
 import { addDays, dateKey, startOfDay, toDate, weekOfYear } from "../core/time.js";
 import { instantToPlain } from "../core/temporal.js";
