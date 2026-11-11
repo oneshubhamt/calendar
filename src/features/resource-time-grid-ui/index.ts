@@ -166,7 +166,7 @@ export class CalendarResourceTimeGridUi {
     this.interaction = options.interaction;
     this.slotMinutes = this.interaction?.slotMinutes ?? 15;
     this.snapPolicy = normalizeSnapPolicy(this.interaction?.snapPolicy, this.slotMinutes);
-    positive(this.interaction?.minimumDurationMinutes, 5, "interaction.minimumDurationMinutes");
+    if (this.interaction) positive(this.interaction.minimumDurationMinutes, 5, "interaction.minimumDurationMinutes");
     if (this.interaction?.dstOverlapDisambiguation !== undefined
       && !["earlier", "later"].includes(this.interaction.dstOverlapDisambiguation)) {
       throw new Error("interaction.dstOverlapDisambiguation must be earlier or later");
@@ -343,13 +343,26 @@ export class CalendarResourceTimeGridUi {
   }
 
   private allDayElement(item: CalendarResourceTimeGridAllDayItem): HTMLElement {
-    const node = element("div", "dc-rtg-all-day-event", item.occurrence.title);
+    const presentation = resolveOccurrencePresentation(
+      this.extensions,
+      item.occurrence,
+      (index, error) => this.reportError({ stage: "present", index, error }),
+    );
+    const node = element("div", "dc-rtg-all-day-event", presentation.title?.text ?? item.occurrence.title);
     node.tabIndex = this.onOccurrenceActivate ? 0 : -1;
     node.dataset.occurrenceId = item.occurrenceId;
     node.dataset.resourceId = item.resourceId;
     if (item.occurrence.display?.color) node.style.setProperty("--dc-rtg-event-bg", item.occurrence.display.color);
     if (item.occurrence.display?.textColor) node.style.setProperty("--dc-rtg-event-fg", item.occurrence.display.textColor);
-    node.setAttribute("aria-label", `${item.occurrence.title}, all-day, ${item.resource.title}, ${item.dayKey}`);
+    for (const token of safeClassTokens(item.occurrence.display?.className)) node.classList.add(token);
+    for (const token of presentation.classNames) node.classList.add(token);
+    for (const [key, value] of Object.entries(presentation.data)) {
+      node.setAttribute(`data-host-${hostDataAttributeName(key)}`, value);
+    }
+    node.setAttribute(
+      "aria-label",
+      presentation.accessibleLabel ?? `${item.occurrence.title}, all-day, ${item.resource.title}, ${item.dayKey}`,
+    );
     if (this.onOccurrenceActivate) {
       node.setAttribute("role", "button");
       node.addEventListener("click", () => {

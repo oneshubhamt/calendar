@@ -106,8 +106,13 @@ export function renderResourceTimeGridSurface(
 
   const template = gridTemplate(layout.columns.length, model.minColumnWidth);
   const minWidth = 58 + layout.columns.length * model.minColumnWidth;
+  const grid = element("div", "dc-rtg-grid");
+  grid.setAttribute("role", "grid");
+  grid.setAttribute("aria-label", model.ariaLabel);
+  grid.setAttribute("aria-colcount", String(layout.columns.length + 1));
 
   const header = element("div", "dc-rtg-row dc-rtg-header-row");
+  header.setAttribute("role", "row");
   header.style.gridTemplateColumns = template;
   header.style.minWidth = `${minWidth}px`;
   const corner = element("div", "dc-rtg-corner", "Time");
@@ -116,6 +121,7 @@ export function renderResourceTimeGridSurface(
   for (const column of layout.columns) header.append(columnHeader(column, model.locale, model.timeZone));
 
   const allDay = element("div", "dc-rtg-row dc-rtg-all-day-row");
+  allDay.setAttribute("role", "row");
   allDay.style.gridTemplateColumns = template;
   allDay.style.minWidth = `${minWidth}px`;
   const allDayLabel = element("div", "dc-rtg-all-day-label", "All-day");
@@ -141,6 +147,7 @@ export function renderResourceTimeGridSurface(
   }
 
   const body = element("div", "dc-rtg-row dc-rtg-body-row");
+  body.setAttribute("role", "row");
   body.style.gridTemplateColumns = template;
   body.style.minWidth = `${minWidth}px`;
   const bodyHeight = (layout.endMinute - layout.startMinute) * model.pixelsPerMinute;
@@ -201,6 +208,7 @@ export function renderResourceTimeGridSurface(
     body.append(cell);
   }
 
-  surface.append(header, allDay, body);
+  grid.append(header, allDay, body);
+  surface.append(grid);
   return surface;
 }

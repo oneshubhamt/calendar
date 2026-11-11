@@ -164,6 +164,22 @@ export function layoutResourceTimeGrid(
   const normalized = validateCalendarResourceAssignments(resources, occurrences, assignments);
   const occurrenceById = new Map(occurrences.map(occurrence => [occurrence.occurrenceId, occurrence] as const));
   const assignmentByOccurrence = new Map(normalized.map(assignment => [assignment.occurrenceId, assignment] as const));
+  const occurrencesByResource = new Map<CalendarResourceId, CalendarOccurrence[]>();
+  for (const assignment of normalized) {
+    const occurrence = occurrenceById.get(assignment.occurrenceId);
+    if (!occurrence) continue;
+    for (const resourceId of assignment.resourceIds) {
+      const bucket = occurrencesByResource.get(resourceId) ?? [];
+      bucket.push(occurrence);
+      occurrencesByResource.set(resourceId, bucket);
+    }
+  }
+  const availabilityByResource = new Map<CalendarResourceId, CalendarResourceAvailabilityRange[]>();
+  for (const item of options.availability ?? []) {
+    const bucket = availabilityByResource.get(item.resourceId) ?? [];
+    bucket.push(item);
+    availabilityByResource.set(item.resourceId, bucket);
+  }
 
   const columns: CalendarResourceTimeGridColumn[] = [];
   for (const [dayIndex, day] of days.entries()) {
@@ -186,12 +202,7 @@ export function layoutResourceTimeGrid(
   const availability: CalendarResourceTimeGridAvailabilityLayout[] = [];
 
   for (const column of columns) {
-    const assigned: CalendarOccurrence[] = [];
-    for (const assignment of normalized) {
-      if (!assignment.resourceIds.includes(column.resourceId)) continue;
-      const occurrence = occurrenceById.get(assignment.occurrenceId);
-      if (occurrence) assigned.push(occurrence);
-    }
+    const assigned = occurrencesByResource.get(column.resourceId) ?? [];
 
     for (const item of layoutTimedDay(assigned, column.day, options.timeZone)) {
       const clipped = clippedTimed(item, visible.start, visible.end);
@@ -243,13 +254,14 @@ export function layoutResourceTimeGrid(
       }));
     }
 
-    const backgrounds = (options.availability ?? []).filter(item => item.resourceId === column.resourceId);
+    const backgrounds = availabilityByResource.get(column.resourceId) ?? [];
+    const backgroundById = new Map(backgrounds.map(item => [item.id, item] as const));
     for (const item of layoutBackgroundDay(
       backgrounds as readonly CalendarBackgroundRange[],
       column.day,
       { timeZone: options.timeZone, startMinute: visible.start, endMinute: visible.end },
     )) {
-      const source = backgrounds.find(candidate => candidate.id === item.range.id);
+      const source = backgroundById.get(item.range.id);
       if (!source) throw new Error("Resource TimeGrid availability projection became inconsistent");
       availability.push(Object.freeze({
         ...item,

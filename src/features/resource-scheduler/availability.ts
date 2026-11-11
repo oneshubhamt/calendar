@@ -20,7 +20,7 @@ import {
   type CalendarAvailabilityPlacementPolicy,
   type CalendarAvailabilityState,
 } from "../availability.js";
-import { validateCalendarResources } from "./mechanics.js";
+import { flattenCalendarResources, validateCalendarResources } from "./mechanics.js";
 import type {
   CalendarResource,
   CalendarResourceId,
@@ -110,6 +110,7 @@ function definitionResourceMap(
   validateCalendarResources(resources);
   if (!Array.isArray(definitions)) throw new Error("Resource availability definitions must be an array");
   const resourceById = new Map(resources.map(resource => [resource.id, resource] as const));
+  const resourceOrder = new Map(flattenCalendarResources(resources).map(row => [row.resource.id, row.index] as const));
   const definitionIds = new Set<string>();
   const result = new Map<string, readonly CalendarResourceId[]>();
 
@@ -136,6 +137,7 @@ function definitionResourceMap(
       }
       ids.push(resourceId);
     }
+    ids.sort((left, right) => (resourceOrder.get(left) ?? 0) - (resourceOrder.get(right) ?? 0));
     result.set(id, Object.freeze(ids));
   }
   return result;
@@ -260,14 +262,15 @@ export function createResourceAvailabilityPlacementGuard(
   if (typeof options.resources !== "function") throw new Error("Resource availability resources must be a function");
   if (typeof options.definitions !== "function") throw new Error("Resource availability definitions must be a function");
 
-  const genericGuard = createAvailabilityPlacementGuard({
+  const genericOptions = {
     id: `${id}:calendar-adapter`,
     timeZone: options.timeZone,
-    definitions: () => resourceScopedCalendarDefinitions(options.resources(), options.definitions()),
     policy: options.policy,
     mode: options.mode,
     ...(options.message === undefined ? {} : { message: options.message }),
-  });
+  } as const;
+  // Reuse generic construction validation without reading host state.
+  createAvailabilityPlacementGuard({ ...genericOptions, definitions: () => [] });
 
   return {
     id,
@@ -276,11 +279,21 @@ export function createResourceAvailabilityPlacementGuard(
       let resources: readonly CalendarResource[];
       try {
         resources = validateCalendarResources(options.resources());
-        // Validate all definitions/resources before considering any one target.
-        resourceScopedCalendarDefinitions(resources, options.definitions());
       } catch {
         return { mode: "prevent", message: "Resource availability policy could not be evaluated." };
       }
+      let calendarDefinitions: readonly CalendarAvailabilityDefinition[];
+      try {
+        // One authoritative definition snapshot is used for every target resource
+        // in this evaluation; host state is never reread mid-decision.
+        calendarDefinitions = resourceScopedCalendarDefinitions(resources, options.definitions());
+      } catch {
+        return { mode: "prevent", message: "Resource availability policy could not be evaluated." };
+      }
+      const genericGuard = createAvailabilityPlacementGuard({
+        ...genericOptions,
+        definitions: () => calendarDefinitions,
+      });
       const resourceById = new Map(resources.map(resource => [resource.id, resource] as const));
       let warning: string | undefined;
 

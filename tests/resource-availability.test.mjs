@@ -26,14 +26,14 @@ test("resource availability expands Calendar recurrence once and fans out determ
   }];
   const result = expandResourceAvailabilityDefinitions(resources, definitions, range, { timeZone: "UTC" });
   assert.deepEqual(result.map(item => [item.definitionId, item.resourceId, item.start, item.end]), [
-    ["office-hours", "b", "2026-11-09T09:00:00.000Z", "2026-11-09T17:00:00.000Z"],
     ["office-hours", "a", "2026-11-09T09:00:00.000Z", "2026-11-09T17:00:00.000Z"],
-    ["office-hours", "b", "2026-11-10T09:00:00.000Z", "2026-11-10T17:00:00.000Z"],
+    ["office-hours", "b", "2026-11-09T09:00:00.000Z", "2026-11-09T17:00:00.000Z"],
     ["office-hours", "a", "2026-11-10T09:00:00.000Z", "2026-11-10T17:00:00.000Z"],
+    ["office-hours", "b", "2026-11-10T09:00:00.000Z", "2026-11-10T17:00:00.000Z"],
   ]);
   assert.equal(new Set(result.map(item => item.id)).size, 4);
   assert.deepEqual(result[0].metadata.calendarResourceAvailability, {
-    definitionId: "office-hours", resourceId: "b", state: "available",
+    definitionId: "office-hours", resourceId: "a", state: "available",
   });
   assert.equal(result[0].metadata.calendarAvailability, undefined);
   assert.equal(result[0].metadata.origin, "host");
