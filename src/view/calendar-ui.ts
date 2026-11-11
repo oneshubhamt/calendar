@@ -25,6 +25,7 @@ import type {
   CalendarKindOption,
   CalendarPlacementValidationPort,
   CalendarPresentationText,
+  CalendarResolvedWeekNumbering,
   CalendarSelection,
   CalendarUiAddonContext,
   CalendarUiChromeOptions,
@@ -38,7 +39,7 @@ import { addDays, addMonths, addYears, dateKey, parseAbsoluteDateTime, rangeForV
 import { instantToPlain } from "../core/temporal.js";
 import { civilMinuteOfInstant, civilMinuteResolution, instantAtCivilMinute, shiftCivilMinutes } from "../core/civil-timeline.js";
 import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from "./time-zone-scale.js";
-import { resolveCalendarWeekNumbering, type ResolvedCalendarWeekNumbering } from "./week-numbering.js";
+import { resolveCalendarWeekNumbering } from "./week-numbering.js";
 import { CalendarTemporalChrome } from "./temporal-chrome.js";
 import {
   backgroundAriaSuffix,
@@ -149,7 +150,7 @@ export class CalendarUi {
   private readonly secondaryTimeZone: string | undefined;
   private readonly dstOverlapDisambiguation: CalendarOverlapDisambiguation;
   private readonly weekStartsOn: Weekday;
-  private readonly weekNumbering: ResolvedCalendarWeekNumbering | undefined;
+  private readonly weekNumbering: CalendarResolvedWeekNumbering | undefined;
   private readonly slotMinutes: number;
   private readonly snapPolicy: Required<CalendarSnapPolicy>;
   private readonly collisionPolicy: CalendarCollisionPolicy;
@@ -385,6 +386,7 @@ export class CalendarUi {
     return Object.freeze({
       ...this.viewTitleContext(),
       viewId: this.view,
+      ...(this.weekNumbering ? { weekNumbering: this.weekNumbering } : {}),
       sources: Object.freeze([...this.sources]),
       occurrences: Object.freeze([...this.displayOccurrences()]),
       backgroundRanges: Object.freeze([...this.backgroundRanges]),
