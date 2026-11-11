@@ -1541,6 +1541,7 @@ test("print snapshots cover all built-in views plus optional Multi-Month and Tim
       },
     );
     await calendar.refresh();
+    globalThis.__printCoverageCalendar = calendar;
 
     const cases = [
       ["month", ".dc-month-grid"],
@@ -1588,4 +1589,18 @@ test("print snapshots cover all built-in views plus optional Multi-Month and Tim
   }
   expect(results.invalidTitle).toMatch(/1–256 characters/);
   expect(results.noHeadingCount).toBe(0);
+
+  for (const view of ["month", "week", "multi-month", "timeline"]) {
+    await page.evaluate(async viewId => {
+      const calendar = globalThis.__printCoverageCalendar;
+      calendar.setView(viewId);
+      await calendar.refresh();
+      document.querySelector(".dc-print-snapshot")?.remove();
+      const snapshot = calendar.createPrintSnapshot({ title: `Print ${viewId}` });
+      document.body.append(snapshot);
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    }, view);
+    const capture = await page.locator(".dc-print-snapshot").screenshot({ animations: "disabled" });
+    expect(capture.byteLength, `print capture for ${view}`).toBeGreaterThan(1_000);
+  }
 });
