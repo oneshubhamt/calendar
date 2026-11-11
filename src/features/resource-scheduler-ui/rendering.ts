@@ -1,4 +1,5 @@
 import type { CalendarOccurrence, CalendarRange } from "../../core/types.js";
+import { resolveHorizontalTimelineRangeGeometry } from "../../core/horizontal-timeline.js";
 import { isSafeHostClassName } from "../../view/presentation.js";
 import {
   flattenCalendarResources,
@@ -8,7 +9,6 @@ import {
   type CalendarResourceId,
   type CalendarResourceTimelineLayoutItem,
 } from "../resource-scheduler/index.js";
-import { resolveResourceTimelineRangeGeometry } from "../resource-scheduler/timeline-layout.js";
 
 const MAX_AXIS_TICKS = 240;
 
@@ -82,7 +82,7 @@ export function renderResourceSchedulerSurface(
     projection.range,
     { timeZone: model.timeZone, collapsedResourceIds: collapsedIds },
   );
-  const geometry = resolveResourceTimelineRangeGeometry(projection.range, model.timeZone);
+  const geometry = resolveHorizontalTimelineRangeGeometry(projection.range, model.timeZone);
   const timelineWidth = Math.max(model.minTimelineWidth, geometry.widthMinutes * model.pixelsPerMinute);
   const scale = timelineWidth / geometry.widthMinutes;
   const tickMinutes = resolvedTickMinutes(geometry.end - geometry.start, model.axisTickMinutes);
@@ -141,7 +141,7 @@ export function renderResourceSchedulerSurface(
 
 function headerRow(
   model: ResourceSchedulerSurfaceModel,
-  geometry: ReturnType<typeof resolveResourceTimelineRangeGeometry>,
+  geometry: ReturnType<typeof resolveHorizontalTimelineRangeGeometry>,
   timelineWidth: number,
   scale: number,
   tickMinutes: number,
