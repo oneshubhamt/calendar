@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import * as Calendar from "../dist/index.js";
+import * as CalendarCore from "../dist/core/index.js";
 
 const read = path => fs.readFile(new URL(path, import.meta.url), "utf8");
 const importsOf = source => [...source.matchAll(/from\s+["']([^"']+)["']/gu)].map(match => match[1]);
@@ -19,7 +20,7 @@ async function sourceFilesUnder(directory) {
 test("generic dependency direction and host-domain isolation are explicit architecture guards", async () => {
   const corePaths = [
     "../src/core/types.ts","../src/core/authority.ts","../src/core/calendar-engine.ts","../src/core/commands.ts",
-    "../src/core/layout.ts","../src/core/recurrence.ts","../src/core/store.ts","../src/core/interaction.ts",
+    "../src/core/layout.ts","../src/core/visual-lanes.ts","../src/core/recurrence.ts","../src/core/store.ts","../src/core/interaction.ts",
   ];
   const viewPaths = [
     "../src/view/types.ts","../src/view/calendar-ui.ts","../src/view/view-renderer.ts",
@@ -53,8 +54,9 @@ test("optional feature and package boundaries stay explicit", async () => {
   for (const name of [
     "resolveOccurrenceCapabilities","CalendarCommandLifecycle","resolveOccurrencePresentation",
     "secondaryTimeScaleLabels","resolveNavigationBounds","createAvailabilityBackgroundProvider",
-    "executeCalendarResourcePlacement",
+    "executeCalendarResourcePlacement","partitionOverlapLanes",
   ]) assert.equal(Calendar[name], undefined, `${name} must remain outside the root API`);
+  assert.equal(CalendarCore.partitionOverlapLanes, undefined, "visual lane partitioning must remain internal to core implementation");
 });
 
 test("Resource Scheduler remains optional, headless-first and renderer-separated", async () => {
