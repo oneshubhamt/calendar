@@ -160,20 +160,20 @@ export function createMultiMonthView(options: CalendarMultiMonthViewOptions): Ca
     id: resolved.id,
     label: resolved.label,
     includeBackgroundRanges: true,
-    range(context) {
+    range(context: CalendarViewNavigationContext) {
       const first = firstDisplayedMonth(context);
       const last = addMonths(first, resolved.months - 1, context.timeZone);
       const firstRange = rangeForView(first, "month", context.weekStartsOn, context.timeZone);
       const lastRange = rangeForView(last, "month", context.weekStartsOn, context.timeZone);
       return Object.freeze({ start: firstRange.start, end: lastRange.end });
     },
-    shiftAnchor(context, direction) {
+    shiftAnchor(context: CalendarViewNavigationContext, direction: 1 | -1) {
       return addMonths(firstDisplayedMonth(context), direction * resolved.stepMonths, context.timeZone);
     },
-    title(context) {
+    title(context: CalendarViewTitleContext) {
       return multiMonthTitle(context, resolved.months);
     },
-    render(context) {
+    render(context: CalendarCustomViewRenderContext) {
       return renderMultiMonth(context, resolved.months, resolved.columns);
     },
   });
