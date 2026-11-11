@@ -25,5 +25,6 @@ jobs:
         run: node --version && npm --version && npx playwright --version
       - name: Build
         run: npm run build
+      # VC-I final configured matrix: Chromium + Firefox + WebKit.
       - name: Full configured browser QA
         run: npx playwright test --config=playwright.config.mjs

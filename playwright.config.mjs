@@ -47,7 +47,7 @@ export default defineConfig({
     },
     {
       name: "webkit",
-      testMatch: ["**/storage.spec.mjs", "**/rendering-smoke.spec.mjs"],
+      testMatch: ["**/storage.spec.mjs", "**/rendering-smoke.spec.mjs", "**/resource-scheduler.spec.mjs", "**/resource-time-grid.spec.mjs"],
       use: { ...devices["Desktop Safari"], viewport: { width: 1440, height: 1000 } },
     },
   ],
