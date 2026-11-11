@@ -515,6 +515,198 @@ test("Month week numbers are optional accessible and narrow-screen safe", async 
   expect(visualCapture.byteLength).toBeGreaterThan(1_000);
 });
 
+test("optional Multi-Month composes canonical Month panels across years with one query", async ({ page }) => {
+  await page.goto("/tests/browser/harness.html");
+  await page.evaluate(async () => {
+    const [
+      { CalendarEngine },
+      { MemoryCalendarRepository },
+      { RepositoryCommandHandler },
+      { CalendarUi },
+      { createMultiMonthView },
+      { setCalendarExternalDropData },
+    ] = await Promise.all([
+      import("/dist/core/calendar-engine.js"),
+      import("/dist/core/store.js"),
+      import("/dist/core/commands.js"),
+      import("/dist/view/calendar-ui.js"),
+      import("/dist/view/multi-month.js"),
+      import("/dist/view/external-drop.js"),
+    ]);
+
+    const source = { id: "personal", title: "Personal", visible: true, removable: true };
+    const items = [
+      {
+        id: "move-me",
+        calendarId: "personal",
+        title: "Move me",
+        start: "2026-11-12T09:00:00.000Z",
+        end: "2026-11-12T10:00:00.000Z",
+        kind: "event",
+        ownership: "calendar",
+        editPolicy: "full",
+      },
+      {
+        id: "monthly-review",
+        calendarId: "personal",
+        seriesId: "monthly-review",
+        title: "Monthly review",
+        start: "2026-11-10T11:00:00.000Z",
+        end: "2026-11-10T12:00:00.000Z",
+        kind: "event",
+        ownership: "calendar",
+        editPolicy: "full",
+        recurrence: { rule: { frequency: "monthly", count: 3 } },
+      },
+    ];
+    const repository = new MemoryCalendarRepository([source], items);
+    const commands = new RepositoryCommandHandler(repository);
+    let projectionCalls = 0;
+    let backgroundCalls = 0;
+    const projectedRanges = [];
+    const projection = {
+      id: "multi-month-query-probe",
+      project(range) {
+        projectionCalls += 1;
+        projectedRanges.push({ ...range });
+        return [];
+      },
+    };
+    const backgrounds = {
+      id: "multi-month-backgrounds",
+      projectBackgroundRanges() {
+        backgroundCalls += 1;
+        return [{
+          id: "january-background",
+          start: "2027-01-05T00:00:00.000Z",
+          end: "2027-01-06T00:00:00.000Z",
+          allDay: true,
+          label: "January background",
+        }];
+      },
+    };
+    const engine = new CalendarEngine(repository, [projection], [], [backgrounds]);
+    const createdSelections = [];
+    const view = createMultiMonthView({ months: 3, columns: "auto", stepMonths: 3 });
+    const calendar = new CalendarUi(document.getElementById("browser-test-host"), engine, {
+      locale: "en-US",
+      timeZone: "UTC",
+      initialDate: "2026-11-15T12:00:00.000Z",
+      initialView: "multi-month",
+      customViews: [view],
+      weekStartsOn: 1,
+      weekNumbers: { minimumDaysInFirstWeek: 4 },
+      defaultCalendarId: "personal",
+      commandHandler: commands,
+      callbacks: {
+        handleCreate(selection) {
+          createdSelections.push(selection);
+          return true;
+        },
+      },
+    });
+
+    projectionCalls = 0;
+    backgroundCalls = 0;
+    projectedRanges.length = 0;
+    await calendar.refresh();
+
+    const dispatchExternal = (date, title) => {
+      const target = document.querySelector(`.dc-day-cell[data-calendar-date^="${date}"]`);
+      if (!(target instanceof HTMLElement)) throw new Error(`Multi-Month drop target missing for ${date}`);
+      const transfer = new DataTransfer();
+      setCalendarExternalDropData(transfer, { title });
+      target.dispatchEvent(new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer: transfer }));
+      target.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: transfer }));
+      target.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    };
+
+    const createOn = date => {
+      const target = document.querySelector(`.dc-day-cell[data-calendar-date^="${date}"]`);
+      if (!(target instanceof HTMLElement)) throw new Error(`Multi-Month create target missing for ${date}`);
+      target.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+    };
+
+    globalThis.__multiMonthProbe = {
+      calendar,
+      repository,
+      projectionCalls: () => projectionCalls,
+      backgroundCalls: () => backgroundCalls,
+      projectedRanges,
+      createdSelections,
+      dispatchExternal,
+      createOn,
+    };
+  });
+
+  await expect(page.locator(".dc-multi-month")).toHaveAttribute("data-month-count", "3");
+  await expect(page.locator(".dc-multi-month-section")).toHaveCount(3);
+  await expect(page.locator(".dc-multi-month-title")).toHaveText([
+    "November 2026",
+    "December 2026",
+    "January 2027",
+  ]);
+  await expect(page.locator("[data-role='title']")).toHaveText("November 2026 – January 2027");
+  expect(await page.evaluate(() => globalThis.__multiMonthProbe.projectionCalls())).toBe(1);
+  expect(await page.evaluate(() => globalThis.__multiMonthProbe.backgroundCalls())).toBe(1);
+  expect(await page.evaluate(() => globalThis.__multiMonthProbe.projectedRanges[0])).toEqual({
+    start: "2026-10-26T00:00:00.000Z",
+    end: "2027-02-08T00:00:00.000Z",
+  });
+
+  await expect(page.getByText("Monthly review", { exact: true })).toHaveCount(3);
+  await expect(page.locator(".dc-week-number")).not.toHaveCount(0);
+  const januaryFifth = page.locator('.dc-day-cell[data-calendar-date^="2027-01-05"]');
+  await expect(januaryFifth.locator(".dc-day-background-range")).toHaveCount(1);
+  await expect(januaryFifth).toHaveAttribute("aria-label", /Background: January background/);
+
+  const moving = page.locator(".dc-event").filter({ hasText: "Move me" }).first();
+  const decemberTwentieth = page.locator('.dc-day-cell[data-calendar-date^="2026-12-20"]');
+  await moving.dragTo(decemberTwentieth);
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__multiMonthProbe.repository.read().items.find(item => item.id === "move-me")?.start,
+  )).toBe("2026-12-20T09:00:00.000Z");
+
+  await page.evaluate(() => globalThis.__multiMonthProbe.dispatchExternal("2026-12-15", "External multi"));
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__multiMonthProbe.repository.read().items.some(item => item.title === "External multi"),
+  )).toBe(true);
+
+  await page.evaluate(() => globalThis.__multiMonthProbe.createOn("2027-01-20"));
+  await expect.poll(async () => await page.evaluate(() =>
+    globalThis.__multiMonthProbe.createdSelections.length,
+  )).toBe(1);
+  expect(await page.evaluate(() => globalThis.__multiMonthProbe.createdSelections[0])).toEqual({
+    start: "2027-01-20T00:00:00.000Z",
+    end: "2027-01-21T00:00:00.000Z",
+    allDay: true,
+  });
+
+  await page.getByRole("button", { name: "Next period" }).click();
+  await expect(page.locator(".dc-multi-month-title")).toHaveText([
+    "February 2027",
+    "March 2027",
+    "April 2027",
+  ]);
+  await expect(page.locator("[data-role='title']")).toHaveText("February – April 2027");
+  await page.getByRole("button", { name: "Previous period" }).click();
+  await expect(page.locator(".dc-multi-month-title").first()).toHaveText("November 2026");
+
+  await page.setViewportSize({ width: 390, height: 820 });
+  const responsive = await page.locator(".dc-multi-month-section").evaluateAll(nodes =>
+    nodes.slice(0, 2).map(node => {
+      const rect = node.getBoundingClientRect();
+      return { left: rect.left, top: rect.top, width: rect.width };
+    }),
+  );
+  expect(responsive[0].width).toBeLessThanOrEqual(366);
+  expect(responsive[1].top).toBeGreaterThan(responsive[0].top);
+  expect(Math.abs(responsive[1].left - responsive[0].left)).toBeLessThanOrEqual(1);
+
+  const capture = await page.locator(".dc-multi-month").screenshot();
+  expect(capture.byteLength).toBeGreaterThan(2_000);
+});
+
 test("external DOM drops create through Calendar authority while internal drag remains a move", async ({ page }) => {
   await page.goto("/tests/browser/harness.html");
   await page.evaluate(async () => {
