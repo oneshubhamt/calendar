@@ -358,9 +358,9 @@ export class CalendarUi {
     return Object.freeze({
       ...this.viewTitleContext(),
       viewId: this.view,
-      sources: this.sources,
-      occurrences: this.displayOccurrences(),
-      backgroundRanges: this.backgroundRanges,
+      sources: Object.freeze([...this.sources]),
+      occurrences: Object.freeze([...this.displayOccurrences()]),
+      backgroundRanges: Object.freeze([...this.backgroundRanges]),
       now: this.clock.now(),
       actions: this.customViewActions(),
     });
