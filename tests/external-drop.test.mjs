@@ -35,7 +35,6 @@ test("external-drop template validation owns bounded generic data and rejects ma
     durationMinutes: 45,
     durationDays: 2,
     temporalForm: "interval",
-    display: { icon: "T", emphasis: "strong" },
     metadata,
   });
 
@@ -108,7 +107,11 @@ test("custom decoder declarations are validated once and preserve synchronous ow
     /MIME types are invalid/i,
   );
   assert.throws(
-    () => resolveCalendarExternalDropDecoder({ types: ["bad type"], decode: null }),
+    () => resolveCalendarExternalDropDecoder({ types: ["bad type"], decode() { return null; } }),
+    /MIME types are invalid/i,
+  );
+  assert.throws(
+    () => resolveCalendarExternalDropDecoder({ types: ["application/x-host-task"], decode: null }),
     /decoder is invalid/i,
   );
 });
