@@ -23,7 +23,7 @@ test("generic dependency direction and host-domain isolation are explicit archit
     "../src/core/layout.ts","../src/core/visual-lanes.ts","../src/core/recurrence.ts","../src/core/store.ts","../src/core/interaction.ts",
   ];
   const viewPaths = [
-    "../src/view/types.ts","../src/view/calendar-ui.ts","../src/view/view-renderer.ts",
+    "../src/view/types.ts","../src/view/calendar-ui.ts","../src/view/view-renderer.ts","../src/view/view-registry.ts",
     "../src/view/gesture-controller.ts","../src/view/temporal-chrome.ts",
   ];
   const core = await Promise.all(corePaths.map(async path => [path, await read(path)]));
@@ -52,7 +52,7 @@ test("optional feature and package boundaries stay explicit", async () => {
     "./features/resource-scheduler","./features/resource-scheduler-ui",
   ]) assert.equal(typeof pkg.exports[subpath]?.import, "string", `missing explicit feature export ${subpath}`);
   for (const name of [
-    "resolveOccurrenceCapabilities","CalendarCommandLifecycle","resolveOccurrencePresentation",
+    "resolveOccurrenceCapabilities","CalendarCommandLifecycle","resolveOccurrencePresentation","CalendarViewRegistry",
     "secondaryTimeScaleLabels","resolveNavigationBounds","createAvailabilityBackgroundProvider",
     "executeCalendarResourcePlacement","partitionOverlapLanes",
   ]) assert.equal(Calendar[name], undefined, `${name} must remain outside the root API`);
@@ -75,6 +75,26 @@ test("Resource Scheduler remains optional, headless-first and renderer-separated
   assert.match(schedulerUi, /from "\.\/rendering\.js"/);
   assert.doesNotMatch(schedulerRendering, /executeCalendarResourcePlacement|mutationPort|refreshProjection|confirmWarnings/);
   assert.doesNotMatch(schedulerUi, /\.\.\/\.\.\/(?:storage|interoperability|integration|adapters)\//);
+});
+
+test("custom view extensibility remains view-layer only and mutation-safe", async () => {
+  const [coreTypes, viewTypes, registry, ui, storage] = await Promise.all([
+    read("../src/core/types.ts"),
+    read("../src/view/types.ts"),
+    read("../src/view/view-registry.ts"),
+    read("../src/view/calendar-ui.ts"),
+    read("../src/storage/indexeddb-repository.ts"),
+  ]);
+
+  assert.doesNotMatch(coreTypes, /CalendarCustomView|CalendarUiViewId|customViews/);
+  assert.match(viewTypes, /interface CalendarCustomViewPlugin/);
+  assert.match(viewTypes, /interface CalendarCustomViewActionPort/);
+  assert.doesNotMatch(viewTypes, /CalendarRepository|IndexedDb|SyncState|GoogleCalendar/);
+  assert.doesNotMatch(registry, /storage|interoperability|integration|adapters|CalendarRepository/);
+  assert.match(ui, /new CalendarViewRegistry/);
+  assert.match(ui, /body\.append\(this\.renderActiveView\(\)\)/);
+  assert.doesNotMatch(ui, /if \(this\.view === "month"\) body\.append|else if \(this\.view === "year"\) body\.append/);
+  assert.doesNotMatch(storage, /CalendarCustomView|CalendarUiViewId/);
 });
 
 test("view decomposition keeps mutation, rendering and gesture concerns separated", async () => {
