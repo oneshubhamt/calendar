@@ -29,4 +29,6 @@ jobs:
         run: npm run build
       # VC-I final configured matrix: Chromium + Firefox + WebKit; container options follow Playwright Docker guidance.
       - name: Full configured browser QA
+        env:
+          HOME: /root
         run: npx playwright test --config=playwright.config.mjs
