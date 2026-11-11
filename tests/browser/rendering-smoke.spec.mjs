@@ -399,6 +399,119 @@ test("registered custom views own range navigation rendering and use only the bo
 });
 
 
+test("Month week numbers are optional accessible and narrow-screen safe", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 820 });
+  await page.goto("/tests/browser/harness.html");
+
+  await page.evaluate(async () => {
+    const [{ CalendarEngine }, { MemoryCalendarRepository }, { CalendarUi }] = await Promise.all([
+      import("/dist/core/calendar-engine.js"),
+      import("/dist/core/store.js"),
+      import("/dist/view/calendar-ui.js"),
+    ]);
+
+    const source = { id: "personal", title: "Personal", visible: true, removable: true };
+    const item = {
+      id: "jan-event",
+      calendarId: "personal",
+      title: "January event",
+      start: "2021-01-01",
+      end: "2021-01-02",
+      allDay: true,
+      precision: "date",
+      temporal: { kind: "date" },
+      kind: "event",
+      ownership: "calendar",
+      editPolicy: "full",
+    };
+    const backgrounds = {
+      id: "month-backgrounds",
+      projectBackgroundRanges() {
+        return [{
+          id: "jan-background",
+          start: "2021-01-01T00:00:00.000Z",
+          end: "2021-01-02T00:00:00.000Z",
+          allDay: true,
+          label: "Background fixture",
+        }];
+      },
+    };
+    const repository = new MemoryCalendarRepository([source], [item]);
+    const engine = new CalendarEngine(repository, [], [], [backgrounds]);
+    const host = document.getElementById("browser-test-host");
+
+    const mount = async weekNumbers => {
+      host.replaceChildren();
+      const calendar = new CalendarUi(host, engine, {
+        locale: "en-US",
+        timeZone: "UTC",
+        initialDate: "2021-01-15T12:00:00.000Z",
+        initialView: "month",
+        weekStartsOn: 1,
+        weekNumbers,
+      });
+      await calendar.refresh();
+      return calendar;
+    };
+
+    let calendar = await mount(false);
+    globalThis.__monthWeekProbe = {
+      disabled: {
+        weekNumbers: document.querySelectorAll(".dc-week-number").length,
+        headerColumns: document.querySelector(".dc-weekdays")?.children.length ?? 0,
+        dayCells: document.querySelectorAll(".dc-day-cell").length,
+        gridHasWeekNumbers: document.querySelector(".dc-month-grid")?.classList.contains("has-week-numbers") ?? false,
+      },
+    };
+    calendar.destroy();
+
+    calendar = await mount({ minimumDaysInFirstWeek: 4 });
+    globalThis.__monthWeekProbe.calendar = calendar;
+  });
+
+  expect(await page.evaluate(() => globalThis.__monthWeekProbe.disabled)).toEqual({
+    weekNumbers: 0,
+    headerColumns: 7,
+    dayCells: 42,
+    gridHasWeekNumbers: false,
+  });
+
+  await expect(page.locator(".dc-week-number-heading")).toHaveAttribute("aria-label", "Week number");
+  await expect(page.locator(".dc-week-number")).toHaveCount(6);
+  await expect(page.locator(".dc-week-number").first()).toHaveText("53");
+  await expect(page.locator(".dc-week-number").first()).toHaveAttribute("aria-label", "Week 53 of 2020");
+  await expect(page.locator(".dc-week-number").nth(1)).toHaveText("1");
+  await expect(page.locator(".dc-week-number").nth(1)).toHaveAttribute("aria-label", "Week 1 of 2021");
+  await expect(page.locator(".dc-week-number[role='rowheader']")).toHaveCount(6);
+  await expect(page.locator(".dc-day-cell")).toHaveCount(42);
+  await expect(page.locator(".dc-weekdays")).toHaveClass(/has-week-numbers/);
+  await expect(page.locator(".dc-month-grid")).toHaveClass(/has-week-numbers/);
+
+  const januaryFirst = page.locator('.dc-day-cell[data-calendar-date^="2021-01-01"]');
+  await expect(januaryFirst.getByText("January event")).toBeVisible();
+  await expect(januaryFirst.locator(".dc-day-background-range")).toHaveCount(1);
+  await expect(januaryFirst).toHaveAttribute("aria-label", /Background: Background fixture/);
+
+  const layout = await page.evaluate(() => {
+    const grid = document.querySelector(".dc-month-grid");
+    const body = document.querySelector(".dc-body");
+    if (!(grid instanceof HTMLElement) || !(body instanceof HTMLElement)) throw new Error("Month layout missing");
+    const gridRect = grid.getBoundingClientRect();
+    const bodyRect = body.getBoundingClientRect();
+    return {
+      gridWidth: gridRect.width,
+      bodyWidth: bodyRect.width,
+      scrollWidth: grid.scrollWidth,
+      clientWidth: grid.clientWidth,
+    };
+  });
+  expect(layout.gridWidth).toBeLessThanOrEqual(layout.bodyWidth + 1);
+  expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth + 1);
+
+  const visualCapture = await page.locator(".dc-month-panel").screenshot();
+  expect(visualCapture.byteLength).toBeGreaterThan(1_000);
+});
+
 test("external DOM drops create through Calendar authority while internal drag remains a move", async ({ page }) => {
   await page.goto("/tests/browser/harness.html");
   await page.evaluate(async () => {
