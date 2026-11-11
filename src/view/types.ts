@@ -66,6 +66,11 @@ export interface CalendarCustomViewActionPort {
   canAcceptExternalDrop(dataTransfer: DataTransfer | null): boolean;
   /** Decode synchronously, then create through Calendar's canonical source/placement/command path. */
   dropExternal(dataTransfer: DataTransfer | null, selection: CalendarSelection): Promise<boolean>;
+  /** Shared Calendar dragenter/dragover/drop lifecycle for custom/bundled view targets. */
+  bindExternalDropTarget(
+    element: HTMLElement,
+    resolveSelection: (event: DragEvent) => CalendarSelection | undefined,
+  ): () => void;
   /**
    * Move an occurrence to a new start instant. Calendar preserves ordinary duration,
    * uses one hour when converting a date-like occurrence to timed form, and preserves
