@@ -94,6 +94,8 @@ export interface CalendarCustomViewActionPort {
 
 export interface CalendarCustomViewRenderContext extends CalendarViewTitleContext {
   readonly viewId: CalendarUiViewId;
+  /** Resolved policy shared with Month-like bundled/custom views. */
+  readonly weekNumbering?: CalendarResolvedWeekNumbering | undefined;
   readonly sources: readonly CalendarSource[];
   readonly occurrences: readonly CalendarOccurrence[];
   readonly backgroundRanges: readonly CalendarBackgroundRange[];
@@ -308,6 +310,10 @@ export interface CalendarUiAddon {
 export interface CalendarWeekNumbersOptions {
   /** 1–7. Omitted resolves from locale where supported, otherwise falls back deterministically to 4. */
   readonly minimumDaysInFirstWeek?: number | undefined;
+}
+
+export interface CalendarResolvedWeekNumbering {
+  readonly minimumDaysInFirstWeek: number;
 }
 
 export interface CalendarUiChromeOptions {
