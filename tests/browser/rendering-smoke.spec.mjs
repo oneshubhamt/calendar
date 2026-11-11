@@ -259,8 +259,17 @@ test("registered custom views own range navigation rendering and use only the bo
         root.dataset.backgroundCount = String(context.backgroundRanges.length);
         root.dataset.contextKeys = Object.keys(context).sort().join(",");
         root.dataset.actionKeys = Object.keys(context.actions).sort().join(",");
+        root.dataset.collectionsFrozen = String(
+          Object.isFrozen(context.sources)
+          && Object.isFrozen(context.occurrences)
+          && Object.isFrozen(context.backgroundRanges),
+        );
         const occurrence = context.occurrences[0];
         if (!occurrence) return root;
+        root.dataset.forgedMovable = String(context.actions.canMoveOccurrence({
+          ...occurrence,
+          occurrenceId: "forged-occurrence",
+        }));
         const presentation = context.actions.occurrencePresentation(occurrence);
         root.dataset.presentedTitle = typeof presentation.title === "string"
           ? presentation.title
@@ -340,6 +349,8 @@ test("registered custom views own range navigation rendering and use only the bo
   await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-occurrence-count", "1");
   await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-background-count", "1");
   await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-presented-title", "Presented custom event");
+  await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-collections-frozen", "true");
+  await expect(page.locator(".custom-two-day-view")).toHaveAttribute("data-forged-movable", "false");
 
   const exposed = await page.locator(".custom-two-day-view").evaluate(node => ({
     context: node.dataset.contextKeys,
