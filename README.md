@@ -4,7 +4,7 @@ Release: **1.2.0**.
 
 Director Calendar is reusable, local-first calendar software written in strict TypeScript. The calendar kernel is application-agnostic: hosts supply their own semantic kinds, ownership/provenance, metadata, editors/actions and adapters without changing calendar mechanics.
 
-The package provides month/week/day/year views plus day/week/month/30-day agenda lists, recurrence and exceptions, an advanced recurrence editor, instant/zoned/floating/date-only time, DST-safe movement, drag/drop and dual-edge resize with touch/keyboard interaction, month-overflow expansion, undo/redo, collision/snap policies, search/filtering, multiple calendars, routines, quick-create, revision-guarded incremental IndexedDB persistence, RFC 5545 iCalendar, Google Calendar synchronization, external overlays and reminder delivery contracts. It has no runtime framework or calendar dependency.
+The package provides month/week/day/year views plus day/week/month/30-day agenda lists, recurrence and exceptions, an advanced recurrence editor, instant/zoned/floating/date-only time, DST-safe movement, drag/drop and dual-edge resize with touch/keyboard interaction, month-overflow expansion, undo/redo, collision/snap policies, search/filtering, multiple calendars, routines, quick-create, revision-guarded incremental IndexedDB persistence, RFC 5545 iCalendar, Google Calendar synchronization, external overlays and reminder delivery contracts. The DOM view layer also accepts explicitly registered custom views with their own range/navigation/title/background-query/render contracts while exposing only a bounded Calendar action port rather than repository/storage access. It has no runtime framework or calendar dependency.
 
 ## Boundaries
 
