@@ -1585,8 +1585,8 @@ export class CalendarUi {
     }
     if (!await this.allowPlacement(start, end, allDay, current, "move")) return false;
 
-    const patch = allDay
-      ? placementTimePatch(start, end, true, this.timeZone)
+    const patch = allDay || isDateLikeOccurrence(current)
+      ? placementTimePatch(start, end, allDay, this.timeZone)
       : { start: start.toISOString(), end: end.toISOString(), allDay: false, precision: "minute" as const };
     const status = await this.mutations.issueOccurrencePatch(
       current,
