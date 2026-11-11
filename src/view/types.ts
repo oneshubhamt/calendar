@@ -101,6 +101,12 @@ export interface CalendarCustomViewRenderPort {
   monthPanel(monthStart: Date): HTMLElement;
 }
 
+export interface CalendarCustomViewPointerGesturePolicy {
+  readonly longPressMs: number;
+  readonly autoScrollEdgePx: number;
+  readonly autoScrollMaxPxPerFrame: number;
+}
+
 export interface CalendarCustomViewRenderContext extends CalendarViewTitleContext {
   readonly viewId: CalendarUiViewId;
   /** Resolved policy shared with Month-like bundled/custom views. */
@@ -113,6 +119,7 @@ export interface CalendarCustomViewRenderContext extends CalendarViewTitleContex
   readonly slotMinutes: number;
   readonly snapPolicy: Required<CalendarSnapPolicy>;
   readonly dstOverlapDisambiguation: CalendarOverlapDisambiguation;
+  readonly pointerGesture: CalendarCustomViewPointerGesturePolicy;
   readonly actions: CalendarCustomViewActionPort;
   readonly renderers: CalendarCustomViewRenderPort;
 }
@@ -129,6 +136,8 @@ export interface CalendarCustomViewPlugin {
   title(context: CalendarViewTitleContext): string;
   readonly includeBackgroundRanges?: boolean | undefined;
   render(context: CalendarCustomViewRenderContext): HTMLElement;
+  /** Dispose state owned by one rendered element before refresh, view switch or Calendar destruction. */
+  dispose?(element: HTMLElement): void;
 }
 
 /** Host-defined occurrence action. `kind` and `state` are presentation metadata only and intentionally open-ended. */
@@ -388,8 +397,12 @@ export interface CalendarUiOptions {
   readonly defaultOwnership?: CalendarOwnership;
   readonly defaultEditPolicy?: EditPolicy;
   readonly itemFactory?: CalendarItemFactory;
-  /** Optional host-owned external drag formats. Calendar's standard MIME format is always supported. */
+  /** Enable Calendar's standard external-drop MIME. A custom decoder also opts the feature in. Default: false. */
+  readonly externalDrop?: boolean;
+  /** Optional host-owned external drag formats; supplying a decoder explicitly enables external drop. */
   readonly externalDropDecoder?: CalendarExternalDropDecoder;
+  /** Enable in-page @media print styling. Detached createPrintSnapshot() remains explicitly callable. Default: false. */
+  readonly print?: boolean;
   readonly extensions?: readonly CalendarUiExtension[];
   readonly addons?: readonly CalendarUiAddon[];
   readonly allowCreate?: boolean;

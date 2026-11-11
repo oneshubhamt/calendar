@@ -68,6 +68,11 @@ interface TimelineDragPreview {
   deltaMinutes: number;
 }
 
+interface RenderedTimeline {
+  readonly element: HTMLElement;
+  dispose(): void;
+}
+
 const OPTION_KEYS = new Set([
   "id",
   "label",
@@ -197,7 +202,7 @@ function renderBackground(
 function renderTimeline(
   context: CalendarCustomViewRenderContext,
   options: ResolvedTimelineOptions,
-): HTMLElement {
+): RenderedTimeline {
   const geometry = resolveHorizontalTimelineRangeGeometry(context.visibleRange, context.timeZone);
   const timelineWidth = Math.max(options.minWidth, geometry.widthMinutes * options.pixelsPerHour / 60);
   const scale = timelineWidth / geometry.widthMinutes;
@@ -322,9 +327,9 @@ function renderTimeline(
 
   const pointer = new CalendarPointerGestureController<TimelineGestureData>({
     scrollElement: () => scroll,
-    longPressMs: 420,
-    autoScrollEdgePx: 48,
-    autoScrollMaxPxPerFrame: 18,
+    longPressMs: context.pointerGesture.longPressMs,
+    autoScrollEdgePx: context.pointerGesture.autoScrollEdgePx,
+    autoScrollMaxPxPerFrame: context.pointerGesture.autoScrollMaxPxPerFrame,
     onArmingChange: (data, active) => data.element.classList.toggle("is-touch-arming", active),
     onActivate(session) {
       activeDrag = { data: session.data, deltaMinutes: 0 };
@@ -544,11 +549,15 @@ function renderTimeline(
   surface.append(axis, track);
   scroll.append(surface);
   root.append(scroll);
-  return root;
+  return Object.freeze({
+    element: root,
+    dispose: () => pointer.destroy(),
+  });
 }
 
 export function createTimelineView(options: CalendarTimelineViewOptions = {}): CalendarCustomViewPlugin {
   const resolved = resolveOptions(options);
+  const disposers = new WeakMap<HTMLElement, () => void>();
   return Object.freeze({
     id: resolved.id,
     label: resolved.label,
@@ -563,7 +572,13 @@ export function createTimelineView(options: CalendarTimelineViewOptions = {}): C
       return timelineTitle(context, resolved.spanDays);
     },
     render(context: CalendarCustomViewRenderContext) {
-      return renderTimeline(context, resolved);
+      const rendered = renderTimeline(context, resolved);
+      disposers.set(rendered.element, rendered.dispose);
+      return rendered.element;
+    },
+    dispose(element: HTMLElement) {
+      disposers.get(element)?.();
+      disposers.delete(element);
     },
   });
 }

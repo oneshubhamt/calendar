@@ -1,5 +1,43 @@
 import type { CalendarPrintSnapshotOptions } from "./types.js";
 
+export const CALENDAR_PRINT_CSS = String.raw`
+/* Detached print snapshots use the same rendered view and stylesheet, but never the live interaction surface. */
+.dc-print-snapshot{display:block;background:#fff;color:#111827;font:14px/1.35 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.dc-print-heading{margin:0 0 10px;padding:0 0 8px;border-bottom:1px solid #cbd5e1;color:#111827}
+.dc-print-heading h1{margin:0;font:650 18px/1.25 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.dc-print-snapshot .dc-root{--dc-border:#cbd5e1;--dc-muted:#4b5563;--dc-bg:#fff;--dc-soft:#f8fafc;--dc-text:#111827;color:var(--dc-text);background:var(--dc-bg);border:0;border-radius:0;min-height:0;height:auto;overflow:visible}
+.dc-print-snapshot .dc-body,.dc-print-snapshot .dc-timeline-scroll{height:auto;max-height:none;overflow:visible}
+.dc-print-snapshot .dc-weekdays,.dc-print-snapshot .dc-day-headers,.dc-print-snapshot .dc-agenda-heading,.dc-print-snapshot .dc-timeline-axis{position:static}
+.dc-print-snapshot .dc-day-cell,.dc-print-snapshot .dc-all-day-col,.dc-print-snapshot .dc-background-layer,.dc-print-snapshot .dc-day-background-layer{overflow:visible}
+.dc-print-snapshot .dc-timeline-scroll{max-width:none}
+.dc-print-snapshot .dc-month-grid{min-height:0;grid-auto-rows:minmax(80px,auto)}
+.dc-print-snapshot .dc-event,.dc-print-snapshot .dc-time-event,.dc-print-snapshot .dc-agenda-row,.dc-print-snapshot .dc-year-month,.dc-print-snapshot .dc-timeline-event{break-inside:avoid;page-break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.dc-print-snapshot .dc-time-event{height:var(--dc-print-event-height)!important;transform:none!important}
+.dc-print-snapshot .dc-timeline-event{width:var(--dc-print-event-width)!important;transform:none!important}
+.dc-print-snapshot [role="button"],.dc-print-snapshot button,.dc-print-snapshot a{cursor:default}
+
+@media print{
+  .dc-root{--dc-border:#cbd5e1;--dc-muted:#4b5563;--dc-bg:#fff;--dc-soft:#f8fafc;--dc-text:#111827;color:var(--dc-text);background:var(--dc-bg);border:0!important;border-radius:0!important;min-height:0!important;height:auto!important;overflow:visible!important;box-shadow:none!important}
+  .dc-toolbar{display:block!important;min-height:0!important;padding:0 0 8px!important;border-bottom:1px solid var(--dc-border)!important;background:#fff!important}
+  .dc-toolbar>*{display:none!important}
+  .dc-toolbar>.dc-title{display:block!important;min-width:0!important;margin:0!important;font-size:18px!important;color:#111827!important}
+  .dc-dialog,.dc-source-menu,.dc-context-menu,.dc-addon-menu,.dc-inline-actions,.dc-resize-handle,.dc-timeline-resize-handle,.dc-selection-range,.dc-now,.dc-sr-only{display:none!important}
+  .dc-body,.dc-timeline-scroll{height:auto!important;max-height:none!important;overflow:visible!important}
+  .dc-weekdays,.dc-day-headers,.dc-agenda-heading,.dc-timeline-axis{position:static!important}
+  .dc-day-cell,.dc-all-day-col,.dc-background-layer,.dc-day-background-layer{overflow:visible!important}
+  .dc-timeline-scroll{max-width:none!important}
+  .dc-month-grid{min-height:0!important;grid-auto-rows:minmax(80px,auto)}
+  .dc-event,.dc-time-event,.dc-agenda-row,.dc-year-month,.dc-timeline-event{break-inside:avoid;page-break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .dc-root .is-dragging,.dc-root .is-command-preview,.dc-root .is-touch-arming,.dc-root .is-pending,.dc-root [aria-busy="true"]{opacity:1!important;cursor:default!important;outline:0!important}
+  .dc-root .is-dragging,.dc-root .is-command-preview{transform:none!important}
+  .dc-time-event{height:var(--dc-print-event-height)!important}
+  .dc-timeline-event{width:var(--dc-print-event-width)!important;transform:none!important}
+  .dc-day-cell.is-external-drop-target,.dc-all-day-col.is-external-drop-target,.dc-time-column.is-external-drop-target{box-shadow:none!important}
+  .dc-root *{animation:none!important;transition:none!important;scroll-behavior:auto!important}
+  .dc-print-snapshot{background:#fff;color:#111827}
+}
+`;
+
 const OPTION_KEYS = new Set(["title"]);
 const MAX_TITLE_LENGTH = 256;
 const REMOVE_SELECTOR = [
@@ -103,11 +141,17 @@ export function createCalendarPrintSnapshot(
   snapshot.dataset.calendarPrintSnapshot = "true";
   snapshot.inert = true;
 
-  const style = host.querySelector<HTMLStyleElement>(":scope > style");
-  if (style) {
+  let hasPrintStyles = false;
+  for (const style of host.querySelectorAll<HTMLStyleElement>(":scope > style")) {
     const ownedStyle = style.cloneNode(true) as HTMLStyleElement;
-    ownedStyle.dataset.calendarPrintStyles = "true";
+    if (style.dataset.calendarPrintStyles === "true") hasPrintStyles = true;
     snapshot.append(ownedStyle);
+  }
+  if (!hasPrintStyles) {
+    const printStyle = document.createElement("style");
+    printStyle.dataset.calendarPrintStyles = "true";
+    printStyle.textContent = CALENDAR_PRINT_CSS;
+    snapshot.append(printStyle);
   }
 
   const title = printTitle(fallbackTitle, options);

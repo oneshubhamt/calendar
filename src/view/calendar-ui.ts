@@ -94,7 +94,7 @@ import {
   type CalendarExternalDropTemplate,
   type ResolvedCalendarExternalDropDecoder,
 } from "./external-drop.js";
-import { createCalendarPrintSnapshot } from "./print.js";
+import { CALENDAR_PRINT_CSS, createCalendarPrintSnapshot } from "./print.js";
 
 
 interface SelectionDragState {
@@ -139,6 +139,19 @@ function withLocalTime(
   return instantAtCivilMinute(day, minute, timeZone, overlap);
 }
 
+function deepFreezeViewValue<T>(value: T, seen = new WeakSet<object>()): T {
+  if (!value || typeof value !== "object") return value;
+  const object = value as object;
+  if (seen.has(object)) return value;
+  seen.add(object);
+  for (const child of Object.values(object as Record<string, unknown>)) deepFreezeViewValue(child, seen);
+  return Object.freeze(value);
+}
+
+function ownCustomViewValue<T>(value: T): T {
+  return deepFreezeViewValue(structuredClone(value));
+}
+
 function calendarDaySpan(start: Date, end: Date, timeZone: string): number {
   const a = instantToPlain(start.getTime(), timeZone);
   const b = instantToPlain(end.getTime(), timeZone);
@@ -164,6 +177,7 @@ export class CalendarUi {
   private readonly dayEndHour: number;
   private readonly chrome: Required<CalendarUiChromeOptions>;
   private readonly navigationBounds: ResolvedCalendarNavigationBounds;
+  private readonly externalDropEnabled: boolean;
   private readonly externalDropDecoder: ResolvedCalendarExternalDropDecoder | undefined;
   private readonly views: CalendarViewRegistry;
   private agendaSpan: CalendarAgendaSpan;
@@ -185,6 +199,7 @@ export class CalendarUi {
   private readonly reportedHostHookErrors = new Set<string>();
   private readonly temporalChrome: CalendarTemporalChrome;
   private readonly gestures: CalendarGestureController;
+  private activeViewRender: { readonly definition: CalendarViewDefinition; readonly element: HTMLElement } | undefined;
 
   public constructor(
     private readonly host: HTMLElement,
@@ -214,6 +229,7 @@ export class CalendarUi {
       createControls: options.chrome?.createControls ?? true,
     };
     this.navigationBounds = resolveNavigationBounds(options.navigationBounds);
+    this.externalDropEnabled = options.externalDrop === true || options.externalDropDecoder !== undefined;
     this.externalDropDecoder = resolveCalendarExternalDropDecoder(options.externalDropDecoder);
     this.agendaSpan = options.initialAgendaSpan ?? "30-days";
     this.views = new CalendarViewRegistry(this.builtInViewDefinitions(), options.customViews ?? []);
@@ -377,26 +393,48 @@ export class CalendarUi {
   private renderActiveView(): HTMLElement {
     const definition = this.activeView();
     const fallback = el("div", "dc-empty", `${definition.label} view could not be rendered.`);
-    const rendered = this.hostHook(
+    const rendered = this.hostHook<HTMLElement | undefined>(
       `Calendar view ${definition.id} render`,
-      () => definition.render(this.customViewContext()),
-      fallback,
+      () => definition.render(this.customViewContext(definition)),
+      undefined,
     );
-    return rendered instanceof HTMLElement ? rendered : fallback;
+    if (!(rendered instanceof HTMLElement)) return fallback;
+    this.activeViewRender = { definition, element: rendered };
+    return rendered;
   }
 
-  private customViewContext(): CalendarCustomViewRenderContext {
+  private disposeActiveView(): void {
+    const active = this.activeViewRender;
+    this.activeViewRender = undefined;
+    if (!active?.definition.dispose) return;
+    this.hostHook(
+      `Calendar view ${active.definition.id} dispose`,
+      () => active.definition.dispose?.(active.element),
+      undefined,
+    );
+  }
+
+  private customViewContext(definition: CalendarViewDefinition): CalendarCustomViewRenderContext {
+    const custom = !definition.builtIn;
+    const sources = custom ? ownCustomViewValue([...this.sources]) : Object.freeze([...this.sources]);
+    const occurrences = custom ? ownCustomViewValue([...this.displayOccurrences()]) : Object.freeze([...this.displayOccurrences()]);
+    const backgroundRanges = custom ? ownCustomViewValue([...this.backgroundRanges]) : Object.freeze([...this.backgroundRanges]);
     return Object.freeze({
       ...this.viewTitleContext(),
       viewId: this.view,
       ...(this.weekNumbering ? { weekNumbering: this.weekNumbering } : {}),
-      sources: Object.freeze([...this.sources]),
-      occurrences: Object.freeze([...this.displayOccurrences()]),
-      backgroundRanges: Object.freeze([...this.backgroundRanges]),
+      sources,
+      occurrences,
+      backgroundRanges,
       now: this.clock.now(),
       slotMinutes: this.slotMinutes,
       snapPolicy: this.snapPolicy,
       dstOverlapDisambiguation: this.dstOverlapDisambiguation,
+      pointerGesture: Object.freeze({
+        longPressMs: this.longPressMs,
+        autoScrollEdgePx: this.autoScrollEdgePx,
+        autoScrollMaxPxPerFrame: this.autoScrollMaxPxPerFrame,
+      }),
       actions: this.customViewActions(),
       renderers: this.customViewRenderers(),
     });
@@ -467,10 +505,12 @@ export class CalendarUi {
       canAcceptExternalDrop: dataTransfer => this.canAcceptExternalDrop(dataTransfer),
       dropExternal: (dataTransfer, selection) => this.dropExternal(dataTransfer, selection),
       bindExternalDropTarget: (element, resolveSelection) =>
-        bindCalendarExternalDropTarget(element, resolveSelection, {
-          canAcceptExternalDrop: dataTransfer => this.canAcceptExternalDrop(dataTransfer),
-          dropExternal: (dataTransfer, selection) => this.dropExternal(dataTransfer, selection),
-        }),
+        this.externalDropEnabled
+          ? bindCalendarExternalDropTarget(element, resolveSelection, {
+              canAcceptExternalDrop: dataTransfer => this.canAcceptExternalDrop(dataTransfer),
+              dropExternal: (dataTransfer, selection) => this.dropExternal(dataTransfer, selection),
+            })
+          : () => {},
       moveOccurrence: async (occurrence, start, options) =>
         await this.moveOccurrenceToStart(occurrence, start, options?.allDay ?? isDateLikeOccurrence(occurrence)),
       resizeOccurrence: async (occurrence, edge, target) =>
@@ -610,6 +650,7 @@ export class CalendarUi {
 
   public destroy(): void {
     this.destroyed = true;
+    this.disposeActiveView();
     this.gestures.destroy();
     this.temporalChrome.stop();
     this.dismissContextMenu();
@@ -632,7 +673,7 @@ export class CalendarUi {
   }
 
   private canAcceptExternalDrop(dataTransfer: DataTransfer | null): boolean {
-    if (!dataTransfer || !this.canCreateExternalDrop() || dataTransferHasType(dataTransfer, NATIVE_DRAG_TYPE)) return false;
+    if (!this.externalDropEnabled || !dataTransfer || !this.canCreateExternalDrop() || dataTransferHasType(dataTransfer, NATIVE_DRAG_TYPE)) return false;
     if (dataTransferHasType(dataTransfer, CALENDAR_EXTERNAL_DROP_MIME)) return true;
     return this.externalDropDecoder?.types.some(type => dataTransferHasType(dataTransfer, type)) ?? false;
   }
@@ -648,7 +689,7 @@ export class CalendarUi {
   }
 
   private decodeExternalDrop(dataTransfer: DataTransfer | null): CalendarExternalDropTemplate | undefined {
-    if (!dataTransfer || dataTransferHasType(dataTransfer, NATIVE_DRAG_TYPE)) return undefined;
+    if (!this.externalDropEnabled || !dataTransfer || dataTransferHasType(dataTransfer, NATIVE_DRAG_TYPE)) return undefined;
     if (dataTransferHasType(dataTransfer, CALENDAR_EXTERNAL_DROP_MIME)) {
       return decodeCalendarExternalDropData(dataTransfer);
     }
@@ -665,6 +706,7 @@ export class CalendarUi {
     element: HTMLElement,
     resolveSelection: (event: DragEvent) => CalendarSelection | undefined,
   ): void {
+    if (!this.externalDropEnabled) return;
     bindCalendarExternalDropTarget(element, resolveSelection, {
       canAcceptExternalDrop: dataTransfer => this.canAcceptExternalDrop(dataTransfer),
       dropExternal: (dataTransfer, selection) => this.dropExternal(dataTransfer, selection),
@@ -739,6 +781,7 @@ export class CalendarUi {
   private mountShell(): void {
     this.host.replaceChildren();
     const style = el("style");
+    style.dataset.calendarBaseStyles = "true";
     const extensionCss = calendarHostCss(
       this.options.extensions ?? [],
       this.options.addons ?? [],
@@ -762,7 +805,14 @@ export class CalendarUi {
         for (const menu of this.host.querySelectorAll<HTMLElement>(".dc-addon-menu")) menu.remove();
       }
     });
-    this.host.append(style, root);
+    this.host.append(style);
+    if (this.options.print === true) {
+      const printStyle = el("style");
+      printStyle.dataset.calendarPrintStyles = "true";
+      printStyle.textContent = CALENDAR_PRINT_CSS;
+      this.host.append(printStyle);
+    }
+    this.host.append(root);
   }
 
   private toolbar(): HTMLElement {
@@ -865,6 +915,7 @@ export class CalendarUi {
     const redo = root.querySelector<HTMLButtonElement>("[data-history='redo']");
     if (undo) undo.disabled = !history?.canUndo;
     if (redo) redo.disabled = !history?.canRedo;
+    this.disposeActiveView();
     body.replaceChildren();
     body.append(this.renderActiveView());
     this.temporalChrome.refresh();

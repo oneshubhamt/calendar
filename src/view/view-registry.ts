@@ -29,6 +29,9 @@ function ownDefinition(plugin: CalendarCustomViewPlugin, builtIn: boolean): Cale
   for (const method of ["range", "shiftAnchor", "title", "render"] as const) {
     if (typeof plugin[method] !== "function") throw new TypeError(`Calendar view ${id} ${method} must be a function`);
   }
+  if (plugin.dispose !== undefined && typeof plugin.dispose !== "function") {
+    throw new TypeError(`Calendar view ${id} dispose must be a function`);
+  }
   return Object.freeze({
     ...plugin,
     id,
