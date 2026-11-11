@@ -1,5 +1,6 @@
 import type {
   CalendarItem,
+  CalendarItemPatch,
   CalendarProjectionProvider,
   CalendarRange,
   CalendarRepository,
@@ -192,7 +193,7 @@ export class GoogleCalendarSyncAdapter {
       localById.set(item.id, item);
       stagedLocalChange = true;
     };
-    const stageUpdate = (id: string, patch: Parameters<CalendarRepository["update"]>[1]): CalendarItem => {
+    const stageUpdate = (id: string, patch: CalendarItemPatch): CalendarItem => {
       stagedState = updateCalendarItemInState(stagedState, id, patch);
       const updated = stagedState.items.find(item => item.id === id)!;
       localById.set(id, updated);
