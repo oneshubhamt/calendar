@@ -5,6 +5,12 @@ import type {
   CalendarRepository,
 } from "../core/types.js";
 import {
+  createCalendarItemInState,
+  removeCalendarItemFromState,
+  updateCalendarItemInState,
+  type CalendarStateCollections,
+} from "../core/state-transitions.js";
+import {
   decideSync,
   externalIdentityFromMetadata,
   fingerprintCalendarItem,
@@ -178,7 +184,26 @@ export class GoogleCalendarSyncAdapter {
     const conflicts: SyncConflict[] = [], warnings: string[] = [];
     const nextLinks: CalendarSyncLink[] = [];
     const snapshot = this.repository.read();
+    let stagedState: CalendarStateCollections = { sources: snapshot.sources, items: snapshot.items };
+    let stagedLocalChange = false;
     const localById = new Map(snapshot.items.filter(item => item.calendarId === this.connection.localCalendarId).map(item => [item.id, item] as const));
+    const stageCreate = (item: CalendarItem): void => {
+      stagedState = createCalendarItemInState(stagedState, item);
+      localById.set(item.id, item);
+      stagedLocalChange = true;
+    };
+    const stageUpdate = (id: string, patch: Parameters<CalendarRepository["update"]>[1]): CalendarItem => {
+      stagedState = updateCalendarItemInState(stagedState, id, patch);
+      const updated = stagedState.items.find(item => item.id === id)!;
+      localById.set(id, updated);
+      stagedLocalChange = true;
+      return updated;
+    };
+    const stageRemove = (id: string): void => {
+      stagedState = removeCalendarItemFromState(stagedState, id);
+      localById.delete(id);
+      stagedLocalChange = true;
+    };
     const linkedRemoteIds = new Set<string>();
     const linkedLocalIds = new Set(state.links.map(link => link.localItemId));
 
@@ -207,15 +232,27 @@ export class GoogleCalendarSyncAdapter {
       }
       const remote = changedRemote ?? deletedSnapshot(link.identity);
       const decision = decideSync(link, local, remote, this.connection.conflictPolicy ?? "manual");
-      if (decision.action === "none") { nextLinks.push(remote.deleted ? { ...link, status: "deleted" } : link); continue; }
+      if (decision.action === "rebase") {
+        if (local && remote.item && !remote.deleted) nextLinks.push(linkAfterSync(local, remote));
+        // If both sides are already deleted, the stale link has no remaining authority or identity value.
+        continue;
+      }
+      if (decision.action === "none") {
+        if (!local && remote.deleted) continue;
+        // Google may emit a semantically unchanged event with a new etag/sequence. Refresh
+        // provider identity even when the semantic fingerprint does not require data mutation.
+        if (changedRemote && local && remote.item && !remote.deleted) nextLinks.push(linkAfterSync(local, remote));
+        else nextLinks.push(remote.deleted ? { ...link, status: "deleted" } : link);
+        continue;
+      }
       if (decision.action === "conflict") { if (decision.conflict) conflicts.push(decision.conflict); nextLinks.push({ ...link, status: "conflict" }); continue; }
       if (decision.action === "apply-remote" && remote.item && canPull(this.connection.mode)) {
         const item = remoteToLocal(remote, this.connection, link.localItemId);
-        if (local) await this.repository.update(local.id, itemPatch(item)); else await this.repository.create(item);
-        nextLinks.push(linkAfterSync(item, remote)); pulled += 1; continue;
+        const stagedItem = local ? stageUpdate(local.id, itemPatch(item)) : (stageCreate(item), item);
+        nextLinks.push(linkAfterSync(stagedItem, remote)); pulled += 1; continue;
       }
       if (decision.action === "delete-local" && local && canPull(this.connection.mode)) {
-        await this.repository.remove(local.id); deletedLocal += 1; continue;
+        stageRemove(local.id); deletedLocal += 1; continue;
       }
       if (decision.action === "push-local" && local && canPush(this.connection.mode)) {
         try {
@@ -249,9 +286,9 @@ export class GoogleCalendarSyncAdapter {
         pull.localItemHints.get(remote.identity.eventId),
       );
       const local = remoteToLocal(remote, this.connection, existing?.id);
-      if (existing) await this.repository.update(existing.id, itemPatch(local)); else await this.repository.create(local);
-      nextLinks.push(linkAfterSync(local, remote));
-      linkedLocalIds.add(local.id);
+      const stagedItem = existing ? stageUpdate(existing.id, itemPatch(local)) : (stageCreate(local), local);
+      nextLinks.push(linkAfterSync(stagedItem, remote));
+      linkedLocalIds.add(stagedItem.id);
       pulled += 1;
     }
 
@@ -267,6 +304,10 @@ export class GoogleCalendarSyncAdapter {
       const exceptionWarnings = await syncReplacementExceptions(this.transport, this.connection.googleCalendarId, created.id, local); warnings.push(...exceptionWarnings);
       const remote = googleEventSnapshot(created, this.connection, local.id);
       nextLinks.push(linkAfterSync(mergeSyncMetadata(local, remote.identity), { ...remote, item: local, fingerprint: fingerprintCalendarItem(local) })); pushed += 1;
+    }
+
+    if (stagedLocalChange) {
+      await this.repository.replaceAtRevision(stagedState.items, snapshot.revision);
     }
 
     const now = new Date().toISOString();
