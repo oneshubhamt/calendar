@@ -34,9 +34,10 @@ function weekNumberCell(
     numbering.minimumDaysInFirstWeek,
     model.timeZone,
   );
-  const cell = el("div", "dc-week-number", String(identity.weekNumber));
-  cell.setAttribute("role", "rowheader");
-  cell.setAttribute("aria-label", `Week ${identity.weekNumber} of ${identity.weekYear}`);
+  const cell = el("abbr", "dc-week-number", String(identity.weekNumber));
+  const label = `Week ${identity.weekNumber} of ${identity.weekYear}`;
+  cell.title = label;
+  cell.setAttribute("aria-label", label);
   cell.dataset.weekNumber = String(identity.weekNumber);
   cell.dataset.weekYear = String(identity.weekYear);
   return cell;
@@ -59,7 +60,8 @@ export function renderMonthPanel(
   if (showWeekNumbers) {
     header.classList.add("has-week-numbers");
     grid.classList.add("has-week-numbers");
-    const weekHeading = el("div", "dc-week-number-heading", "Wk");
+    const weekHeading = el("abbr", "dc-week-number-heading", "Wk");
+    weekHeading.title = "Week number";
     weekHeading.setAttribute("aria-label", "Week number");
     header.append(weekHeading);
   }
