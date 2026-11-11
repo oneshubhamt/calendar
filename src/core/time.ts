@@ -1,14 +1,17 @@
-import type { CalendarAgendaSpan, CalendarRange, CalendarView, ISODateTime, Weekday } from "./types.js";
+import type { CalendarAgendaSpan, CalendarRange, CalendarView, ISODate, ISODateTime, Weekday } from "./types.js";
 import {
   addPlainDays,
   addPlainMonths,
   addPlainYears,
+  comparePlain,
   formatPlainDate,
   instantToPlain,
   parsePlainDate,
   parsePlainDateTime,
+  plainDaysBetween,
   plainToInstant,
   systemTimeZone,
+  weekdayOf,
   type PlainDateTimeParts,
 } from "./temporal.js";
 
@@ -114,6 +117,94 @@ export function startOfWeek(value: ISODateTime | Date, weekStartsOn: Weekday = 1
   const weekday = timeZone ? weekdayFromInstant(date, timeZone) : date.getDay() as Weekday;
   const delta = (weekday - weekStartsOn + 7) % 7;
   return addDays(date, -delta, timeZone);
+}
+
+export interface CalendarWeekIdentity {
+  readonly weekYear: number;
+  readonly weekNumber: number;
+  readonly weekStart: ISODate;
+}
+
+function civilDateParts(value: ISODateTime | Date, timeZone?: string): PlainDateTimeParts {
+  if (typeof value === "string" && DATE_RE.test(value)) return parsePlainDate(value);
+  if (timeZone) {
+    const parts = instantToPlain(toDate(value, timeZone).getTime(), timeZone);
+    return { ...parts, hour: 0, minute: 0, second: 0, millisecond: 0 };
+  }
+  const date = toDate(value);
+  return {
+    year: date.getFullYear(),
+    month: date.getMonth() + 1,
+    day: date.getDate(),
+    hour: 0,
+    minute: 0,
+    second: 0,
+    millisecond: 0,
+  };
+}
+
+function firstWeekStartOfYear(
+  year: number,
+  weekStartsOn: Weekday,
+  minimumDaysInFirstWeek: number,
+): PlainDateTimeParts {
+  const januaryFirst: PlainDateTimeParts = {
+    year,
+    month: 1,
+    day: 1,
+    hour: 0,
+    minute: 0,
+    second: 0,
+    millisecond: 0,
+  };
+  const leadingDays = (weekdayOf(januaryFirst) - weekStartsOn + 7) % 7;
+  const containingWeekStart = addPlainDays(januaryFirst, -leadingDays);
+  const daysOfNewYearInContainingWeek = 7 - leadingDays;
+  return daysOfNewYearInContainingWeek >= minimumDaysInFirstWeek
+    ? containingWeekStart
+    : addPlainDays(containingWeekStart, 7);
+}
+
+/**
+ * Resolve the civil week identity for a displayed date.
+ *
+ * Week 1 is the first displayed week containing at least
+ * minimumDaysInFirstWeek days of the new year.
+ */
+export function weekOfYear(
+  value: ISODateTime | Date,
+  weekStartsOn: Weekday = 1,
+  minimumDaysInFirstWeek = 4,
+  timeZone?: string,
+): CalendarWeekIdentity {
+  if (!Number.isInteger(weekStartsOn) || weekStartsOn < 0 || weekStartsOn > 6) {
+    throw new RangeError("weekStartsOn must be an integer from 0 through 6");
+  }
+  if (!Number.isInteger(minimumDaysInFirstWeek) || minimumDaysInFirstWeek < 1 || minimumDaysInFirstWeek > 7) {
+    throw new RangeError("minimumDaysInFirstWeek must be an integer from 1 through 7");
+  }
+
+  const date = civilDateParts(value, timeZone);
+  const offset = (weekdayOf(date) - weekStartsOn + 7) % 7;
+  const weekStart = addPlainDays(date, -offset);
+  const currentFirst = firstWeekStartOfYear(date.year, weekStartsOn, minimumDaysInFirstWeek);
+  const nextFirst = firstWeekStartOfYear(date.year + 1, weekStartsOn, minimumDaysInFirstWeek);
+
+  let weekYear = date.year;
+  let firstWeekStart = currentFirst;
+  if (comparePlain(weekStart, currentFirst) < 0) {
+    weekYear -= 1;
+    firstWeekStart = firstWeekStartOfYear(weekYear, weekStartsOn, minimumDaysInFirstWeek);
+  } else if (comparePlain(weekStart, nextFirst) >= 0) {
+    weekYear += 1;
+    firstWeekStart = nextFirst;
+  }
+
+  return Object.freeze({
+    weekYear,
+    weekNumber: Math.floor(plainDaysBetween(firstWeekStart, weekStart) / 7) + 1,
+    weekStart: formatPlainDate(weekStart),
+  });
 }
 
 export function startOfMonth(value: ISODateTime | Date, timeZone?: string): Date {
