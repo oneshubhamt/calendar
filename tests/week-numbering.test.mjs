@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { weekOfYear } from "../dist/core/time.js";
+import { resolveCalendarWeekNumbering } from "../dist/view/week-numbering.js";
 
 test("weekOfYear handles ISO-style year rollover without DOM assumptions", () => {
   assert.deepEqual(weekOfYear("2020-12-31", 1, 4, "UTC"), {
@@ -74,4 +75,31 @@ test("weekOfYear fails closed on invalid policy values", () => {
   assert.throws(() => weekOfYear("2026-01-01", 7, 4, "UTC"), /weekStartsOn/i);
   assert.throws(() => weekOfYear("2026-01-01", 1, 0, "UTC"), /minimumDaysInFirstWeek/i);
   assert.throws(() => weekOfYear("2026-01-01", 1, 8, "UTC"), /minimumDaysInFirstWeek/i);
+});
+
+
+test("view week-number policy supports locale defaults and deterministic overrides", () => {
+  assert.equal(resolveCalendarWeekNumbering("en-US", false), undefined);
+  assert.equal(resolveCalendarWeekNumbering("en-US", undefined), undefined);
+  assert.deepEqual(resolveCalendarWeekNumbering("en-US", { minimumDaysInFirstWeek: 4 }), {
+    minimumDaysInFirstWeek: 4,
+  });
+
+  const locale = new Intl.Locale("en-US");
+  const info = typeof locale.getWeekInfo === "function" ? locale.getWeekInfo() : locale.weekInfo;
+  const expected = Number.isInteger(info?.minimalDays) ? info.minimalDays : 4;
+  assert.equal(resolveCalendarWeekNumbering("en-US", true)?.minimumDaysInFirstWeek, expected);
+
+  assert.throws(
+    () => resolveCalendarWeekNumbering("en-US", { minimumDaysInFirstWeek: 0 }),
+    /minimumDaysInFirstWeek/i,
+  );
+  assert.throws(
+    () => resolveCalendarWeekNumbering("en-US", { minimumDaysInFirstWeek: 8 }),
+    /minimumDaysInFirstWeek/i,
+  );
+  assert.throws(
+    () => resolveCalendarWeekNumbering("en-US", { minimumDaysInFirstWeek: 4, extra: true }),
+    /unexpected field/i,
+  );
 });
