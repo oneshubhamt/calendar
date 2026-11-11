@@ -2,8 +2,9 @@ name: VC-I Final Browser QA
 
 on:
   push:
-    branches:
-      - "working"
+    branches: [working]
+    paths:
+      - ".github/workflows/vci-final-browser.yml"
   workflow_dispatch:
 
 permissions:
@@ -16,17 +17,18 @@ concurrency:
 jobs:
   browser:
     name: Targeted checks and full browser matrix
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.0-noble
+      options: --ipc=host --cap-add=SYS_ADMIN
     timeout-minutes: 30
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7.0.1
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v7.1.0
+      - uses: actions/setup-node@v7.1.0
         with:
-          node-version-file: .nvmrc
+          node-version: "26.13.0"
           cache: npm
           cache-dependency-path: package-lock.json
 
@@ -41,14 +43,14 @@ jobs:
           test "$(node --version)" = "v26.13.0"
           test "$(npm --version)" = "12.2.2"
           test "$(npx tsc --version)" = "Version 7.0.2"
+          test "$(npx playwright --version)" = "Version 1.65.0"
 
       - name: Targeted VC-I Node QA
         run: |
           npm run build
           node --test tests/custom-view.test.mjs tests/resource-time-grid-layout.test.mjs tests/architecture-guards.test.mjs
 
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium firefox webkit
-
       - name: Full configured browser QA
+        env:
+          HOME: /root
         run: npx playwright test --config=playwright.config.mjs
