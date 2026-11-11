@@ -80,6 +80,8 @@ test("Resource Scheduler remains optional and reuses generic timeline/gesture me
   assert.doesNotMatch(schedulerLayout, /civilMinuteOfInstant|partitionOverlapLanes|function visualOverlap/);
   assert.match(schedulerRendering, /horizontalTimelineTicks/);
   assert.match(schedulerUi, /CalendarPointerGestureController/);
+  assert.match(pointerGestures, /requestAnimationFrame/);
+  assert.doesNotMatch(schedulerUi, /requestAnimationFrame|AUTO_SCROLL_ZONE|AUTO_SCROLL_STEP/);
   assert.match(schedulerUi, /from "\.\/rendering\.js"/);
   assert.doesNotMatch(schedulerRendering, /executeCalendarResourcePlacement|mutationPort|refreshProjection|confirmWarnings/);
   assert.doesNotMatch(schedulerUi, /\.\.\/\.\.\/(?:storage|interoperability|integration|adapters)\//);
@@ -181,6 +183,7 @@ test("view decomposition keeps mutation, rendering and gesture concerns separate
   assert.doesNotMatch(mutations, /HTMLElement|document\.|querySelector|addEventListener/);
   assert.doesNotMatch(ui, /new CalendarCommandLifecycle|evaluateCalendarPlacement\(|previewPatchForCommand|resolveOccurrenceCapabilities\(|private issueOccurrencePatch|private issueTimedCommand|private dispatchOccurrence/);
   assert.match(gestures, /CalendarPointerGestureController/);
+  assert.doesNotMatch(gestures, /requestAnimationFrame|armTouchDrag|armPointerDrag/);
   assert.doesNotMatch(gestures + pointerGestures, /CalendarCommand|commandHandler|executeCalendarPlacement/);
 });
 
