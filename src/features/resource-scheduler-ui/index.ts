@@ -3,8 +3,6 @@ import type {
   CalendarOverlapDisambiguation,
   CalendarRange,
   CalendarSnapPolicy,
-  CalendarSource,
-  SeriesEditScope,
 } from "../../core/types.js";
 import {
   moveOccurrenceByCivilMinutes,
@@ -22,14 +20,14 @@ import {
 import type { CalendarUiExtension } from "../../view/types.js";
 import { hostDataAttributeName, resolveOccurrencePresentation } from "../../view/presentation.js";
 import {
-  executeCalendarResourcePlacement,
+  executeCalendarResourceInteraction,
   flattenCalendarResources,
   replaceCalendarResourceAssignment,
   type CalendarResource,
   type CalendarResourceAssignment,
   type CalendarResourceId,
   type CalendarResourceTimelineLayoutItem,
-  type CalendarResourcePlacementExecutionOptions,
+  type CalendarResourceInteractionExecutionOptions,
   type CalendarResourcePlacementExecutionResult,
   type CalendarResourcePlacementRequest,
 } from "../resource-scheduler/index.js";
@@ -85,7 +83,7 @@ export interface CalendarResourceSchedulerProjection {
 }
 
 export interface CalendarResourceSchedulerInteractionOptions
-  extends Omit<CalendarResourcePlacementExecutionOptions, "source" | "acceptWarnings"> {
+  extends CalendarResourceInteractionExecutionOptions {
   /** Shared Calendar snap interval. Defaults to 15 minutes. */
   readonly slotMinutes?: number | undefined;
   /** Shared Calendar move/resize/keyboard snapping semantics. */
@@ -96,15 +94,6 @@ export interface CalendarResourceSchedulerInteractionOptions
   readonly longPressMs?: number | undefined;
   readonly autoScrollEdgePx?: number | undefined;
   readonly autoScrollMaxPxPerFrame?: number | undefined;
-  readonly sourceForOccurrence?: ((occurrence: CalendarOccurrence) => CalendarSource | undefined) | undefined;
-  readonly resolveScope?: ((
-    occurrence: CalendarOccurrence,
-    action: CalendarResourcePlacementRequest["action"],
-  ) => SeriesEditScope | null | Promise<SeriesEditScope | null>) | undefined;
-  readonly confirmWarnings?: ((
-    messages: readonly string[],
-    request: CalendarResourcePlacementRequest,
-  ) => boolean | Promise<boolean>) | undefined;
   readonly refreshProjection?: (() =>
     | CalendarResourceSchedulerProjection
     | void
@@ -711,100 +700,44 @@ export class CalendarResourceSchedulerUi {
     const interaction = this.interaction;
     const projection = this.projection;
     if (!interaction || !projection || this.pendingOccurrences.has(occurrence.occurrenceId)) return;
-    const timeChanged = Date.parse(candidate.start) !== Date.parse(occurrence.start)
-      || Date.parse(candidate.end) !== Date.parse(occurrence.end);
-    const action = mode === "move"
-      ? (candidate.targetResourceId === sourceResourceId
-        ? "move"
-        : (timeChanged ? "resource-time-move" : "resource-reassign"))
-      : mode;
-    let scope: SeriesEditScope | null = "this";
-    try {
-      if (occurrence.recurring && interaction.resolveScope) {
-        scope = await interaction.resolveScope(occurrence, action);
-      }
-    } catch (error) {
-      this.reportError(error);
-      return;
-    }
-    if (scope === null) return;
-    if (!["this", "this-and-following", "all"].includes(scope)) {
-      this.reportError(new Error("Resource Scheduler interaction returned an invalid recurrence scope"));
-      return;
-    }
-    const request: CalendarResourcePlacementRequest = {
-      occurrence,
-      sourceResourceId,
-      targetResourceId: candidate.targetResourceId,
-      fromResourceIds: assignment.resourceIds,
-      toResourceIds: candidate.toResourceIds,
-      start: candidate.start,
-      end: candidate.end,
-      scope,
-      timeZone: this.timeZone,
-      action,
-      ...(assignment.version === undefined ? {} : { assignmentVersion: assignment.version }),
-    };
 
     this.setOccurrencePending(occurrence.occurrenceId, true);
     let result: CalendarResourcePlacementExecutionResult | undefined;
     try {
-      const executionOptions = this.executionOptionsFor(occurrence, false);
-      result = await executeCalendarResourcePlacement(projection.resources, request, executionOptions);
-      if (result.status === "warning" && interaction.confirmWarnings) {
-        let accepted = false;
-        try {
-          accepted = await interaction.confirmWarnings(result.evaluation.messages, request);
-        } catch (error) {
-          this.reportError(error);
-        }
-        if (accepted) {
-          result = await executeCalendarResourcePlacement(
-            projection.resources,
-            request,
-            this.executionOptionsFor(occurrence, true),
-          );
+      const execution = await executeCalendarResourceInteraction(
+        projection.resources,
+        occurrence,
+        sourceResourceId,
+        assignment,
+        mode,
+        candidate,
+        this.timeZone,
+        interaction,
+      );
+      if (execution.status === "executed" && execution.result && execution.request) {
+        result = execution.result;
+        try { interaction.onResult?.(result, execution.request); } catch (error) { this.reportError(error); }
+        this.announce(this.resultAnnouncement(result, occurrence));
+        if (result.status === "committed" || result.status === "stale") {
+          try {
+            await this.refreshAuthoritativeProjection();
+          } catch (error) {
+            this.reportError(error);
+            if (result.status === "committed") this.announce(`${occurrence.title} changed, but authoritative refresh failed.`);
+          }
         }
       }
     } catch (error) {
       this.reportError(error);
       this.announce(`${occurrence.title} was not changed.`);
+    } finally {
+      this.setOccurrencePending(occurrence.occurrenceId, false);
+      if (node.isConnected) node.focus();
+      else this.focusOccurrence(
+        occurrence.occurrenceId,
+        result?.status === "committed" ? candidate.targetResourceId : sourceResourceId,
+      );
     }
-
-    if (result) {
-      try { interaction.onResult?.(result, request); } catch (error) { this.reportError(error); }
-      this.announce(this.resultAnnouncement(result, occurrence));
-      if (result.status === "committed" || result.status === "stale") {
-        try {
-          await this.refreshAuthoritativeProjection();
-        } catch (error) {
-          this.reportError(error);
-          if (result.status === "committed") this.announce(`${occurrence.title} changed, but authoritative refresh failed.`);
-        }
-      }
-    }
-    this.setOccurrencePending(occurrence.occurrenceId, false);
-    if (node.isConnected) node.focus();
-    else this.focusOccurrence(occurrence.occurrenceId, result?.status === "committed" ? candidate.targetResourceId : sourceResourceId);
-  }
-
-  private executionOptionsFor(
-    occurrence: CalendarOccurrence,
-    acceptWarnings: boolean,
-  ): CalendarResourcePlacementExecutionOptions {
-    const interaction = this.interaction;
-    if (!interaction) throw new Error("Resource Scheduler interaction is not configured");
-    return {
-      mutationPort: interaction.mutationPort,
-      ...(interaction.occurrenceCapabilityProvider === undefined ? {} : { occurrenceCapabilityProvider: interaction.occurrenceCapabilityProvider }),
-      ...(interaction.resourceCapabilityProvider === undefined ? {} : { resourceCapabilityProvider: interaction.resourceCapabilityProvider }),
-      ...(interaction.temporal === undefined ? {} : { temporal: interaction.temporal }),
-      ...(interaction.resourceGuards === undefined ? {} : { resourceGuards: interaction.resourceGuards }),
-      ...(interaction.resourceCollisionPolicy === undefined ? {} : { resourceCollisionPolicy: interaction.resourceCollisionPolicy }),
-      ...(interaction.loadResourceCollisionProjection === undefined ? {} : { loadResourceCollisionProjection: interaction.loadResourceCollisionProjection }),
-      ...(interaction.sourceForOccurrence === undefined ? {} : { source: interaction.sourceForOccurrence(occurrence) }),
-      acceptWarnings,
-    };
   }
 
   private resultAnnouncement(
