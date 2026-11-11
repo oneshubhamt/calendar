@@ -1,8 +1,4 @@
-import type { CalendarWeekNumbersOptions } from "./types.js";
-
-export interface ResolvedCalendarWeekNumbering {
-  readonly minimumDaysInFirstWeek: number;
-}
+import type { CalendarResolvedWeekNumbering, CalendarWeekNumbersOptions } from "./types.js";
 
 interface WeekInfoLike {
   readonly minimalDays?: unknown;
@@ -30,7 +26,7 @@ function localeMinimumDaysInFirstWeek(locale: string): number {
 export function resolveCalendarWeekNumbering(
   locale: string,
   weekNumbers: boolean | CalendarWeekNumbersOptions | undefined,
-): ResolvedCalendarWeekNumbering | undefined {
+): CalendarResolvedWeekNumbering | undefined {
   if (weekNumbers === undefined || weekNumbers === false) return undefined;
   if (weekNumbers !== true && (!weekNumbers || typeof weekNumbers !== "object" || Array.isArray(weekNumbers))) {
     throw new TypeError("weekNumbers must be a boolean or configuration object");
