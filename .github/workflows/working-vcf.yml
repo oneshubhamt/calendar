@@ -31,12 +31,12 @@ jobs:
         run: npm install --global npm@12.2.2
       - name: Install dependencies
         run: npm ci
-      - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+      - name: Verify runner Chrome
+        run: google-chrome --version
       - name: Build
         run: npm run build
       - name: Run VC-F browser checks
-        run: npx playwright test tests/browser/rendering-smoke.spec.mjs --config=playwright.config.mjs --project=chromium
+        run: npx playwright test tests/browser/rendering-smoke.spec.mjs --config=playwright.vcf.config.mjs
       - name: Upload failure report
         if: failure()
         uses: actions/upload-artifact@v7.0.2
