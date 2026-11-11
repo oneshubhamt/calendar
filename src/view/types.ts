@@ -330,6 +330,12 @@ export interface CalendarResolvedWeekNumbering {
   readonly minimumDaysInFirstWeek: number;
 }
 
+/** Options for CalendarUi.createPrintSnapshot(). The snapshot is always detached and read-only. */
+export interface CalendarPrintSnapshotOptions {
+  /** Override the generated period heading. Set false to omit the heading. */
+  readonly title?: string | false;
+}
+
 export interface CalendarUiChromeOptions {
   /** Show Calendar-owned toolbar chrome. When false, its child controls are not mounted. */
   readonly toolbar?: boolean;

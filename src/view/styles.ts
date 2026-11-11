@@ -46,4 +46,30 @@ export const CALENDAR_CSS = String.raw`
 @media(max-width:900px){.dc-year-grid{grid-template-columns:repeat(2,minmax(220px,1fr))}}
 @media(max-width:720px){.dc-year-grid{grid-template-columns:1fr;padding:8px}.dc-agenda-span{max-width:128px}.dc-advanced-recurrence-grid{grid-template-columns:1fr}.dc-time-shell.has-secondary-time-zone{min-width:632px}.dc-time-shell[data-day-count="1"].has-secondary-time-zone{min-width:0;grid-template-columns:48px 64px minmax(0,1fr)}}
 @media(max-width:430px){.dc-view-switch .dc-btn{padding-inline:3px;font-size:12px}.dc-agenda-span{width:100%;max-width:none;order:4}.dc-view-switch{order:5}.dc-time-shell[data-day-count="7"].has-secondary-time-zone{min-width:584px}}
+
+/* Detached print snapshots use the same rendered view and stylesheet, but never the live interaction surface. */
+.dc-print-snapshot{display:block;background:#fff;color:#111827;font:14px/1.35 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.dc-print-heading{margin:0 0 10px;padding:0 0 8px;border-bottom:1px solid #cbd5e1;color:#111827}
+.dc-print-heading h1{margin:0;font:650 18px/1.25 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.dc-print-snapshot .dc-root{--dc-border:#cbd5e1;--dc-muted:#4b5563;--dc-bg:#fff;--dc-soft:#f8fafc;--dc-text:#111827;color:var(--dc-text);background:var(--dc-bg);border:0;border-radius:0;min-height:0;height:auto;overflow:visible}
+.dc-print-snapshot .dc-body,.dc-print-snapshot .dc-timeline-scroll{height:auto;max-height:none;overflow:visible}
+.dc-print-snapshot .dc-weekdays,.dc-print-snapshot .dc-day-headers,.dc-print-snapshot .dc-agenda-heading,.dc-print-snapshot .dc-timeline-axis{position:static}
+.dc-print-snapshot .dc-day-cell,.dc-print-snapshot .dc-all-day-col,.dc-print-snapshot .dc-background-layer,.dc-print-snapshot .dc-day-background-layer{overflow:visible}
+.dc-print-snapshot .dc-timeline-scroll{max-width:none}
+.dc-print-snapshot .dc-month-grid{min-height:0;grid-auto-rows:minmax(80px,auto)}
+.dc-print-snapshot .dc-event,.dc-print-snapshot .dc-time-event,.dc-print-snapshot .dc-agenda-row,.dc-print-snapshot .dc-year-month,.dc-print-snapshot .dc-timeline-event{break-inside:avoid;page-break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.dc-print-snapshot [role="button"],.dc-print-snapshot button,.dc-print-snapshot a{cursor:default}
+
+@media print{
+  .dc-root{--dc-border:#cbd5e1;--dc-muted:#4b5563;--dc-bg:#fff;--dc-soft:#f8fafc;--dc-text:#111827;color:var(--dc-text);background:var(--dc-bg);border:0!important;border-radius:0!important;min-height:0!important;height:auto!important;overflow:visible!important;box-shadow:none!important}
+  .dc-toolbar,.dc-source-menu,.dc-context-menu,.dc-addon-menu,.dc-inline-actions,.dc-resize-handle,.dc-timeline-resize-handle,.dc-selection-range,.dc-now,.dc-sr-only{display:none!important}
+  .dc-body,.dc-timeline-scroll{height:auto!important;max-height:none!important;overflow:visible!important}
+  .dc-weekdays,.dc-day-headers,.dc-agenda-heading,.dc-timeline-axis{position:static!important}
+  .dc-day-cell,.dc-all-day-col,.dc-background-layer,.dc-day-background-layer{overflow:visible!important}
+  .dc-timeline-scroll{max-width:none!important}
+  .dc-month-grid{min-height:0!important;grid-auto-rows:minmax(80px,auto)}
+  .dc-event,.dc-time-event,.dc-agenda-row,.dc-year-month,.dc-timeline-event{break-inside:avoid;page-break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .dc-root *{animation:none!important;transition:none!important;scroll-behavior:auto!important}
+  .dc-print-snapshot{background:#fff;color:#111827}
+}
 `;

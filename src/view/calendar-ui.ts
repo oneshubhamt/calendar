@@ -26,6 +26,7 @@ import type {
   CalendarKindOption,
   CalendarPlacementValidationPort,
   CalendarPresentationText,
+  CalendarPrintSnapshotOptions,
   CalendarResolvedWeekNumbering,
   CalendarSelection,
   CalendarUiAddonContext,
@@ -93,6 +94,7 @@ import {
   type CalendarExternalDropTemplate,
   type ResolvedCalendarExternalDropDecoder,
 } from "./external-drop.js";
+import { createCalendarPrintSnapshot } from "./print.js";
 
 
 interface SelectionDragState {
@@ -534,6 +536,16 @@ export class CalendarUi {
     for (const occurrence of this.occurrences) this.occurrenceIndex.set(occurrence.occurrenceId, occurrence);
     this.render();
     this.hostHook("Calendar onRangeChange callback", () => this.options.callbacks?.onRangeChange?.(this.visibleRange, this.view), undefined);
+  }
+
+  /**
+   * Create a detached, inert clone of the active rendered view for printing.
+   * The clone owns a copy of Calendar's current stylesheet and never re-renders,
+   * queries, executes commands or receives live event listeners.
+   */
+  public createPrintSnapshot(options: CalendarPrintSnapshotOptions = {}): HTMLElement {
+    if (this.destroyed) throw new Error("Cannot create a print snapshot after CalendarUi has been destroyed");
+    return createCalendarPrintSnapshot(this.host, this.periodTitle(), options);
   }
 
   public setView(view: CalendarUiViewId): void {
