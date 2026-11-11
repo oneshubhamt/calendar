@@ -24,7 +24,7 @@ test("generic dependency direction and host-domain isolation are explicit archit
   ];
   const viewPaths = [
     "../src/view/types.ts","../src/view/calendar-ui.ts","../src/view/view-renderer.ts","../src/view/view-registry.ts",
-    "../src/view/gesture-controller.ts","../src/view/temporal-chrome.ts",
+    "../src/view/external-drop.ts","../src/view/gesture-controller.ts","../src/view/temporal-chrome.ts",
   ];
   const core = await Promise.all(corePaths.map(async path => [path, await read(path)]));
   const view = await Promise.all(viewPaths.map(async path => [path, await read(path)]));
@@ -95,6 +95,28 @@ test("custom view extensibility remains view-layer only and mutation-safe", asyn
   assert.match(ui, /body\.append\(this\.renderActiveView\(\)\)/);
   assert.doesNotMatch(ui, /if \(this\.view === "month"\) body\.append|else if \(this\.view === "year"\) body\.append/);
   assert.doesNotMatch(storage, /CalendarCustomView|CalendarUiViewId/);
+});
+
+test("external drop remains a view-layer creation boundary rather than a persistence path", async () => {
+  const [coreTypes, viewTypes, externalDrop, ui, storage, interop] = await Promise.all([
+    read("../src/core/types.ts"),
+    read("../src/view/types.ts"),
+    read("../src/view/external-drop.ts"),
+    read("../src/view/calendar-ui.ts"),
+    read("../src/storage/indexeddb-repository.ts"),
+    read("../src/interoperability/storage.ts"),
+  ]);
+
+  assert.doesNotMatch(coreTypes, /ExternalDrop|DataTransfer/);
+  assert.match(viewTypes, /externalDropDecoder/);
+  assert.match(viewTypes, /dropExternal\(dataTransfer: DataTransfer \| null, selection: CalendarSelection\)/);
+  assert.match(externalDrop, /CALENDAR_EXTERNAL_DROP_MIME/);
+  assert.match(externalDrop, /bindCalendarExternalDropTarget/);
+  assert.doesNotMatch(externalDrop, /CalendarRepository|IndexedDb|SyncState|GoogleCalendar|commandHandler/);
+  assert.match(ui, /createCalendarItem\(draft, "external-drop"\)/);
+  assert.match(ui, /mutations\.allowDraftPlacement\(item, undefined, "external-drop"\)/);
+  assert.match(ui, /mutations\.dispatch\(\{ type: "create", item \}\)/);
+  assert.doesNotMatch(storage + interop, /ExternalDrop|DataTransfer/);
 });
 
 test("view decomposition keeps mutation, rendering and gesture concerns separated", async () => {
