@@ -158,7 +158,7 @@ test("Resource Scheduler reuses shared pointer arming, long-press, cancellation 
     globalThis.__resourcePointerProbe = { ui, commits, mouseMove, beginTouch, cancelTouch };
   }, projection);
 
-  await page.evaluate(() => globalThis.__resourcePointerProbe.mouseMove(90));
+  await page.evaluate(() => globalThis.__resourcePointerProbe.mouseMove(60));
   await expect.poll(async () => await page.evaluate(() =>
     globalThis.__resourcePointerProbe.commits.at(-1)?.start,
   )).toBe("2026-11-10T09:30:00.000Z");
