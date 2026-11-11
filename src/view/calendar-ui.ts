@@ -1134,6 +1134,7 @@ export class CalendarUi {
       const visualRight = baseLeft + (baseWidth * (layout.visualLane + 1)) / layout.visualLaneCount;
       event.style.top = `${top}px`;
       event.style.height = `${height}px`;
+      event.style.setProperty("--dc-print-event-height", `${height}px`);
       event.style.left = `calc(${visualLeft}% + 2px)`;
       event.style.right = `calc(${100 - visualRight}% + 2px)`;
       event.style.zIndex = String(2 + layout.column);

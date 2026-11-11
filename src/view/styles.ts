@@ -58,6 +58,8 @@ export const CALENDAR_CSS = String.raw`
 .dc-print-snapshot .dc-timeline-scroll{max-width:none}
 .dc-print-snapshot .dc-month-grid{min-height:0;grid-auto-rows:minmax(80px,auto)}
 .dc-print-snapshot .dc-event,.dc-print-snapshot .dc-time-event,.dc-print-snapshot .dc-agenda-row,.dc-print-snapshot .dc-year-month,.dc-print-snapshot .dc-timeline-event{break-inside:avoid;page-break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.dc-print-snapshot .dc-time-event{height:var(--dc-print-event-height)!important;transform:none!important}
+.dc-print-snapshot .dc-timeline-event{width:var(--dc-print-event-width)!important;transform:none!important}
 .dc-print-snapshot [role="button"],.dc-print-snapshot button,.dc-print-snapshot a{cursor:default}
 
 @media print{
@@ -69,6 +71,11 @@ export const CALENDAR_CSS = String.raw`
   .dc-timeline-scroll{max-width:none!important}
   .dc-month-grid{min-height:0!important;grid-auto-rows:minmax(80px,auto)}
   .dc-event,.dc-time-event,.dc-agenda-row,.dc-year-month,.dc-timeline-event{break-inside:avoid;page-break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .dc-root .is-dragging,.dc-root .is-command-preview,.dc-root .is-touch-arming,.dc-root .is-pending,.dc-root [aria-busy="true"]{opacity:1!important;cursor:default!important;outline:0!important}
+  .dc-root .is-dragging,.dc-root .is-command-preview{transform:none!important}
+  .dc-time-event{height:var(--dc-print-event-height)!important}
+  .dc-timeline-event{width:var(--dc-print-event-width)!important;transform:none!important}
+  .dc-day-cell.is-external-drop-target,.dc-all-day-col.is-external-drop-target,.dc-time-column.is-external-drop-target{box-shadow:none!important}
   .dc-root *{animation:none!important;transition:none!important;scroll-behavior:auto!important}
   .dc-print-snapshot{background:#fff;color:#111827}
 }

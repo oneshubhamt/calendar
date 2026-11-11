@@ -443,6 +443,7 @@ function renderTimeline(
     event.style.left = `${clamp(layout.xMinutes * scale, 0, timelineWidth)}px`;
     event.style.top = `${8 + layout.lane * options.eventHeight}px`;
     event.style.width = `${layout.temporalForm === "point" ? 10 : Math.max(20, layout.widthMinutes * scale)}px`;
+    event.style.setProperty("--dc-print-event-width", event.style.width);
     event.style.height = `${Math.max(22, options.eventHeight - 4)}px`;
     event.style.zIndex = "2";
     event.style.boxSizing = "border-box";

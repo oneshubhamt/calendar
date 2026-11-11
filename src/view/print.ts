@@ -45,6 +45,21 @@ function printTitle(
 }
 
 function sanitizeElement(element: HTMLElement): void {
+  const transient = element.hasAttribute("aria-busy")
+    || TRANSIENT_CLASSES.some(token => element.classList.contains(token));
+  if (transient) {
+    element.style.removeProperty("transform");
+    element.style.removeProperty("opacity");
+    if (element.classList.contains("dc-time-event")) {
+      const height = element.style.getPropertyValue("--dc-print-event-height");
+      if (height) element.style.height = height;
+    }
+    if (element.classList.contains("dc-timeline-event")) {
+      const width = element.style.getPropertyValue("--dc-print-event-width");
+      if (width) element.style.width = width;
+    }
+  }
+
   element.classList.remove(...TRANSIENT_CLASSES);
   element.removeAttribute("aria-busy");
   element.removeAttribute("aria-keyshortcuts");

@@ -1366,8 +1366,12 @@ test("print snapshot is detached, read-only, isolated and print media expands cl
     const liveEvent = document.querySelector("#browser-test-host > .dc-root .dc-time-event");
     if (!(liveBody instanceof HTMLElement) || !(liveEvent instanceof HTMLElement)) throw new Error("Primary calendar missing");
 
+    const canonicalHeight = liveEvent.style.getPropertyValue("--dc-print-event-height");
     liveEvent.classList.add("is-dragging", "is-command-preview", "is-pending");
     liveEvent.setAttribute("aria-busy", "true");
+    liveEvent.style.transform = "translateY(120px)";
+    liveEvent.style.height = "180px";
+    liveEvent.style.opacity = ".2";
     const scrollTopBefore = liveBody.scrollTop;
 
     const [{ CalendarEngine }, { MemoryCalendarRepository }, { CalendarUi }] = await Promise.all([
@@ -1412,6 +1416,10 @@ test("print snapshot is detached, read-only, isolated and print media expands cl
       transient: cloneEvent instanceof HTMLElement
         ? ["is-dragging", "is-command-preview", "is-pending"].some(token => cloneEvent.classList.contains(token))
         : true,
+      cloneGeometryRestored: cloneEvent instanceof HTMLElement
+        && cloneEvent.style.transform === ""
+        && cloneEvent.style.height === canonicalHeight
+        && cloneEvent.style.opacity === "",
       liveTransientPreserved: ["is-dragging", "is-command-preview", "is-pending"].every(token => liveEvent.classList.contains(token)),
       liveScrollUnchanged: liveBody.scrollTop === scrollTopBefore,
       firstContainsSecond: snapshot.textContent?.includes("Second calendar only") ?? false,
@@ -1435,6 +1443,7 @@ test("print snapshot is detached, read-only, isolated and print media expands cl
     inlineActions: 0,
     ariaBusy: 0,
     transient: false,
+    cloneGeometryRestored: true,
     liveTransientPreserved: true,
     liveScrollUnchanged: true,
     firstContainsSecond: false,
@@ -1448,6 +1457,7 @@ test("print snapshot is detached, read-only, isolated and print media expands cl
     const snapshotRoot = snapshot?.querySelector(".dc-root");
     const snapshotBody = snapshot?.querySelector(".dc-body");
     const liveToolbar = document.querySelector("#browser-test-host > .dc-root .dc-toolbar");
+    const liveEvent = document.querySelector("#browser-test-host > .dc-root .dc-time-event");
     const weekHeaders = snapshot?.querySelector(".dc-day-headers");
     if (!(snapshotRoot instanceof HTMLElement) || !(snapshotBody instanceof HTMLElement)) throw new Error("Print snapshot missing");
     return {
@@ -1456,6 +1466,10 @@ test("print snapshot is detached, read-only, isolated and print media expands cl
       bodyHeight: getComputedStyle(snapshotBody).height,
       toolbarDisplay: liveToolbar instanceof HTMLElement ? getComputedStyle(liveToolbar).display : "missing",
       headerPosition: weekHeaders instanceof HTMLElement ? getComputedStyle(weekHeaders).position : "missing",
+      liveEventTransform: liveEvent instanceof HTMLElement ? getComputedStyle(liveEvent).transform : "missing",
+      liveEventHeight: liveEvent instanceof HTMLElement ? getComputedStyle(liveEvent).height : "missing",
+      liveEventPrintHeight: liveEvent instanceof HTMLElement ? liveEvent.style.getPropertyValue("--dc-print-event-height") : "missing",
+      liveEventOpacity: liveEvent instanceof HTMLElement ? getComputedStyle(liveEvent).opacity : "missing",
     };
   });
   expect(printStyles.rootOverflow).toBe("visible");
@@ -1463,6 +1477,9 @@ test("print snapshot is detached, read-only, isolated and print media expands cl
   expect(printStyles.bodyHeight).not.toBe("0px");
   expect(printStyles.toolbarDisplay).toBe("none");
   expect(printStyles.headerPosition).toBe("static");
+  expect(printStyles.liveEventTransform).toBe("none");
+  expect(printStyles.liveEventHeight).toBe(printStyles.liveEventPrintHeight);
+  expect(printStyles.liveEventOpacity).toBe("1");
 
   expect(await page.locator(".dc-print-snapshot").screenshot()).not.toHaveLength(0);
 });
