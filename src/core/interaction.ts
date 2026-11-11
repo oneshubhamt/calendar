@@ -3,13 +3,15 @@ import type {
   CalendarItemPatch,
   CalendarNavigationBounds,
   CalendarOccurrence,
+  CalendarOverlapDisambiguation,
   CalendarPlacementContext,
   CalendarPlacementGuard,
   CalendarPlacementGuardMode,
   CalendarSnapPolicy,
   CalendarSnapStrategy,
 } from "./types.js";
-import { addDays, dateKey, snapDate, startOfDay, toDate } from "./time.js";
+import { shiftCivilMinutes } from "./civil-timeline.js";
+import { addDays, dateKey, parseAbsoluteDateTime, snapDate, startOfDay, toDate } from "./time.js";
 
 export const DEFAULT_SNAP_POLICY: Required<CalendarSnapPolicy> = Object.freeze({
   selection: "round",
@@ -57,6 +59,52 @@ export function snapMinuteCoordinate(value: number, slotMinutes: number, strateg
 
 export function snapWithPolicy(value: Date, slotMinutes: number, strategy: CalendarSnapStrategy): Date {
   return strategy === "none" ? new Date(value.getTime()) : snapDate(value, slotMinutes, strategy);
+}
+
+export interface CalendarOccurrenceInteractionTimes {
+  readonly start: string;
+  readonly end: string;
+}
+
+/** Move an occurrence by civil wall-clock minutes. DST gaps are non-targetable. */
+export function moveOccurrenceByCivilMinutes(
+  occurrence: CalendarOccurrence,
+  deltaMinutes: number,
+  timeZone: string,
+  overlap: CalendarOverlapDisambiguation,
+): CalendarOccurrenceInteractionTimes | null {
+  if (!Number.isFinite(deltaMinutes)) throw new RangeError("Move delta must be finite");
+  const start = parseAbsoluteDateTime(occurrence.start, "Occurrence start");
+  const end = parseAbsoluteDateTime(occurrence.end, "Occurrence end");
+  const shiftedStart = shiftCivilMinutes(start, deltaMinutes, timeZone, overlap);
+  if (!shiftedStart) return null;
+  if (occurrence.temporalForm === "point") {
+    const value = shiftedStart.toISOString();
+    return { start: value, end: value };
+  }
+  const shiftedEnd = shiftCivilMinutes(end, deltaMinutes, timeZone, overlap);
+  return shiftedEnd ? { start: shiftedStart.toISOString(), end: shiftedEnd.toISOString() } : null;
+}
+
+/** Resize one temporal edge in civil wall-clock minutes while preventing inversion. */
+export function resizeOccurrenceByCivilMinutes(
+  occurrence: CalendarOccurrence,
+  edge: CalendarResizeEdge,
+  deltaMinutes: number,
+  minimumMinutes: number,
+  timeZone: string,
+  overlap: CalendarOverlapDisambiguation,
+): CalendarOccurrenceInteractionTimes | null {
+  if (!Number.isFinite(deltaMinutes)) throw new RangeError("Resize delta must be finite");
+  if (!Number.isFinite(minimumMinutes) || minimumMinutes <= 0) throw new RangeError("Minimum duration must be positive and finite");
+  if (occurrence.temporalForm === "point") return null;
+  const start = parseAbsoluteDateTime(occurrence.start, "Occurrence start");
+  const end = parseAbsoluteDateTime(occurrence.end, "Occurrence end");
+  const base = edge === "start" ? start : end;
+  const target = shiftCivilMinutes(base, deltaMinutes, timeZone, overlap);
+  if (!target) return null;
+  const resized = resizeInterval(start, end, target, edge, minimumMinutes);
+  return { start: resized.start.toISOString(), end: resized.end.toISOString() };
 }
 
 export function intervalsOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean {
