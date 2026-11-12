@@ -1,0 +1,45 @@
+name: CLEER-B persistence browser QA
+
+on:
+  push:
+    branches:
+      - working
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cleer-b-persistence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    name: IndexedDB lifecycle matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Use pinned npm
+        run: npm install --global npm@12.2.2
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install browser matrix
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Build
+        run: npm run build
+
+      - name: Run persistence browser suite
+        run: npx playwright test tests/browser/storage.spec.mjs --config=playwright.config.mjs
