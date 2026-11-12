@@ -250,6 +250,11 @@ export interface CalendarRepository extends CalendarSnapshotProvider {
 
 export type CalendarEngineRepository = CalendarSnapshotProvider & Partial<CalendarSourceManager>;
 
+/**
+ * Host item projection boundary. Returned arrays/entities are immutable snapshots for
+ * the query lifetime: publish replacements and signal invalidation instead of mutating
+ * previously returned values. Calendar deliberately does not deep-clone host schedules.
+ */
 export interface CalendarProjectionProvider {
   readonly id: string;
   project(range: CalendarRange): Promise<readonly CalendarItem[]> | readonly CalendarItem[];
@@ -257,7 +262,13 @@ export interface CalendarProjectionProvider {
   subscribe?(listener: () => void): () => void;
 }
 
-/** Host projection boundary for already-expanded occurrences. Calendar never applies recurrence expansion to these values. start/end/originalStart must be absolute ISO date-times; host-local recurrence identity belongs in projectionIdentity. */
+/**
+ * Host projection boundary for already-expanded occurrences. Returned arrays/entities
+ * are immutable snapshots for the query lifetime and must be replaced, not mutated.
+ * Calendar never recurrence-expands these values or deep-clones host schedules.
+ * start/end/originalStart must be absolute ISO date-times; host-local recurrence identity
+ * belongs in projectionIdentity.
+ */
 export interface CalendarOccurrenceProjectionProvider {
   readonly id: string;
   projectOccurrences(range: CalendarRange): Promise<readonly CalendarOccurrence[]> | readonly CalendarOccurrence[];
@@ -267,7 +278,9 @@ export interface CalendarOccurrenceProjectionProvider {
 
 /**
  * Host/feature projection boundary for passive, already-expanded temporal background ranges.
- * Calendar does not recurrence-expand these values or infer availability/constraint semantics from them.
+ * Returned arrays/entities are immutable snapshots for the query lifetime and must be
+ * replaced, not mutated. Calendar does not recurrence-expand or deep-clone these values,
+ * nor infer availability/constraint semantics from them.
  */
 export interface CalendarBackgroundProjectionProvider {
   readonly id: string;

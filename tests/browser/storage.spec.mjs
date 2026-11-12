@@ -482,6 +482,65 @@ test("one repository instance can close and reopen persisted state deterministic
   await deleteDatabase(page);
 });
 
+test("close and reopen isolate an older cross-tab reload from the new repository generation", async ({ page }) => {
+  await page.goto("/tests/browser/harness.html");
+  await deleteDatabase(page);
+
+  const result = await page.evaluate(async () => {
+    const { IndexedDbCalendarRepository } = await import("/dist/storage/indexeddb-repository.js");
+    const repository = new IndexedDbCalendarRepository({
+      sources: [{ id: "personal", title: "Personal", visible: true }],
+    });
+    await repository.open();
+
+    const originalRead = repository.readPersistedState.bind(repository);
+    let readCalls = 0;
+    let releaseOld;
+    let releaseFresh;
+    let oldStartedResolve;
+    let freshStartedResolve;
+    const oldStarted = new Promise(resolve => { oldStartedResolve = resolve; });
+    const freshStarted = new Promise(resolve => { freshStartedResolve = resolve; });
+    const oldBlock = new Promise(resolve => { releaseOld = resolve; });
+    const freshBlock = new Promise(resolve => { releaseFresh = resolve; });
+
+    repository.readPersistedState = async (...args) => {
+      readCalls += 1;
+      if (readCalls === 1) {
+        oldStartedResolve();
+        await oldBlock;
+      } else if (readCalls === 3) {
+        freshStartedResolve();
+        await freshBlock;
+      }
+      return await originalRead(...args);
+    };
+
+    const oldReload = repository.reloadFromStorage();
+    await oldStarted;
+    repository.close();
+    await repository.open();
+
+    const freshReload = repository.reloadFromStorage();
+    await freshStarted;
+    releaseOld();
+    await oldReload;
+
+    const coalescedReload = repository.reloadFromStorage();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const callsWhileFreshBlocked = readCalls;
+
+    releaseFresh();
+    await Promise.all([freshReload, coalescedReload]);
+    const revision = repository.read().revision;
+    repository.close();
+    return { callsWhileFreshBlocked, finalReadCalls: readCalls, revision };
+  });
+
+  expect(result).toEqual({ callsWhileFreshBlocked: 3, finalReadCalls: 3, revision: 0 });
+  await deleteDatabase(page);
+});
+
 test("native IndexedDB persists normalized create, update and delete state across reopen", async ({ page }) => {
   const databaseName = DATABASE_NAME;
   await openRepository(page);

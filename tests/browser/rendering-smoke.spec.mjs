@@ -127,6 +127,60 @@ test("Calendar refresh coalesces invalidation bursts and awaited refresh include
   expect(result.title).toMatch(/November 12, 2026/);
 });
 
+test("Calendar refresh drains a queued newer request when a superseded projection fails", async ({ page }) => {
+  await page.goto("/tests/browser/harness.html");
+  const result = await page.evaluate(async () => {
+    const [{ CalendarEngine }, { MemoryCalendarRepository }, { CalendarUi }] = await Promise.all([
+      import("/dist/core/calendar-engine.js"),
+      import("/dist/core/store.js"),
+      import("/dist/view/calendar-ui.js"),
+    ]);
+    const source = { id: "personal", title: "Personal", visible: true };
+    const calls = [];
+    const controls = [];
+    const projection = {
+      id: "failing-refresh-probe",
+      project(range) {
+        calls.push(structuredClone(range));
+        return new Promise((resolve, reject) => controls.push({ resolve, reject }));
+      },
+    };
+    const engine = new CalendarEngine(new MemoryCalendarRepository([source], []), [projection]);
+    const host = document.getElementById("browser-test-host");
+    const calendar = new CalendarUi(host, engine, {
+      locale: "en-US",
+      timeZone: "UTC",
+      initialDate: "2026-11-10",
+      initialView: "day",
+    });
+
+    while (controls.length < 1) await new Promise(resolve => setTimeout(resolve, 0));
+    calendar.goTo("2026-11-12");
+    const awaited = calendar.refresh();
+    controls[0].reject(new Error("superseded projection failed"));
+
+    while (controls.length < 2) await new Promise(resolve => setTimeout(resolve, 0));
+    controls[1].resolve([]);
+    await awaited;
+
+    const title = host.querySelector("[data-role='title']")?.textContent ?? "";
+    calendar.destroy();
+    return {
+      calls: calls.length,
+      firstStart: calls[0]?.start,
+      trailingStart: calls[1]?.start,
+      title,
+    };
+  });
+
+  expect(result).toEqual({
+    calls: 2,
+    firstStart: "2026-11-10T00:00:00.000Z",
+    trailingStart: "2026-11-12T00:00:00.000Z",
+    title: "November 12, 2026",
+  });
+});
+
 test("week view renders interactive events and passive background layers in a real browser", async ({ page }) => {
   await mountVisualCalendar(page, { view: "week" });
   await expect(page.getByRole("group", { name: "Week calendar" })).toBeVisible();

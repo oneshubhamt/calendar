@@ -347,8 +347,11 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   }
 
   private requestRevisionCheck(): void {
-    void this.readPersistedRevision().then(revision => {
-      if (!this.loaded || revision <= this.read().revision) return;
+    const generation = this.lifecycleGeneration;
+    const database = this.db;
+    if (!database) return;
+    void this.readPersistedRevision(database).then(revision => {
+      if (!this.loaded || generation !== this.lifecycleGeneration || revision <= this.read().revision) return;
       this.requestReload(revision);
     }).catch(() => {
       // Advisory freshness check only; the next signal or poll can retry.
@@ -425,16 +428,24 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   }
 
   private async reloadFromStorage(minimumRevision = -1): Promise<void> {
-    if (!this.loaded) return;
+    const generation = this.lifecycleGeneration;
+    const database = this.db;
+    if (!this.loaded || !database) return;
     this.requestedRefreshRevision = Math.max(this.requestedRefreshRevision, minimumRevision);
     if (this.refreshPromise) return await this.refreshPromise;
 
-    this.refreshPromise = (async () => {
-      while (this.loaded) {
+    const operation = (async () => {
+      while (this.loaded && generation === this.lifecycleGeneration) {
         this.requestedRefreshRevision = -1;
 
-        const persisted = await this.readPersistedState();
-        if (!this.loaded) return;
+        let persisted: PersistedCalendarState | undefined;
+        try {
+          persisted = await this.readPersistedState(database);
+        } catch (error) {
+          if (!this.loaded || generation !== this.lifecycleGeneration) return;
+          throw error;
+        }
+        if (!this.loaded || generation !== this.lifecycleGeneration) return;
         if (persisted) {
           const current = this.read();
           if (persisted.revision > current.revision) {
@@ -450,18 +461,19 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
         }
       }
     })();
+    this.refreshPromise = operation;
     try {
-      await this.refreshPromise;
+      await operation;
     } finally {
-      this.refreshPromise = null;
-      if (!this.loaded) this.requestedRefreshRevision = -1;
+      if (this.refreshPromise === operation) this.refreshPromise = null;
+      if (generation === this.lifecycleGeneration && !this.loaded) this.requestedRefreshRevision = -1;
     }
   }
 
-  private async readPersistedRevision(): Promise<number> {
-    if (!this.db) throw new Error("Calendar IndexedDB is not open");
+  private async readPersistedRevision(database: IDBDatabase | null = this.db): Promise<number> {
+    if (!database) throw new Error("Calendar IndexedDB is not open");
     const value = await new Promise<unknown>((resolve, reject) => {
-      const tx = openCalendarTransaction(this.db!, CALENDAR_STORE_NAME, "readonly");
+      const tx = openCalendarTransaction(database, CALENDAR_STORE_NAME, "readonly");
       const request = tx.objectStore(CALENDAR_STORE_NAME).get(META_KEY);
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error ?? new Error("Could not read Calendar revision"));

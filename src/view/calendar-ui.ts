@@ -556,17 +556,24 @@ export class CalendarUi {
 
     const operation = this.drainRefreshes();
     this.refreshPromise = operation;
-    void operation.then(
-      () => { if (this.refreshPromise === operation) this.refreshPromise = null; },
-      () => { if (this.refreshPromise === operation) this.refreshPromise = null; },
-    );
     return operation;
   }
 
   private async drainRefreshes(): Promise<void> {
-    while (!this.destroyed && this.refreshRequested) {
-      this.refreshRequested = false;
-      await this.performRefresh();
+    try {
+      while (!this.destroyed && this.refreshRequested) {
+        this.refreshRequested = false;
+        try {
+          await this.performRefresh();
+        } catch (error) {
+          // A failed query that was superseded while in flight must not strand
+          // the newer authoritative refresh. Only the final unsuperseded failure rejects.
+          if (!this.destroyed && this.refreshRequested) continue;
+          throw error;
+        }
+      }
+    } finally {
+      this.refreshPromise = null;
     }
   }
 

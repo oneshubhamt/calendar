@@ -165,6 +165,28 @@ test('command lifecycle distinguishes rejected mutation from committed refresh f
   assert.equal(refreshFailed,'committed-refresh-failed');
 });
 
+test('command lifecycle notification hooks cannot corrupt authoritative completion status',async()=>{
+  const lifecycle=new CalendarCommandLifecycle();
+  const pendingFailure=await lifecycle.run('hook-completed','move',()=>{},{
+    onPendingChange(){throw new Error('pending UI failed');},
+  });
+  assert.equal(pendingFailure,'completed');
+  assert.equal(lifecycle.isPending('hook-completed'),false);
+
+  const rejected=await lifecycle.run('hook-rejected','edit',()=>{throw new Error('write rejected');},{
+    onError(){throw new Error('announcement failed');},
+  });
+  assert.equal(rejected,'rejected');
+  assert.equal(lifecycle.isPending('hook-rejected'),false);
+
+  const refreshFailed=await lifecycle.run('hook-refresh','move',()=>{},{
+    refresh(){throw new Error('projection offline');},
+    onRefreshError(){throw new Error('announcement failed');},
+  });
+  assert.equal(refreshFailed,'committed-refresh-failed');
+  assert.equal(lifecycle.isPending('hook-refresh'),false);
+});
+
 test('tentative occurrence geometry can be reconstructed after authoritative re-render',()=>{
   const row=occurrence();
   const preview={patch:{start:'2026-11-09T12:00:00.000Z',end:'2026-11-09T13:00:00.000Z'}};
