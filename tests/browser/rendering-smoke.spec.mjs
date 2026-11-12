@@ -109,7 +109,7 @@ test("Calendar refresh coalesces invalidation bursts and awaited refresh include
     releases[1]([]);
     await awaited;
 
-    const title = host.querySelector(".dc-toolbar-title")?.textContent ?? "";
+    const title = host.querySelector("[data-role='title']")?.textContent ?? "";
     calendar.destroy();
     return {
       calls: ranges.length,

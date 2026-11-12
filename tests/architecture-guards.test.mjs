@@ -56,7 +56,7 @@ test("optional feature and package boundaries stay explicit", async () => {
 test("Resource Scheduler remains optional and reuses generic temporal/gesture mechanics", async () => {
   const [
     types, scheduler, schedulerLayout, resourceAvailability, resourceTimeGridLayout, interactionExecution,
-    schedulerUi, schedulerRendering, timeGridUi, timeGridRendering,
+    resourceInteractionLifecycle, schedulerUi, schedulerRendering, timeGridUi, timeGridRendering,
     coreTypes, timelineCore, pointerGestures, ordinaryView, storage,
   ] = await Promise.all([
     read("../src/features/resource-scheduler/types.ts"),
@@ -65,6 +65,7 @@ test("Resource Scheduler remains optional and reuses generic temporal/gesture me
     read("../src/features/resource-availability.ts"),
     read("../src/features/resource-time-grid/index.ts"),
     read("../src/features/resource-scheduler/interaction-execution.ts"),
+    read("../src/features/resource-interaction-lifecycle.ts"),
     read("../src/features/resource-scheduler-ui/index.ts"),
     read("../src/features/resource-scheduler-ui/rendering.ts"),
     read("../src/features/resource-time-grid-ui/index.ts"),
@@ -91,9 +92,11 @@ test("Resource Scheduler remains optional and reuses generic temporal/gesture me
   assert.match(schedulerRendering, /horizontalTimelineTicks/);
   assert.match(schedulerUi, /CalendarPointerGestureController/);
   assert.match(timeGridUi, /CalendarPointerGestureController/);
-  assert.match(schedulerUi, /executeCalendarResourceInteraction/);
-  assert.match(timeGridUi, /executeCalendarResourceInteraction/);
-  assert.doesNotMatch(schedulerUi + timeGridUi, /executeCalendarResourcePlacement/);
+  assert.match(resourceInteractionLifecycle, /executeCalendarResourceInteraction/);
+  assert.match(schedulerUi, /runCalendarResourceInteractionLifecycle/);
+  assert.match(timeGridUi, /runCalendarResourceInteractionLifecycle/);
+  assert.doesNotMatch(schedulerUi + timeGridUi, /executeCalendarResourceInteraction|executeCalendarResourcePlacement/);
+  assert.doesNotMatch(resourceInteractionLifecycle, /executeCalendarResourcePlacement|document\.|HTMLElement/);
   assert.match(pointerGestures, /requestAnimationFrame/);
   assert.doesNotMatch(schedulerUi + timeGridUi, /requestAnimationFrame|AUTO_SCROLL_ZONE|AUTO_SCROLL_STEP/);
   assert.match(schedulerUi, /from "\.\/rendering\.js"/);
