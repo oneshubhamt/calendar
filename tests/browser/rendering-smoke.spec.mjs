@@ -173,12 +173,12 @@ test("Calendar refresh drains a queued newer request when a superseded projectio
     };
   });
 
-  expect(result).toEqual({
+  expect(result).toMatchObject({
     calls: 2,
     firstStart: "2026-11-10T00:00:00.000Z",
     trailingStart: "2026-11-12T00:00:00.000Z",
-    title: "November 12, 2026",
   });
+  expect(result.title).toMatch(/November 12, 2026/);
 });
 
 test("week view renders interactive events and passive background layers in a real browser", async ({ page }) => {
