@@ -1,4 +1,4 @@
-name: CLEER de novo functional browser QA
+name: CLEER de novo full browser QA
 
 on:
   push:
@@ -9,23 +9,33 @@ permissions:
   contents: read
 
 concurrency:
-  group: cleer-denovo-functional-${{ github.ref }}
+  group: cleer-denovo-browser-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   browser:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.0-noble
+      options: --ipc=host --cap-add=SYS_ADMIN
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.1.0
         with:
-          node-version-file: .nvmrc
+          node-version: "26.13.0"
           cache: npm
           cache-dependency-path: package-lock.json
       - run: npm install --global npm@12.2.2
       - run: npm ci
-      - run: npx playwright install --with-deps chromium firefox webkit
-      - run: npm run build
-      - name: Run complete functional browser matrix
-        run: npx playwright test tests/browser/storage.spec.mjs tests/browser/rendering-smoke.spec.mjs tests/browser/resource-scheduler.spec.mjs tests/browser/resource-time-grid.spec.mjs --config=playwright.config.mjs
+      - name: Verify pinned toolchain
+        run: |
+          test "$(cat .nvmrc)" = "26.13.0"
+          test "$(node --version)" = "v26.13.0"
+          test "$(npm --version)" = "12.2.2"
+          test "$(npx tsc --version)" = "Version 7.0.2"
+          test "$(npx playwright --version)" = "Version 1.65.0"
+      - name: Run full configured browser QA
+        env:
+          HOME: /root
+        run: npm run qa:browser
