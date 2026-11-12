@@ -5,7 +5,7 @@ import { DirectorEcosystemCommandRouter, type SourceOpenPort } from "./common.js
 import type { StudyDirectorCalendarHost } from "./study-director.js";
 import { StudyDirectorLiveProjection, StudyDirectorPlanCommandHandler } from "./study-director.js";
 import type { RevisionDirectorCalendarHost } from "./revision-director.js";
-import { RevisionCalendarScheduler, RevisionDirectorLiveProjection } from "./revision-director.js";
+import { createRevisionDirectorPresentationExtension, RevisionCalendarScheduler, RevisionDirectorLiveProjection } from "./revision-director.js";
 import type { PracticeDeskCalendarHost } from "./practice-desk.js";
 import { PracticeDeskLiveProjection, PracticeDeskMockScheduler } from "./practice-desk.js";
 
@@ -78,7 +78,11 @@ export class DirectorEcosystemSourceActions implements CalendarSourceActionPort 
   }
 }
 
-/** Assembles the independent calendar package around real host ports without changing any host repository. */
+/**
+ * Convenience composition for a central/aggregate Director Calendar surface.
+ * Embedded Practice Desk or Revision Director integrations should instantiate only
+ * their own live projection/action ports rather than depend on sibling products here.
+ */
 export function createDirectorEcosystem(options: DirectorEcosystemOptions) {
   const projections = [
     ...(options.studyDirector ? [new StudyDirectorLiveProjection(options.studyDirector)] : []),
@@ -97,5 +101,9 @@ export function createDirectorEcosystem(options: DirectorEcosystemOptions) {
     practiceScheduler,
     sourceActions,
     projections: Object.freeze(projections),
+    /** Fresh per-CalendarUi extension instances; avoids sharing semantic clock state across views. */
+    createUiExtensions: () => Object.freeze([
+      ...(options.revisionDirector ? [createRevisionDirectorPresentationExtension()] : []),
+    ]),
   });
 }

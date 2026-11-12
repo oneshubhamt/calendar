@@ -269,13 +269,17 @@ These capabilities are intentionally generic. They enable hosts with authoritati
 
 ## Host integrations
 
-Current optional adapters demonstrate the boundary:
+Host integration has three deliberately different layers:
 
-- Study Director maps its schedule gateway, logical study day and immutable history behind its adapter.
-- Revision Director maps generated due markers and separate scheduled sessions without changing scheduler authority.
-- Practice Desk maps attempts and scheduler-derived due dates without moving FSRS into calendar core.
+1. **Generic adapters** in `adapters/*` map already-flattened Calendar-facing DTOs into `CalendarItem` values. They do not know host repositories, schedulers, services or UI controllers.
+2. **Built-in host integrations** in `integration/*` connect one product to those adapters through narrow range-scoped read/action ports. Practice Desk resolves its current LearningCard/review/FSRS-7/Cost-ADR/leech/personalization state to `attempts + dueCards` before the Calendar boundary. Revision Director resolves obligations, knowledge hierarchy, profiles and planner records to `RevisionDirectorCalendarInput` before the Calendar boundary. Calendar therefore does not mirror either host's internal scheduler/planner schema.
+3. **`createDirectorEcosystem()`** is only a convenience composition for a central Calendar surface that deliberately aggregates multiple Director products. Practice Desk and Revision Director should not depend on that aggregate merely to embed their own Calendar pane.
 
-These modules are not architectural dependencies of generic calendar code. Other hosts should implement their own thin translation/command boundaries rather than add domain concepts to core/view.
+Both live host projections forward the exact requested `CalendarRange` to the host so the host can use its own indexes and avoid global reads. Hosts with native change events expose them through `CalendarIntegrationInvalidationPort`. A controller without a native subscription may own `CalendarIntegrationInvalidationNotifier` and call `notify()` after authoritative host mutations. Hosts without either mechanism can explicitly call their Calendar controller's `refresh()`; polling is not part of the integration contract.
+
+Due obligations/cards are true zero-duration `temporalForm: "point"` items. Revision overdue decoration is not stamped into projection data with wall-clock time; `createRevisionDirectorPresentationExtension()` evaluates it from `CalendarUiExtensionContext.now`, so deterministic/custom Calendar clocks remain authoritative for presentation.
+
+Study Director continues to map its schedule gateway, logical study day and immutable history behind its own adapter. These modules are not architectural dependencies of generic calendar code. Other hosts should implement thin translation/command boundaries rather than add domain concepts to core/view.
 
 Ayana is the first planned consumer of the advanced host-owned temporal integration described above. Its specific mapping, UX target and non-goals are documented in `AYANA_INTEGRATION.md`; the staged delivery programme is in `AYANA_IMPLEMENTATION_PROGRAMME.md`. Those documents may name Ayana concepts, but they do not extend the generic core vocabulary.
 

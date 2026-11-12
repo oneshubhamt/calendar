@@ -1,51 +1,24 @@
-import type { CalendarItem, CalendarProjectionProvider, CalendarRepository, ISODateTime } from "../core/types.js";
+import type { CalendarItem, CalendarProjectionProvider, CalendarRange, CalendarRepository, ISODateTime } from "../core/types.js";
 import { toDate } from "../core/time.js";
-import type {
-  RevisionDirectorCalendarInput,
-  RevisionDirectorDailyPlanRecord,
-  RevisionDirectorExam,
-  RevisionDirectorObligation,
-} from "../adapters/revision-director.js";
+import type { RevisionDirectorCalendarInput } from "../adapters/revision-director.js";
 import { RevisionDirectorProjection } from "../adapters/revision-director.js";
+import type { CalendarUiExtension } from "../view/types.js";
+import type { CalendarIntegrationInvalidationPort } from "./common.js";
+import { subscribeCalendarIntegrationInvalidation } from "./common.js";
 import { createCalendarIntegrationId } from "./id.js";
 
-/** Calendar-relevant subsets of the current Revision Director domain records. */
-export interface RevisionDirectorRawObligation {
-  readonly id: string;
-  readonly unitId: string;
-  readonly type: string;
-  readonly status: string;
-  readonly dueAt: ISODateTime;
-  readonly expectedMinutes: number;
-}
-export interface RevisionDirectorRawUnit {
-  readonly id: string;
-  readonly profileId: string;
-  readonly topicNodeId: string;
-  readonly title: string;
-}
-export interface RevisionDirectorRawNode {
-  readonly id: string;
-  readonly parentId: string | null;
-  readonly kind: "subject" | "section" | "topic";
-  readonly name: string;
-}
-export interface RevisionDirectorRawProfile {
-  readonly id: string;
-  readonly name: string;
-  readonly examDate: string;
-  readonly status: string;
+export interface RevisionDirectorCalendarReadPort {
+  /** Host-owned range-scoped projection; host resolves domain joins before this boundary. */
+  readCalendar(range: CalendarRange): RevisionDirectorCalendarInput | Promise<RevisionDirectorCalendarInput>;
+  /** Native host subscription or a controller-owned CalendarIntegrationInvalidationNotifier. */
+  readonly calendarInvalidation?: CalendarIntegrationInvalidationPort;
 }
 
-/** Mirrors public RevisionService read methods, so host glue is minimal after the merge. */
-export interface RevisionDirectorCalendarHost {
-  obligations(): readonly RevisionDirectorRawObligation[] | Promise<readonly RevisionDirectorRawObligation[]>;
-  units(): readonly RevisionDirectorRawUnit[] | Promise<readonly RevisionDirectorRawUnit[]>;
-  nodes(): readonly RevisionDirectorRawNode[] | Promise<readonly RevisionDirectorRawNode[]>;
-  profiles(): readonly RevisionDirectorRawProfile[] | Promise<readonly RevisionDirectorRawProfile[]>;
-  dailyPlanHistory(): readonly RevisionDirectorDailyPlanRecord[] | Promise<readonly RevisionDirectorDailyPlanRecord[]>;
+export interface RevisionDirectorCalendarActionPort {
   markReviewTargetsStarted?(targets: string[], now: Date): Promise<void> | void;
 }
+
+export interface RevisionDirectorCalendarHost extends RevisionDirectorCalendarReadPort, RevisionDirectorCalendarActionPort {}
 
 export interface RevisionScheduleRequest {
   readonly obligationId: string;
@@ -58,42 +31,30 @@ export interface RevisionScheduleRequest {
   readonly chunkId?: string;
 }
 
-export function joinRevisionDirectorObligations(
-  obligations: readonly RevisionDirectorRawObligation[],
-  units: readonly RevisionDirectorRawUnit[],
-  nodes: readonly RevisionDirectorRawNode[],
-): RevisionDirectorObligation[] {
-  const unitById = new Map(units.map(unit => [unit.id, unit] as const));
-  const nodeById = new Map(nodes.map(node => [node.id, node] as const));
-  return obligations.flatMap(obligation => {
-    const unit = unitById.get(obligation.unitId);
-    if (!unit) return [];
-    const topic = nodeById.get(unit.topicNodeId);
-    const section = topic?.parentId ? nodeById.get(topic.parentId) : undefined;
-    const subject = section?.parentId ? nodeById.get(section.parentId) : undefined;
-    return [{
-      id: obligation.id,
-      unitId: obligation.unitId,
-      title: unit.title,
-      ...(subject?.kind === "subject" ? { subject: subject.name } : {}),
-      type: obligation.type,
-      status: obligation.status,
-      dueAt: obligation.dueAt,
-      expectedMinutes: obligation.expectedMinutes,
-      examId: unit.profileId,
-    }];
-  });
+/** Revision due presentation driven by Calendar's semantic render clock, never ambient wall time. */
+export function createRevisionDirectorPresentationExtension(): CalendarUiExtension {
+  let nowMs = Number.NaN;
+  return {
+    styles: ".revision-director-overdue{box-shadow:inset 3px 0 0 var(--dc-danger)}",
+    prepare(context) { nowMs = context.now.getTime(); },
+    presentOccurrence(occurrence) {
+      if (occurrence.calendarId !== "revision-director:due") return undefined;
+      const dueAt = occurrence.metadata?.dueAt;
+      const dueMs = typeof dueAt === "string" ? Date.parse(dueAt) : Number.NaN;
+      if (!Number.isFinite(nowMs) || !Number.isFinite(dueMs) || dueMs >= nowMs) return undefined;
+      return {
+        classNames: ["revision-director-overdue"],
+        badges: [{ label: "Overdue" }],
+      };
+    },
+  };
 }
 
-export function revisionDirectorExams(profiles: readonly RevisionDirectorRawProfile[]): RevisionDirectorExam[] {
-  return profiles.filter(profile => profile.status === "active" && profile.examDate).map(profile => ({ id: profile.id, name: profile.name, examDate: profile.examDate }));
-}
-
-/** Calendar-owned placement for revision work. It never mutates Revision Director/FSRS dueAt. */
+/** Calendar-owned placement for revision work. It never mutates Revision Director dueAt. */
 export class RevisionCalendarScheduler {
   public constructor(
     private readonly repository: CalendarRepository,
-    private readonly host?: Pick<RevisionDirectorCalendarHost, "markReviewTargetsStarted">,
+    private readonly host?: RevisionDirectorCalendarActionPort,
   ) {}
 
   public async schedule(request: RevisionScheduleRequest): Promise<CalendarItem> {
@@ -134,17 +95,13 @@ export class RevisionCalendarScheduler {
   }
 }
 
+/** Built-in host adapter: host performs domain joins/range selection; Calendar maps the returned DTOs. */
 export class RevisionDirectorLiveProjection extends RevisionDirectorProjection implements CalendarProjectionProvider {
-  public constructor(host: RevisionDirectorCalendarHost) {
-    super(async _range => {
-      const [obligations, units, nodes, profiles, dailyPlans] = await Promise.all([
-        host.obligations(), host.units(), host.nodes(), host.profiles(), host.dailyPlanHistory(),
-      ]);
-      return {
-        obligations: joinRevisionDirectorObligations(obligations, units, nodes),
-        dailyPlans,
-        exams: revisionDirectorExams(profiles),
-      } satisfies RevisionDirectorCalendarInput;
-    });
+  public constructor(private readonly host: RevisionDirectorCalendarReadPort) {
+    super(range => host.readCalendar(range));
+  }
+
+  public subscribe(listener: () => void): () => void {
+    return subscribeCalendarIntegrationInvalidation(this.host.calendarInvalidation, listener);
   }
 }

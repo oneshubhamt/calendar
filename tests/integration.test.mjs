@@ -13,6 +13,10 @@ test('realistic fixtures project all three Director domains', async()=>{
   assert.ok(result.occurrences.some(x=>x.ownership==='revision-engine'));
   assert.ok(result.occurrences.some(x=>x.ownership==='practice-history'));
   assert.ok(result.occurrences.some(x=>x.kind==='exam'));
+  const revisionDue=result.occurrences.find(x=>x.calendarId==='revision-director:due');
+  const practiceDue=result.occurrences.find(x=>x.calendarId==='practice-desk:revision');
+  assert.ok(revisionDue); assert.equal(revisionDue.temporalForm,'point'); assert.equal(revisionDue.start,revisionDue.end);
+  assert.ok(practiceDue); assert.equal(practiceDue.temporalForm,'point'); assert.equal(practiceDue.start,practiceDue.end);
   const scheduledRevision=result.occurrences.find(x=>x.sourceItemId==='fixture:revision:scheduled');
   const scheduledMock=result.occurrences.find(x=>x.sourceItemId==='fixture:practice:scheduled');
   assert.ok(scheduledRevision); assert.ok(scheduledMock);

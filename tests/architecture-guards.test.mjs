@@ -185,6 +185,28 @@ test("Calendar embed ownership, theme bridge and base CSS remain namespace-conta
   assert.match(print, /host\.querySelector<HTMLElement>\(":scope > \.dc-root"\)/);
 });
 
+test("Director live adapters consume Calendar-facing host projections without scheduler or planner-schema leakage", async () => {
+  const [practice, revision, practiceAdapter, revisionAdapter, common, ecosystem] = await Promise.all([
+    read("../src/integration/practice-desk.ts"),
+    read("../src/integration/revision-director.ts"),
+    read("../src/adapters/practice-desk.ts"),
+    read("../src/adapters/revision-director.ts"),
+    read("../src/integration/common.ts"),
+    read("../src/integration/ecosystem.ts"),
+  ]);
+  assert.match(practice, /readCalendar\(range: CalendarRange\)/);
+  assert.doesNotMatch(practice, /LearningCard|RevisionSchedulerPort|reviews|durationMs|RevisionMemoryState|FSRS|cost-adr|replay\(/i);
+  assert.match(revision, /readCalendar\(range: CalendarRange\)/);
+  assert.doesNotMatch(revision, /RevisionDirectorRaw|joinRevisionDirector|dailyPlanHistory\(|\bunits\(\)|\bnodes\(\)|\bprofiles\(\)/);
+  assert.doesNotMatch(revisionAdapter, /Date\.now\(/);
+  assert.match(revision, /context\.now\.getTime\(\)/);
+  assert.match(practiceAdapter, /temporalForm: "point"/);
+  assert.match(revisionAdapter, /temporalForm: "point"/);
+  assert.match(common, /class CalendarIntegrationInvalidationNotifier/);
+  assert.doesNotMatch(practice + revision, /setInterval\(|setTimeout\(/);
+  assert.match(ecosystem, /Convenience composition for a central\/aggregate Director Calendar surface/);
+});
+
 test("external drop remains a view-layer creation boundary rather than a persistence path", async () => {
   const [coreTypes, viewTypes, externalDrop, ui, storage, interop] = await Promise.all([
     read("../src/core/types.ts"),
