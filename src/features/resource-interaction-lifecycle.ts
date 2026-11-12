@@ -83,9 +83,11 @@ export async function runCalendarResourceInteractionLifecycle<TProjection>(
         if (projection !== undefined) options.applyProjection(projection);
       } catch (error) {
         options.reportError(error);
-        if (result.status === "committed") {
-          options.announce(`${options.occurrence.title} changed, but authoritative refresh failed.`);
-        }
+        options.announce(
+          result.status === "committed"
+            ? `${options.occurrence.title} changed, but authoritative refresh failed.`
+            : `${options.occurrence.title} changed elsewhere, but authoritative refresh failed.`,
+        );
       }
     }
     return result;

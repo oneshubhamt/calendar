@@ -118,6 +118,43 @@ test("Resource Scheduler preserves committed result semantics when authoritative
   await expect(event).toBeFocused();
 });
 
+test("Resource Scheduler reports stale authority plus failed reprojection without implying refresh succeeded", async ({ page }) => {
+  await page.goto("/tests/browser/harness.html");
+  await page.evaluate(async projection => {
+    const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
+    const errors = [];
+    const host = document.getElementById("browser-test-host");
+    host.replaceChildren();
+    const ui = new CalendarResourceSchedulerUi(host, {
+      timeZone: "UTC",
+      onError(error) { errors.push(String(error)); },
+      interaction: {
+        mutationPort: {
+          commit() {
+            const error = new Error("stale assignment");
+            error.code = "stale";
+            throw error;
+          },
+        },
+        resourceCapabilityProvider: { capabilities() { return { canReassign: true }; } },
+        sourceForOccurrence() { return { id: "calendar", title: "Calendar", visible: true }; },
+        refreshProjection() { throw new Error("projection offline"); },
+      },
+    });
+    ui.setProjection(projection);
+    globalThis.__resourceSchedulerStaleRefreshFailure = { errors };
+  }, projection);
+
+  const event = page.locator('.dc-rs-event[data-resource-id="a"]');
+  await event.focus();
+  await page.keyboard.press("Alt+ArrowDown");
+
+  await expect(page.getByRole("status")).toContainText("Visit changed elsewhere, but authoritative refresh failed.");
+  expect(await page.evaluate(() => globalThis.__resourceSchedulerStaleRefreshFailure.errors)).toEqual(["Error: projection offline"]);
+  await expect(event).not.toHaveAttribute("aria-busy", "true");
+  await expect(event).toBeFocused();
+});
+
 test("Resource Scheduler keyboard end resize uses edge authority and one atomic authoritative mutation", async ({ page }) => {
   await page.goto("/tests/browser/harness.html");
   await page.evaluate(async projection => {
