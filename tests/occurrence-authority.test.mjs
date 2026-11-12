@@ -187,6 +187,14 @@ test('command lifecycle notification hooks cannot corrupt authoritative completi
   assert.equal(lifecycle.isPending('hook-refresh'),false);
 });
 
+test('command lifecycle treats thrown undefined as a real command or refresh failure',async()=>{
+  const lifecycle=new CalendarCommandLifecycle();
+  assert.equal(await lifecycle.run('undefined-rejection','edit',()=>{throw undefined;}),'rejected');
+  assert.equal(await lifecycle.run('undefined-refresh','move',()=>{},{
+    refresh(){throw undefined;},
+  }),'committed-refresh-failed');
+});
+
 test('tentative occurrence geometry can be reconstructed after authoritative re-render',()=>{
   const row=occurrence();
   const preview={patch:{start:'2026-11-09T12:00:00.000Z',end:'2026-11-09T13:00:00.000Z'}};

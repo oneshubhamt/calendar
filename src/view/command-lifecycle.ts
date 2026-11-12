@@ -36,28 +36,32 @@ export class CalendarCommandLifecycle {
     this.pending.set(group, operation);
     notifyLifecycleHook(() => hooks.onPendingChange?.(group, operation, true));
 
+    let rejected = false;
     let rejection: unknown;
     try {
       await task();
     } catch (error) {
+      rejected = true;
       rejection = error;
     }
 
+    let refreshFailed = false;
     let refreshFailure: unknown;
     try {
       await hooks.refresh?.();
     } catch (error) {
+      refreshFailed = true;
       refreshFailure = error;
     } finally {
       this.pending.delete(group);
       notifyLifecycleHook(() => hooks.onPendingChange?.(group, operation, false));
     }
 
-    if (rejection !== undefined) {
+    if (rejected) {
       notifyLifecycleHook(() => hooks.onError?.(rejection));
       return "rejected";
     }
-    if (refreshFailure !== undefined) {
+    if (refreshFailed) {
       notifyLifecycleHook(() => hooks.onRefreshError?.(refreshFailure));
       return "committed-refresh-failed";
     }
