@@ -192,7 +192,8 @@ export class CalendarUi {
   private backgroundRanges: readonly CalendarBackgroundRange[] = [];
   private destroyed = false;
   private selectionDrag: SelectionDragState | null = null;
-  private renderGeneration = 0;
+  private refreshPromise: Promise<void> | null = null;
+  private refreshRequested = false;
   private contextMenu: HTMLElement | null = null;
   private readonly unsubscribeRepository: () => void;
   private readonly mutations: CalendarMutationCoordinator;
@@ -548,25 +549,48 @@ export class CalendarUi {
     void this.refresh().catch(error => this.announce(error instanceof Error ? `Calendar refresh failed: ${error.message}` : "Calendar refresh failed."));
   }
 
-  public async refresh(): Promise<void> {
+  public refresh(): Promise<void> {
+    if (this.destroyed) return Promise.resolve();
+    this.refreshRequested = true;
+    if (this.refreshPromise) return this.refreshPromise;
+
+    const operation = this.drainRefreshes();
+    this.refreshPromise = operation;
+    void operation.then(
+      () => { if (this.refreshPromise === operation) this.refreshPromise = null; },
+      () => { if (this.refreshPromise === operation) this.refreshPromise = null; },
+    );
+    return operation;
+  }
+
+  private async drainRefreshes(): Promise<void> {
+    while (!this.destroyed && this.refreshRequested) {
+      this.refreshRequested = false;
+      await this.performRefresh();
+    }
+  }
+
+  private async performRefresh(): Promise<void> {
     if (this.destroyed) return;
-    const generation = ++this.renderGeneration;
     const snapshot = this.engine.snapshot();
-    this.sources = snapshot.sources;
-    for (const source of this.sources) if (!this.sourceVisibility.has(source.id)) this.sourceVisibility.set(source.id, source.visible);
-    for (const id of [...this.sourceVisibility.keys()]) if (!this.sources.some(source => source.id === id)) this.sourceVisibility.delete(id);
-    this.visibleRange = this.resolveViewRange();
+    const sources = snapshot.sources;
+    for (const source of sources) if (!this.sourceVisibility.has(source.id)) this.sourceVisibility.set(source.id, source.visible);
+    for (const id of [...this.sourceVisibility.keys()]) if (!sources.some(source => source.id === id)) this.sourceVisibility.delete(id);
+    const visibleRange = this.resolveViewRange();
     const visibleSourceIds = new Set([...this.sourceVisibility].filter(([, visible]) => visible).map(([id]) => id));
-    const sourceById = new Map(this.sources.map(source => [source.id, source] as const));
+    const sourceById = new Map(sources.map(source => [source.id, source] as const));
     const filters = (this.options.addons ?? []).filter(addon => addon.filterOccurrence);
-    const projectionRange = boundProjectionRange(this.visibleRange, this.navigationBounds, this.timeZone);
+    const projectionRange = boundProjectionRange(visibleRange, this.navigationBounds, this.timeZone);
     const result = await this.engine.query(projectionRange, {
       visibleSourceIds,
       timeZone: this.timeZone,
       includeBackgroundRanges: this.activeView().includeBackgroundRanges === true,
       ...(filters.length ? { predicate: (occurrence: CalendarOccurrence) => filters.every(addon => this.hostHook(`Calendar add-on ${addon.id} filter`, () => addon.filterOccurrence?.(occurrence, sourceById.get(occurrence.calendarId)) !== false, true)) } : {}),
     });
-    if (this.destroyed || generation !== this.renderGeneration) return;
+    if (this.destroyed || this.refreshRequested) return;
+
+    this.sources = sources;
+    this.visibleRange = visibleRange;
     this.occurrences = result.occurrences;
     this.backgroundRanges = result.backgroundRanges;
     const extensionContext = { occurrences: this.occurrences, range: this.visibleRange, timeZone: this.timeZone, now: this.clock.now() };

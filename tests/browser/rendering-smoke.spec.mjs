@@ -64,6 +64,69 @@ test("live temporal chrome advances across midnight without re-querying projecti
   expect(Number.parseFloat(afterMinute.nowTop)).toBeCloseTo(1, 1);
 });
 
+test("Calendar refresh coalesces invalidation bursts and awaited refresh includes the trailing authoritative query", async ({ page }) => {
+  await page.goto("/tests/browser/harness.html");
+  const result = await page.evaluate(async () => {
+    const [{ CalendarEngine }, { MemoryCalendarRepository }, { CalendarUi }] = await Promise.all([
+      import("/dist/core/calendar-engine.js"),
+      import("/dist/core/store.js"),
+      import("/dist/view/calendar-ui.js"),
+    ]);
+    const source = { id: "personal", title: "Personal", visible: true };
+    const ranges = [];
+    const releases = [];
+    const projection = {
+      id: "slow-refresh-probe",
+      project(range) {
+        ranges.push(structuredClone(range));
+        return new Promise(resolve => releases.push(resolve));
+      },
+    };
+    const engine = new CalendarEngine(new MemoryCalendarRepository([source], []), [projection]);
+    const host = document.getElementById("browser-test-host");
+    const calendar = new CalendarUi(host, engine, {
+      locale: "en-US",
+      timeZone: "UTC",
+      initialDate: "2026-11-10",
+      initialView: "day",
+    });
+
+    const waitForCalls = async count => {
+      while (releases.length < count) await new Promise(resolve => setTimeout(resolve, 0));
+    };
+    await waitForCalls(1);
+
+    const awaited = calendar.refresh();
+    let settled = false;
+    void awaited.then(() => { settled = true; });
+    calendar.goTo("2026-11-12");
+    void calendar.refresh();
+    void calendar.refresh();
+
+    releases[0]([]);
+    while (ranges.length < 2) await new Promise(resolve => setTimeout(resolve, 0));
+    const settledBeforeTrailingQuery = settled;
+    releases[1]([]);
+    await awaited;
+
+    const title = host.querySelector(".dc-toolbar-title")?.textContent ?? "";
+    calendar.destroy();
+    return {
+      calls: ranges.length,
+      settledBeforeTrailingQuery,
+      firstStart: ranges[0]?.start,
+      trailingStart: ranges[1]?.start,
+      title,
+    };
+  });
+
+  expect(result.calls).toBe(2);
+  expect(result.settledBeforeTrailingQuery).toBe(false);
+  expect(result.firstStart).toBe("2026-11-10T00:00:00.000Z");
+  expect(result.trailingStart).toBe("2026-11-12T00:00:00.000Z");
+  expect(result.title).toMatch(/November 12, 2026/);
+});
+
 test("week view renders interactive events and passive background layers in a real browser", async ({ page }) => {
   await mountVisualCalendar(page, { view: "week" });
   await expect(page.getByRole("group", { name: "Week calendar" })).toBeVisible();

@@ -20,7 +20,6 @@ import {
 import type { CalendarUiExtension } from "../../view/types.js";
 import { hostDataAttributeName, isSafeHostClassName, resolveOccurrencePresentation } from "../../view/presentation.js";
 import {
-  executeCalendarResourceInteraction,
   replaceCalendarResourceAssignment,
   type CalendarResource,
   type CalendarResourceAssignment,
@@ -38,6 +37,7 @@ import {
   type CalendarResourceTimeGridLayoutItem,
   type CalendarResourceTimeGridAllDayItem,
 } from "../resource-time-grid/index.js";
+import { runCalendarResourceInteractionLifecycle } from "../resource-interaction-lifecycle.js";
 import { RESOURCE_TIME_GRID_CSS } from "./styles.js";
 import {
   element,
@@ -665,40 +665,27 @@ export class CalendarResourceTimeGridUi {
     const interaction = this.interaction;
     const projection = this.projection;
     if (!interaction || !projection || this.pending.has(item.occurrenceId)) return;
-    this.setPending(item.occurrenceId, true);
-    try {
-      const execution = await executeCalendarResourceInteraction(
-        projection.resources,
-        item.occurrence,
-        item.resourceId,
-        assignment,
-        mode,
-        candidate,
-        this.timeZone,
-        interaction,
-      );
-      if (execution.status === "cancelled" || !execution.result || !execution.request) return;
-      try { interaction.onResult?.(execution.result, execution.request); } catch (error) { this.reportError(error); }
-      this.announce(this.resultAnnouncement(execution.result, item.occurrence));
-      if (execution.result.status === "committed" || execution.result.status === "stale") {
-        try {
-          const refreshed = await interaction.refreshProjection?.();
-          if (refreshed) this.setProjection(refreshed);
-        } catch (error) {
-          this.reportError(error);
-          if (execution.result.status === "committed") {
-            this.announce(`${item.occurrence.title} changed, but authoritative refresh failed.`);
-          }
-        }
-      }
-    } catch (error) {
-      this.reportError(error);
-      this.announce(`${item.occurrence.title} was not changed.`);
-    } finally {
-      this.setPending(item.occurrenceId, false);
-      if (node.isConnected) node.focus();
-      else this.focusOccurrence(item.occurrenceId, candidate.targetResourceId);
-    }
+    await runCalendarResourceInteractionLifecycle({
+      resources: projection.resources,
+      occurrence: item.occurrence,
+      sourceResourceId: item.resourceId,
+      assignment,
+      mode,
+      candidate,
+      timeZone: this.timeZone,
+      executionOptions: interaction,
+      isPending: () => this.pending.has(item.occurrenceId),
+      setPending: pending => this.setPending(item.occurrenceId, pending),
+      onResult: interaction.onResult,
+      refreshProjection: interaction.refreshProjection,
+      applyProjection: refreshed => this.setProjection(refreshed),
+      announce: message => this.announce(message),
+      reportError: error => this.reportError(error),
+      restoreFocus: () => {
+        if (node.isConnected) node.focus();
+        else this.focusOccurrence(item.occurrenceId, candidate.targetResourceId);
+      },
+    });
   }
 
   private assignmentFor(occurrenceId: string): CalendarResourceAssignment | undefined {
@@ -785,12 +772,6 @@ export class CalendarResourceTimeGridUi {
     }
   }
 
-  private resultAnnouncement(result: CalendarResourcePlacementExecutionResult, occurrence: CalendarOccurrence): string {
-    if (result.status === "committed") return `${occurrence.title} changed.`;
-    if (result.status === "stale") return `${occurrence.title} changed elsewhere; refreshing authoritative data.`;
-    if (result.status === "warning" || result.status === "prevented") return result.evaluation.messages.join(" ");
-    return `${occurrence.title} is already in that position.`;
-  }
 
   private announce(message: string): void {
     this.status.textContent = "";

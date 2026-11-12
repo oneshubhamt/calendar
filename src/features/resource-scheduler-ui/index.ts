@@ -20,7 +20,6 @@ import {
 import type { CalendarUiExtension } from "../../view/types.js";
 import { hostDataAttributeName, resolveOccurrencePresentation } from "../../view/presentation.js";
 import {
-  executeCalendarResourceInteraction,
   flattenCalendarResources,
   replaceCalendarResourceAssignment,
   type CalendarResource,
@@ -31,6 +30,7 @@ import {
   type CalendarResourcePlacementExecutionResult,
   type CalendarResourcePlacementRequest,
 } from "../resource-scheduler/index.js";
+import { runCalendarResourceInteractionLifecycle } from "../resource-interaction-lifecycle.js";
 import { RESOURCE_SCHEDULER_CSS } from "./styles.js";
 import {
   clamp,
@@ -706,59 +706,30 @@ export class CalendarResourceSchedulerUi {
     const projection = this.projection;
     if (!interaction || !projection || this.pendingOccurrences.has(occurrence.occurrenceId)) return;
 
-    this.setOccurrencePending(occurrence.occurrenceId, true);
-    let result: CalendarResourcePlacementExecutionResult | undefined;
-    try {
-      const execution = await executeCalendarResourceInteraction(
-        projection.resources,
-        occurrence,
-        sourceResourceId,
-        assignment,
-        mode,
-        candidate,
-        this.timeZone,
-        interaction,
-      );
-      if (execution.status === "executed" && execution.result && execution.request) {
-        result = execution.result;
-        try { interaction.onResult?.(result, execution.request); } catch (error) { this.reportError(error); }
-        this.announce(this.resultAnnouncement(result, occurrence));
-        if (result.status === "committed" || result.status === "stale") {
-          try {
-            await this.refreshAuthoritativeProjection();
-          } catch (error) {
-            this.reportError(error);
-            if (result.status === "committed") this.announce(`${occurrence.title} changed, but authoritative refresh failed.`);
-          }
-        }
-      }
-    } catch (error) {
-      this.reportError(error);
-      this.announce(`${occurrence.title} was not changed.`);
-    } finally {
-      this.setOccurrencePending(occurrence.occurrenceId, false);
-      if (node.isConnected) node.focus();
-      else this.focusOccurrence(
-        occurrence.occurrenceId,
-        result?.status === "committed" ? candidate.targetResourceId : sourceResourceId,
-      );
-    }
-  }
-
-  private resultAnnouncement(
-    result: CalendarResourcePlacementExecutionResult,
-    occurrence: CalendarOccurrence,
-  ): string {
-    if (result.status === "committed") return `${occurrence.title} changed.`;
-    if (result.status === "stale") return `${occurrence.title} changed elsewhere; refreshing authoritative data.`;
-    if (result.status === "warning") return result.evaluation.messages.join(" ");
-    if (result.status === "prevented") return result.evaluation.messages.join(" ");
-    return `${occurrence.title} is already in that position.`;
-  }
-
-  private async refreshAuthoritativeProjection(): Promise<void> {
-    const refreshed = await this.interaction?.refreshProjection?.();
-    if (refreshed) this.setProjection(refreshed);
+    await runCalendarResourceInteractionLifecycle({
+      resources: projection.resources,
+      occurrence,
+      sourceResourceId,
+      assignment,
+      mode,
+      candidate,
+      timeZone: this.timeZone,
+      executionOptions: interaction,
+      isPending: () => this.pendingOccurrences.has(occurrence.occurrenceId),
+      setPending: pending => this.setOccurrencePending(occurrence.occurrenceId, pending),
+      onResult: interaction.onResult,
+      refreshProjection: interaction.refreshProjection,
+      applyProjection: refreshed => this.setProjection(refreshed),
+      announce: message => this.announce(message),
+      reportError: error => this.reportError(error),
+      restoreFocus: result => {
+        if (node.isConnected) node.focus();
+        else this.focusOccurrence(
+          occurrence.occurrenceId,
+          result?.status === "committed" ? candidate.targetResourceId : sourceResourceId,
+        );
+      },
+    });
   }
 
   private focusOccurrence(occurrenceId: string, preferredResourceId?: CalendarResourceId): void {

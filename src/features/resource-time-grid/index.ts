@@ -9,8 +9,7 @@ import {
   type BackgroundLayoutItem,
   type TimedLayoutItem,
 } from "../../core/layout.js";
-import { addDays, dateKey, startOfDay, toDate } from "../../core/time.js";
-import { parseAbsoluteDateTime } from "../../core/time.js";
+import { addDays, dateKey, parseAbsoluteDateTime, startOfDay, toDate } from "../../core/time.js";
 import {
   flattenCalendarResources,
   validateCalendarResourceAssignments,
