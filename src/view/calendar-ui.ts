@@ -78,6 +78,7 @@ import {
 } from "./mutation-coordinator.js";
 import { hostDataAttributeName, isSafeHostClassName, resolveOccurrencePresentation, type ResolvedCalendarOccurrencePresentation, type ResolvedCalendarSourceAction } from "./presentation.js";
 import { calendarHostCss } from "./extension-styles.js";
+import { applyCalendarUiTheme } from "./theme.js";
 import { isDateLikeOccurrence, isPointOccurrence } from "./occurrence-form.js";
 import {
   boundProjectionRange, clampNavigationDate, navigationDateInBounds, resolveNavigationBounds,
@@ -159,6 +160,12 @@ function calendarDaySpan(start: Date, end: Date, timeZone: string): number {
 }
 
 
+/**
+ * Composite Calendar DOM widget. The supplied host is a dedicated mount boundary:
+ * Calendar owns the children it mounts plus calendar-local view/interaction state while
+ * this instance is alive. The containing application retains ownership of routing,
+ * application chrome, domain state, persistence/backup and global presentation.
+ */
 export class CalendarUi {
   private readonly clock: CalendarClock;
   private readonly locale: string;
@@ -200,6 +207,7 @@ export class CalendarUi {
   private readonly reportedHostHookErrors = new Set<string>();
   private readonly temporalChrome: CalendarTemporalChrome;
   private readonly gestures: CalendarGestureController;
+  private readonly restoreHostTheme: () => void;
   private activeViewRender: { readonly definition: CalendarViewDefinition; readonly element: HTMLElement } | undefined;
 
   public constructor(
@@ -294,6 +302,7 @@ export class CalendarUi {
       announce: message => this.announce(message),
       finishDrag: (pointer, drag) => this.finishDrag(pointer, drag),
     });
+    this.restoreHostTheme = applyCalendarUiTheme(this.host, options.theme);
     this.mountShell();
     this.temporalChrome.start();
     this.unsubscribeRepository = this.engine.subscribe(() => { if (!this.destroyed) this.requestRefresh(); });
@@ -688,6 +697,7 @@ export class CalendarUi {
     for (const addon of this.options.addons ?? []) this.hostHook(`Calendar add-on ${addon.id} destroy`, () => addon.destroy?.(), undefined);
     this.unsubscribeRepository();
     this.host.replaceChildren();
+    this.restoreHostTheme();
   }
 
   /** Mutation controls fail closed when the host has not supplied a command path or source capability. */

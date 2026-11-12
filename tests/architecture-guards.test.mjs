@@ -165,6 +165,26 @@ test("custom view extensibility remains view-layer only and mutation-safe", asyn
   assert.doesNotMatch(storage, /CalendarCustomView|CalendarUiViewId/);
 });
 
+
+test("Calendar embed ownership, theme bridge and base CSS remain namespace-contained", async () => {
+  const [ui, types, styles, theme, print] = await Promise.all([
+    read("../src/view/calendar-ui.ts"),
+    read("../src/view/types.ts"),
+    read("../src/view/styles.ts"),
+    read("../src/view/theme.ts"),
+    read("../src/view/print.ts"),
+  ]);
+  assert.match(types, /interface CalendarUiTheme/);
+  assert.match(types, /readonly theme\?: CalendarUiTheme/);
+  assert.match(ui, /applyCalendarUiTheme\(this\.host, options\.theme\)/);
+  assert.match(ui, /this\.restoreHostTheme\(\)/);
+  assert.match(styles, /--dc-theme-background/);
+  assert.match(styles, /\.dc-root \.is-dragging/);
+  assert.doesNotMatch(styles, /(?:^|[}\\n])\s*\.is-dragging\s*\{/u);
+  assert.doesNotMatch(theme, /document\.(?:body|documentElement)/);
+  assert.match(print, /host\.querySelector<HTMLElement>\(":scope > \.dc-root"\)/);
+});
+
 test("external drop remains a view-layer creation boundary rather than a persistence path", async () => {
   const [coreTypes, viewTypes, externalDrop, ui, storage, interop] = await Promise.all([
     read("../src/core/types.ts"),

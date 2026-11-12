@@ -354,6 +354,22 @@ export interface CalendarUiChromeOptions {
   readonly createControls?: boolean;
 }
 
+/**
+ * Small host-presentation bridge for embedded Calendar surfaces. Values are CSS values,
+ * may reference host custom properties with var(...), and are validated before use.
+ * Calendar continues to own geometry, spacing, hit testing and responsive layout.
+ */
+export interface CalendarUiTheme {
+  readonly background?: string;
+  readonly softBackground?: string;
+  readonly text?: string;
+  readonly mutedText?: string;
+  readonly border?: string;
+  readonly accent?: string;
+  readonly danger?: string;
+  readonly fontFamily?: string;
+}
+
 export interface CalendarUiOptions {
   /** Semantic clock for now/today behavior and deterministic hosts/tests. Interaction throttling remains wall-clock based. */
   readonly clock?: CalendarClock;
@@ -379,6 +395,8 @@ export interface CalendarUiOptions {
   readonly initialDate?: ISODateTime;
   /** Calendar-owned chrome is independently suppressible for embedded hosts; every control defaults to visible. */
   readonly chrome?: CalendarUiChromeOptions;
+  /** Optional semantic host theme. Omitted values retain Calendar's standalone defaults. */
+  readonly theme?: CalendarUiTheme;
   /** Inclusive local-date bounds. Programmatic navigation is clamped and placements outside the range fail closed. */
   readonly navigationBounds?: CalendarNavigationBounds;
   readonly slotMinutes?: 5 | 10 | 15 | 20 | 30 | 60;
