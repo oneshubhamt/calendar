@@ -1641,8 +1641,9 @@ export class CalendarUi {
     }
     if (!await this.mutations.allowDraftPlacement(item, undefined, "external-drop")) return false;
     this.hostHook("Calendar onCreate callback", () => this.options.callbacks?.onCreate?.(selection), undefined);
-    await this.mutations.dispatch({ type: "create", item });
-    this.announce(`Created ${item.title}.`);
+    const status = await this.mutations.dispatch({ type: "create", item });
+    if (!mutationCommitted(status)) return false;
+    if (status === "completed") this.announce(`Created ${item.title}.`);
     return true;
   }
 
@@ -2010,11 +2011,11 @@ export class CalendarUi {
   }
 
   public async undo(): Promise<boolean> {
-    return await this.mutations.undo();
+    return mutationCommitted(await this.mutations.undo());
   }
 
   public async redo(): Promise<boolean> {
-    return await this.mutations.redo();
+    return mutationCommitted(await this.mutations.redo());
   }
 
   private announce(message: string): void {
@@ -2470,8 +2471,8 @@ export class CalendarUi {
       createDraft: async (draft, purpose, original) => {
         const item = self.createCalendarItem(draft, purpose, original);
         if (!await self.mutations.allowDraftPlacement(item, original, String(purpose))) return null;
-        await self.mutations.dispatch({ type: "create", item });
-        return item;
+        const status = await self.mutations.dispatch({ type: "create", item });
+        return mutationCommitted(status) ? item : null;
       },
       ...self.placementValidationPort(),
       patchOccurrence: async (occurrence, patch, label = "Edit") => {

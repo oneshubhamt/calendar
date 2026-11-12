@@ -240,3 +240,174 @@ test('mutation coordinator revalidates occurrence authority and owns pending pre
   assert.equal(denied,'rejected');
   assert.equal(commands.length,1);
 });
+
+test('mutation coordinator executes occurrence commands with the latest authoritative occurrence payload and context',async()=>{
+  const rendered=occurrence();
+  const authoritative={
+    ...rendered,
+    start:'2026-11-09T11:00:00.000Z',
+    end:'2026-11-09T12:00:00.000Z',
+    projectionIdentity:{series:'opaque',slot:4,version:2},
+  };
+  const executed=[];
+  const observed=[];
+  const coordinator=new CalendarMutationCoordinator({
+    engine:new C.CalendarEngine(new C.MemoryCalendarRepository([source],[])),
+    clock:{now:()=>new Date('2026-11-09T09:00:00.000Z')},
+    timeZone:'UTC',
+    navigationBounds:{},
+    collisionPolicy:{mode:'allow',includeAllDay:false},
+    placementGuards:undefined,
+    commandHandler:{execute(command,context){executed.push([command,context]);}},
+    trustedHostCommandHandler:undefined,
+    occurrenceCapabilities:undefined,
+    sourceActions:undefined,
+    sources:()=>[source],
+    occurrence:id=>id===authoritative.occurrenceId?authoritative:undefined,
+    refresh:async()=>{},
+    announce:()=>{},
+    onCommand:command=>observed.push(command),
+    onPendingChange:()=>{},
+    onSettled:()=>{},
+    confirmPlacementWarning:async()=>true,
+    selectSeriesScope:async()=> 'all',
+  });
+  const command={
+    type:'move-occurrence',
+    occurrence:rendered,
+    start:'2026-11-09T12:00:00.000Z',
+    end:'2026-11-09T13:00:00.000Z',
+    scope:'this',
+  };
+
+  assert.equal(await coordinator.dispatchOccurrence(command,['canMove'],'move'),'completed');
+  assert.equal(executed.length,1);
+  assert.strictEqual(executed[0][0].occurrence,authoritative);
+  assert.strictEqual(executed[0][1].occurrence,authoritative);
+  assert.strictEqual(executed[0][1].projectionIdentity,authoritative.projectionIdentity);
+  assert.strictEqual(observed[0].occurrence,authoritative);
+  assert.strictEqual(command.occurrence,rendered);
+});
+
+test('ordinary mutations distinguish rejection from committed refresh failure',async()=>{
+  const announcements=[];
+  let commits=0;
+  const coordinator=new CalendarMutationCoordinator({
+    engine:new C.CalendarEngine(new C.MemoryCalendarRepository([source],[])),
+    clock:{now:()=>new Date('2026-11-09T09:00:00.000Z')},
+    timeZone:'UTC',
+    navigationBounds:{},
+    collisionPolicy:{mode:'allow',includeAllDay:false},
+    placementGuards:undefined,
+    commandHandler:{execute(){commits+=1;}},
+    trustedHostCommandHandler:undefined,
+    occurrenceCapabilities:undefined,
+    sourceActions:undefined,
+    sources:()=>[source],
+    occurrence:()=>undefined,
+    refresh:async()=>{throw new Error('projection offline');},
+    announce:message=>announcements.push(message),
+    onCommand:()=>{},
+    onPendingChange:()=>{},
+    onSettled:()=>{},
+    confirmPlacementWarning:async()=>true,
+    selectSeriesScope:async()=> 'all',
+  });
+  const item={
+    id:'new-item',calendarId:'host',title:'New item',start:'2026-11-09T10:00:00.000Z',end:'2026-11-09T11:00:00.000Z',
+    kind:'event',ownership:'host',editPolicy:'full',
+  };
+
+  assert.equal(await coordinator.dispatch({type:'create',item}),'committed-refresh-failed');
+  assert.equal(commits,1);
+  assert.match(announcements.at(-1),/committed, but the authoritative refresh failed/);
+
+  const rejected=new CalendarMutationCoordinator({
+    engine:new C.CalendarEngine(new C.MemoryCalendarRepository([source],[])),
+    clock:{now:()=>new Date('2026-11-09T09:00:00.000Z')},
+    timeZone:'UTC',
+    navigationBounds:{},
+    collisionPolicy:{mode:'allow',includeAllDay:false},
+    placementGuards:undefined,
+    commandHandler:{execute(){throw new Error('write rejected');}},
+    trustedHostCommandHandler:undefined,
+    occurrenceCapabilities:undefined,
+    sourceActions:undefined,
+    sources:()=>[source],
+    occurrence:()=>undefined,
+    refresh:async()=>{},
+    announce:message=>announcements.push(message),
+    onCommand:()=>{},
+    onPendingChange:()=>{},
+    onSettled:()=>{},
+    confirmPlacementWarning:async()=>true,
+    selectSeriesScope:async()=> 'all',
+  });
+  assert.equal(await rejected.dispatch({type:'create',item:{...item,id:'rejected-item'}}),'rejected');
+  assert.equal(announcements.at(-1),'write rejected');
+});
+
+test('undo and redo use canonical mutation lifecycle without turning refresh failure into a false rejection',async()=>{
+  const announcements=[];
+  let refreshFails=true;
+  let undos=0;
+  let redos=0;
+  const coordinator=new CalendarMutationCoordinator({
+    engine:new C.CalendarEngine(new C.MemoryCalendarRepository([source],[])),
+    clock:{now:()=>new Date('2026-11-09T09:00:00.000Z')},
+    timeZone:'UTC',
+    navigationBounds:{},
+    collisionPolicy:{mode:'allow',includeAllDay:false},
+    placementGuards:undefined,
+    commandHandler:{
+      execute(){},
+      undo(){undos+=1;return true;},
+      redo(){redos+=1;return true;},
+    },
+    trustedHostCommandHandler:undefined,
+    occurrenceCapabilities:undefined,
+    sourceActions:undefined,
+    sources:()=>[source],
+    occurrence:()=>undefined,
+    refresh:async()=>{if(refreshFails) throw new Error('projection offline');},
+    announce:message=>announcements.push(message),
+    onCommand:()=>{},
+    onPendingChange:()=>{},
+    onSettled:()=>{},
+    confirmPlacementWarning:async()=>true,
+    selectSeriesScope:async()=> 'all',
+  });
+
+  assert.equal(await coordinator.undo(),'committed-refresh-failed');
+  assert.equal(undos,1);
+  assert.match(announcements.at(-1),/undo was committed, but the authoritative refresh failed/);
+
+  refreshFails=false;
+  assert.equal(await coordinator.redo(),'completed');
+  assert.equal(redos,1);
+  assert.equal(announcements.at(-1),'Calendar change redone.');
+
+  const noHistory=new CalendarMutationCoordinator({
+    engine:new C.CalendarEngine(new C.MemoryCalendarRepository([source],[])),
+    clock:{now:()=>new Date('2026-11-09T09:00:00.000Z')},
+    timeZone:'UTC',
+    navigationBounds:{},
+    collisionPolicy:{mode:'allow',includeAllDay:false},
+    placementGuards:undefined,
+    commandHandler:{execute(){},undo(){return false;}},
+    trustedHostCommandHandler:undefined,
+    occurrenceCapabilities:undefined,
+    sourceActions:undefined,
+    sources:()=>[source],
+    occurrence:()=>undefined,
+    refresh:async()=>{throw new Error('must not refresh');},
+    announce:()=>{},
+    onCommand:()=>{},
+    onPendingChange:()=>{},
+    onSettled:()=>{},
+    confirmPlacementWarning:async()=>true,
+    selectSeriesScope:async()=> 'all',
+  });
+  assert.equal(await noHistory.undo(),'cancelled');
+});
+
