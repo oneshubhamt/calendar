@@ -1,52 +1,30 @@
 import type { CalendarItem, CalendarProjectionProvider, CalendarRange, CalendarRepository, ISODateTime } from "../core/types.js";
 import { toDate } from "../core/time.js";
-import type { PracticeDeskAttempt, PracticeDeskCalendarInput, PracticeDeskDueCard } from "../adapters/practice-desk.js";
+import type { PracticeDeskCalendarInput } from "../adapters/practice-desk.js";
 import { PracticeDeskProjection } from "../adapters/practice-desk.js";
+import type { CalendarIntegrationInvalidationPort } from "./common.js";
+import { subscribeCalendarIntegrationInvalidation } from "./common.js";
 import { createCalendarIntegrationId } from "./id.js";
 
-export interface PracticeDeskAttemptRecord {
-  readonly recordType: "generic-attempt";
-  readonly id: string;
-  readonly packageId: string;
-  readonly startedAt: number;
-  readonly finishedAt: number | null;
-  readonly state: { readonly elapsedMs: number };
-  readonly frozen: {
-    readonly snapshot: { readonly examId: string };
-    readonly paper: { readonly paperId: string };
-  };
+/**
+ * Calendar-facing Practice Desk projection only. Practice Desk resolves its own
+ * learning and revision-scheduling state into flattened attempts/due cards before
+ * this boundary; Calendar receives no scheduling-policy evidence.
+ */
+export type PracticeDeskCalendarProjectionInput =
+  Readonly<Pick<PracticeDeskCalendarInput, "attempts" | "dueCards">>;
+
+export interface PracticeDeskCalendarReadPort {
+  readCalendar(range: CalendarRange): PracticeDeskCalendarProjectionInput | Promise<PracticeDeskCalendarProjectionInput>;
+  /** Native host subscription or a controller-owned CalendarIntegrationInvalidationNotifier. */
+  readonly calendarInvalidation?: CalendarIntegrationInvalidationPort;
 }
 
-export interface PracticeDeskLearningCardRecord {
-  readonly recordType: "learning-card";
-  readonly id: string;
-  readonly examId: string;
-  readonly paperId: string;
-  readonly sourceTitle: string;
-  readonly customTopic: string;
-  readonly customSubject?: string;
-  readonly question: { readonly id: string };
-  readonly createdAt: string;
-  readonly reviews: readonly { readonly at: string; readonly rating: 1 | 2 | 3 | 4 }[];
-}
-
-export interface PracticeDeskRevisionSchedulerPort {
-  readonly provider: string;
-  replay(
-    id: string,
-    createdAt: string,
-    reviews: readonly { readonly at: string; readonly rating: 1 | 2 | 3 | 4 }[],
-  ): { readonly dueAt: Date };
-}
-
-export interface PracticeDeskCalendarHost {
-  readAttempts(range: CalendarRange): readonly PracticeDeskAttemptRecord[] | Promise<readonly PracticeDeskAttemptRecord[]>;
-  readLearningCards(range: CalendarRange): readonly PracticeDeskLearningCardRecord[] | Promise<readonly PracticeDeskLearningCardRecord[]>;
-  readonly revisionScheduler: PracticeDeskRevisionSchedulerPort;
-  resolveAttemptTitle?(attempt: PracticeDeskAttemptRecord): string;
-  resolveCardTitle?(card: PracticeDeskLearningCardRecord): string;
+export interface PracticeDeskCalendarActionPort {
   launchMock?(paperId: string, examId: string): Promise<void> | void;
 }
+
+export interface PracticeDeskCalendarHost extends PracticeDeskCalendarReadPort, PracticeDeskCalendarActionPort {}
 
 export interface PracticeMockScheduleRequest {
   readonly examId: string;
@@ -56,37 +34,17 @@ export interface PracticeMockScheduleRequest {
   readonly durationMinutes: number;
 }
 
-function flattenAttempt(record: PracticeDeskAttemptRecord, host: PracticeDeskCalendarHost): PracticeDeskAttempt {
-  return {
-    id: record.id,
-    examId: record.frozen.snapshot.examId,
-    paperId: record.frozen.paper.paperId,
-    title: host.resolveAttemptTitle?.(record) ?? record.packageId,
-    startedAt: record.startedAt,
-    finishedAt: record.finishedAt,
-    elapsedMs: record.state.elapsedMs,
-  };
-}
-
-function flattenDueCard(record: PracticeDeskLearningCardRecord, host: PracticeDeskCalendarHost): PracticeDeskDueCard {
-  const dueAt = host.revisionScheduler.replay(record.id, record.createdAt, record.reviews).dueAt;
-  if (!(dueAt instanceof Date) || Number.isNaN(dueAt.getTime())) throw new Error(`Practice Desk scheduler returned an invalid due date for ${record.id}.`);
-  return {
-    id: record.id,
-    examId: record.examId,
-    paperId: record.paperId,
-    title: host.resolveCardTitle?.(record) ?? (record.customTopic.trim() || record.sourceTitle || record.question.id),
-    dueAt: dueAt.toISOString(),
-    ...(record.customTopic ? { topic: record.customTopic } : {}),
-  };
-}
-
+/**
+ * Built-in Practice Desk projection adapter. It forwards the exact requested range
+ * to the host and does not reinterpret Practice Desk scheduling policy.
+ */
 export class PracticeDeskLiveProjection extends PracticeDeskProjection implements CalendarProjectionProvider {
-  public constructor(host: PracticeDeskCalendarHost) {
-    super(async range => ({
-      attempts: (await host.readAttempts(range)).map(record => flattenAttempt(record, host)),
-      dueCards: (await host.readLearningCards(range)).map(record => flattenDueCard(record, host)),
-    } satisfies PracticeDeskCalendarInput));
+  public constructor(private readonly host: PracticeDeskCalendarReadPort) {
+    super(range => host.readCalendar(range));
+  }
+
+  public subscribe(listener: () => void): () => void {
+    return subscribeCalendarIntegrationInvalidation(this.host.calendarInvalidation, listener);
   }
 }
 
@@ -94,7 +52,7 @@ export class PracticeDeskLiveProjection extends PracticeDeskProjection implement
 export class PracticeDeskMockScheduler {
   public constructor(
     private readonly repository: CalendarRepository,
-    private readonly host?: PracticeDeskCalendarHost,
+    private readonly host?: PracticeDeskCalendarActionPort,
   ) {}
 
   public async schedule(request: PracticeMockScheduleRequest): Promise<CalendarItem> {

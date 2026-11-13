@@ -16,13 +16,32 @@ import type {
   Weekday,
 } from "../core/types.js";
 import type {
-  CalendarCreateDraft, CalendarItemFactoryInput, CalendarKindOption, CalendarPlacementValidationPort, CalendarSelection, CalendarUiAddonContext, CalendarUiChromeOptions, CalendarUiOptions,
+  CalendarCreateDraft,
+  CalendarCustomViewActionPort,
+  CalendarCustomViewOccurrencePresentation,
+  CalendarCustomViewPlugin,
+  CalendarCustomViewRenderContext,
+  CalendarCustomViewRenderPort,
+  CalendarItemFactoryInput,
+  CalendarKindOption,
+  CalendarPlacementValidationPort,
+  CalendarPresentationText,
+  CalendarPrintSnapshotOptions,
+  CalendarResolvedWeekNumbering,
+  CalendarSelection,
+  CalendarUiAddonContext,
+  CalendarUiChromeOptions,
+  CalendarUiOptions,
+  CalendarUiViewId,
+  CalendarViewNavigationContext,
+  CalendarViewTitleContext,
 } from "./types.js";
 import { CalendarEngine } from "../core/calendar-engine.js";
-import { addDays, addMonths, addYears, dateKey, rangeForView, resolvedTimeZone, startOfDay, systemClock, toDate, type CalendarClock } from "../core/time.js";
+import { addDays, addMonths, addYears, dateKey, parseAbsoluteDateTime, rangeForView, resolvedTimeZone, startOfDay, systemClock, toDate, type CalendarClock } from "../core/time.js";
 import { instantToPlain } from "../core/temporal.js";
 import { civilMinuteOfInstant, civilMinuteResolution, instantAtCivilMinute, shiftCivilMinutes } from "../core/civil-timeline.js";
 import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from "./time-zone-scale.js";
+import { resolveCalendarWeekNumbering } from "./week-numbering.js";
 import { CalendarTemporalChrome } from "./temporal-chrome.js";
 import {
   backgroundAriaSuffix,
@@ -59,11 +78,24 @@ import {
 } from "./mutation-coordinator.js";
 import { hostDataAttributeName, isSafeHostClassName, resolveOccurrencePresentation, type ResolvedCalendarOccurrencePresentation, type ResolvedCalendarSourceAction } from "./presentation.js";
 import { calendarHostCss } from "./extension-styles.js";
+import { applyCalendarUiTheme } from "./theme.js";
 import { isDateLikeOccurrence, isPointOccurrence } from "./occurrence-form.js";
 import {
   boundProjectionRange, clampNavigationDate, navigationDateInBounds, resolveNavigationBounds,
   type ResolvedCalendarNavigationBounds,
 } from "./navigation.js";
+import { CalendarViewRegistry, type CalendarViewDefinition } from "./view-registry.js";
+import {
+  CALENDAR_EXTERNAL_DROP_MIME,
+  bindCalendarExternalDropTarget,
+  dataTransferHasType,
+  decodeCalendarExternalDropData,
+  normalizeCalendarExternalDropTemplate,
+  resolveCalendarExternalDropDecoder,
+  type CalendarExternalDropTemplate,
+  type ResolvedCalendarExternalDropDecoder,
+} from "./external-drop.js";
+import { CALENDAR_PRINT_CSS, createCalendarPrintSnapshot } from "./print.js";
 
 
 interface SelectionDragState {
@@ -79,12 +111,22 @@ interface SelectionDragState {
 
 const NATIVE_DRAG_TYPE = "application/x-calendar-occurrence";
 
-function creatableSource(source: CalendarSource | undefined): boolean {
+function creatableSource(source: CalendarSource | undefined): source is CalendarSource {
   return Boolean(source && !source.readOnly && source.allowCreate !== false);
 }
 
 function durationMs(occurrence: CalendarOccurrence): number {
   return isPointOccurrence(occurrence) ? 0 : Math.max(1, toDate(occurrence.end).getTime() - toDate(occurrence.start).getTime());
+}
+
+function ownPresentationText(
+  value: { readonly text: string; readonly accessibleLabel?: string | undefined } | undefined,
+): CalendarPresentationText | undefined {
+  if (!value) return undefined;
+  return Object.freeze({
+    text: value.text,
+    ...(value.accessibleLabel !== undefined ? { accessibleLabel: value.accessibleLabel } : {}),
+  });
 }
 
 function withLocalTime(
@@ -98,6 +140,19 @@ function withLocalTime(
   return instantAtCivilMinute(day, minute, timeZone, overlap);
 }
 
+function deepFreezeViewValue<T>(value: T, seen = new WeakSet<object>()): T {
+  if (!value || typeof value !== "object") return value;
+  const object = value as object;
+  if (seen.has(object)) return value;
+  seen.add(object);
+  for (const child of Object.values(object as Record<string, unknown>)) deepFreezeViewValue(child, seen);
+  return Object.freeze(value);
+}
+
+function ownCustomViewValue<T>(value: T): T {
+  return deepFreezeViewValue(structuredClone(value));
+}
+
 function calendarDaySpan(start: Date, end: Date, timeZone: string): number {
   const a = instantToPlain(start.getTime(), timeZone);
   const b = instantToPlain(end.getTime(), timeZone);
@@ -105,6 +160,12 @@ function calendarDaySpan(start: Date, end: Date, timeZone: string): number {
 }
 
 
+/**
+ * Composite Calendar DOM widget. The supplied host is a dedicated mount boundary:
+ * Calendar owns the children it mounts plus calendar-local view/interaction state while
+ * this instance is alive. The containing application retains ownership of routing,
+ * application chrome, domain state, persistence/backup and global presentation.
+ */
 export class CalendarUi {
   private readonly clock: CalendarClock;
   private readonly locale: string;
@@ -112,6 +173,7 @@ export class CalendarUi {
   private readonly secondaryTimeZone: string | undefined;
   private readonly dstOverlapDisambiguation: CalendarOverlapDisambiguation;
   private readonly weekStartsOn: Weekday;
+  private readonly weekNumbering: CalendarResolvedWeekNumbering | undefined;
   private readonly slotMinutes: number;
   private readonly snapPolicy: Required<CalendarSnapPolicy>;
   private readonly collisionPolicy: CalendarCollisionPolicy;
@@ -122,25 +184,31 @@ export class CalendarUi {
   private readonly dayEndHour: number;
   private readonly chrome: Required<CalendarUiChromeOptions>;
   private readonly navigationBounds: ResolvedCalendarNavigationBounds;
+  private readonly externalDropEnabled: boolean;
+  private readonly externalDropDecoder: ResolvedCalendarExternalDropDecoder | undefined;
+  private readonly views: CalendarViewRegistry;
   private agendaSpan: CalendarAgendaSpan;
   private sources: readonly CalendarSource[];
   private readonly sourceVisibility = new Map<string, boolean>();
   private readonly occurrenceIndex = new Map<string, CalendarOccurrence>();
   private readonly defaultCalendarId: string;
-  private view: CalendarView;
+  private view: CalendarUiViewId;
   private anchor: Date;
   private visibleRange: CalendarRange;
   private occurrences: readonly CalendarOccurrence[] = [];
   private backgroundRanges: readonly CalendarBackgroundRange[] = [];
   private destroyed = false;
   private selectionDrag: SelectionDragState | null = null;
-  private renderGeneration = 0;
+  private refreshPromise: Promise<void> | null = null;
+  private refreshRequested = false;
   private contextMenu: HTMLElement | null = null;
   private readonly unsubscribeRepository: () => void;
   private readonly mutations: CalendarMutationCoordinator;
   private readonly reportedHostHookErrors = new Set<string>();
   private readonly temporalChrome: CalendarTemporalChrome;
   private readonly gestures: CalendarGestureController;
+  private readonly restoreHostTheme: () => void;
+  private activeViewRender: { readonly definition: CalendarViewDefinition; readonly element: HTMLElement } | undefined;
 
   public constructor(
     private readonly host: HTMLElement,
@@ -153,6 +221,7 @@ export class CalendarUi {
     this.secondaryTimeZone = resolveSecondaryTimeZone(options.secondaryTimeZone);
     this.dstOverlapDisambiguation = options.dstOverlapDisambiguation ?? "earlier";
     this.weekStartsOn = options.weekStartsOn ?? 1;
+    this.weekNumbering = resolveCalendarWeekNumbering(this.locale, options.weekNumbers);
     this.slotMinutes = options.slotMinutes ?? 15;
     this.snapPolicy = normalizeSnapPolicy(options.snapPolicy, this.slotMinutes);
     this.collisionPolicy = options.collisionPolicy ?? { mode: "allow", includeAllDay: false };
@@ -169,11 +238,15 @@ export class CalendarUi {
       createControls: options.chrome?.createControls ?? true,
     };
     this.navigationBounds = resolveNavigationBounds(options.navigationBounds);
+    this.externalDropEnabled = options.externalDrop === true || options.externalDropDecoder !== undefined;
+    this.externalDropDecoder = resolveCalendarExternalDropDecoder(options.externalDropDecoder);
     this.agendaSpan = options.initialAgendaSpan ?? "30-days";
+    this.views = new CalendarViewRegistry(this.builtInViewDefinitions(), options.customViews ?? []);
     this.view = options.initialView ?? "week";
+    this.views.get(this.view);
     const initialAnchor = options.initialDate ? toDate(options.initialDate, this.timeZone) : this.clock.now();
     this.anchor = clampNavigationDate(initialAnchor, this.navigationBounds, this.timeZone);
-    this.visibleRange = rangeForView(this.anchor, this.view, this.weekStartsOn, this.timeZone, this.agendaSpan);
+    this.visibleRange = this.resolveViewRange();
     this.sources = this.engine.snapshot().sources;
     for (const source of this.sources) this.sourceVisibility.set(source.id, source.visible);
     this.defaultCalendarId = options.defaultCalendarId ?? this.sources.find(source => !source.readOnly && source.allowCreate !== false)?.id ?? this.sources[0]?.id ?? "calendar";
@@ -229,35 +302,311 @@ export class CalendarUi {
       announce: message => this.announce(message),
       finishDrag: (pointer, drag) => this.finishDrag(pointer, drag),
     });
+    this.restoreHostTheme = applyCalendarUiTheme(this.host, options.theme);
     this.mountShell();
     this.temporalChrome.start();
     this.unsubscribeRepository = this.engine.subscribe(() => { if (!this.destroyed) this.requestRefresh(); });
     this.requestRefresh();
   }
 
+  private builtInViewDefinitions(): readonly CalendarCustomViewPlugin[] {
+    const builtIn = (
+      id: CalendarView,
+      label: string,
+      includeBackgroundRanges: boolean,
+      shiftAnchor: CalendarCustomViewPlugin["shiftAnchor"],
+      render: CalendarCustomViewPlugin["render"],
+    ): CalendarCustomViewPlugin => ({
+      id,
+      label,
+      includeBackgroundRanges,
+      range: context => rangeForView(context.anchor, id, context.weekStartsOn, context.timeZone, context.agendaSpan),
+      shiftAnchor,
+      title: context => renderPeriodTitle({ ...context, view: id }),
+      render,
+    });
+
+    return [
+      builtIn(
+        "month",
+        "Month",
+        true,
+        (context, direction) => addMonths(context.anchor, direction, context.timeZone),
+        () => this.renderMonth(),
+      ),
+      builtIn(
+        "week",
+        "Week",
+        true,
+        (context, direction) => addDays(context.anchor, 7 * direction, context.timeZone),
+        () => this.renderTimeGrid(7),
+      ),
+      builtIn(
+        "day",
+        "Day",
+        true,
+        (context, direction) => addDays(context.anchor, direction, context.timeZone),
+        () => this.renderTimeGrid(1),
+      ),
+      builtIn(
+        "year",
+        "Year",
+        false,
+        (context, direction) => addYears(context.anchor, direction, context.timeZone),
+        () => this.renderYear(),
+      ),
+      builtIn(
+        "agenda",
+        "Agenda",
+        false,
+        (context, direction) => {
+          if (context.agendaSpan === "month") return addMonths(context.anchor, direction, context.timeZone);
+          const days = context.agendaSpan === "week" ? 7 : context.agendaSpan === "day" ? 1 : 30;
+          return addDays(context.anchor, days * direction, context.timeZone);
+        },
+        () => this.renderAgenda(),
+      ),
+    ];
+  }
+
+  private activeView(): CalendarViewDefinition {
+    return this.views.get(this.view);
+  }
+
+  private viewNavigationContext(): CalendarViewNavigationContext {
+    return Object.freeze({
+      anchor: new Date(this.anchor.getTime()),
+      locale: this.locale,
+      timeZone: this.timeZone,
+      weekStartsOn: this.weekStartsOn,
+      agendaSpan: this.agendaSpan,
+    });
+  }
+
+  private viewTitleContext(): CalendarViewTitleContext {
+    return Object.freeze({
+      ...this.viewNavigationContext(),
+      visibleRange: this.visibleRange,
+    });
+  }
+
+  private resolveViewRange(): CalendarRange {
+    const definition = this.activeView();
+    const range = definition.range(this.viewNavigationContext());
+    if (!range || typeof range !== "object") throw new TypeError(`Calendar view ${definition.id} range must return a CalendarRange`);
+    const start = parseAbsoluteDateTime(range.start, `Calendar view ${definition.id} range start`);
+    const end = parseAbsoluteDateTime(range.end, `Calendar view ${definition.id} range end`);
+    if (end.getTime() <= start.getTime()) throw new RangeError(`Calendar view ${definition.id} range must end after it starts`);
+    return Object.freeze({ start: start.toISOString(), end: end.toISOString() });
+  }
+
+  private renderActiveView(): HTMLElement {
+    const definition = this.activeView();
+    const fallback = el("div", "dc-empty", `${definition.label} view could not be rendered.`);
+    const rendered = this.hostHook<HTMLElement | undefined>(
+      `Calendar view ${definition.id} render`,
+      () => definition.render(this.customViewContext(definition)),
+      undefined,
+    );
+    if (!(rendered instanceof HTMLElement)) return fallback;
+    this.activeViewRender = { definition, element: rendered };
+    return rendered;
+  }
+
+  private disposeActiveView(): void {
+    const active = this.activeViewRender;
+    this.activeViewRender = undefined;
+    if (!active?.definition.dispose) return;
+    this.hostHook(
+      `Calendar view ${active.definition.id} dispose`,
+      () => active.definition.dispose?.(active.element),
+      undefined,
+    );
+  }
+
+  private customViewContext(definition: CalendarViewDefinition): CalendarCustomViewRenderContext {
+    const custom = !definition.builtIn;
+    const sources = custom ? ownCustomViewValue([...this.sources]) : Object.freeze([...this.sources]);
+    const occurrences = custom ? ownCustomViewValue([...this.displayOccurrences()]) : Object.freeze([...this.displayOccurrences()]);
+    const backgroundRanges = custom ? ownCustomViewValue([...this.backgroundRanges]) : Object.freeze([...this.backgroundRanges]);
+    return Object.freeze({
+      ...this.viewTitleContext(),
+      viewId: this.view,
+      ...(this.weekNumbering ? { weekNumbering: this.weekNumbering } : {}),
+      sources,
+      occurrences,
+      backgroundRanges,
+      now: this.clock.now(),
+      slotMinutes: this.slotMinutes,
+      snapPolicy: this.snapPolicy,
+      dstOverlapDisambiguation: this.dstOverlapDisambiguation,
+      pointerGesture: Object.freeze({
+        longPressMs: this.longPressMs,
+        autoScrollEdgePx: this.autoScrollEdgePx,
+        autoScrollMaxPxPerFrame: this.autoScrollMaxPxPerFrame,
+      }),
+      actions: this.customViewActions(),
+      renderers: this.customViewRenderers(),
+    });
+  }
+
+  private customViewRenderers(): CalendarCustomViewRenderPort {
+    return Object.freeze({
+      monthPanel: (monthStart: Date) => {
+        if (!(monthStart instanceof Date) || Number.isNaN(monthStart.getTime())) {
+          throw new TypeError("Month panel start must be a valid Date");
+        }
+        const anchor = new Date(monthStart.getTime());
+        const range = rangeForView(anchor, "month", this.weekStartsOn, this.timeZone);
+        const panelStart = parseAbsoluteDateTime(range.start, "Month panel range start").getTime();
+        const panelEnd = parseAbsoluteDateTime(range.end, "Month panel range end").getTime();
+        const visibleStart = parseAbsoluteDateTime(this.visibleRange.start, "Calendar visible range start").getTime();
+        const visibleEnd = parseAbsoluteDateTime(this.visibleRange.end, "Calendar visible range end").getTime();
+        if (panelStart < visibleStart || panelEnd > visibleEnd) {
+          throw new RangeError("Month panel must be contained within the active custom view range");
+        }
+        return renderMonthView({
+          ...this.staticRenderModel(),
+          anchor,
+          visibleRange: range,
+        }, this.staticRenderActions());
+      },
+    });
+  }
+
+  private currentCustomViewOccurrence(occurrence: CalendarOccurrence): CalendarOccurrence | undefined {
+    const current = this.occurrenceIndex.get(occurrence.occurrenceId);
+    return current?.sourceItemId === occurrence.sourceItemId ? current : undefined;
+  }
+
+  private async openCustomViewOccurrence(occurrence: CalendarOccurrence): Promise<void> {
+    const current = this.currentCustomViewOccurrence(occurrence);
+    if (!current) {
+      this.announce("This calendar occurrence is no longer available.");
+      return;
+    }
+    await this.openDetails(current);
+  }
+
+  private customViewActions(): CalendarCustomViewActionPort {
+    const actions: CalendarCustomViewActionPort = {
+      canCreateItems: () => this.canCreateItems(),
+      canOpenOccurrence: occurrence => {
+        const current = this.currentCustomViewOccurrence(occurrence);
+        return Boolean(current && this.canOpenOccurrence(current));
+      },
+      canMoveOccurrence: occurrence => {
+        const current = this.currentCustomViewOccurrence(occurrence);
+        return Boolean(current && this.canMoveOccurrence(current));
+      },
+      canResizeOccurrence: (occurrence, edge) => {
+        const current = this.currentCustomViewOccurrence(occurrence);
+        return Boolean(current && this.canResizeOccurrence(current, edge));
+      },
+      isOccurrencePending: occurrence => {
+        const current = this.currentCustomViewOccurrence(occurrence);
+        return Boolean(current && this.isOccurrencePending(current));
+      },
+      occurrencePresentation: occurrence => this.customViewOccurrencePresentation(
+        this.currentCustomViewOccurrence(occurrence) ?? occurrence,
+      ),
+      openOccurrence: async occurrence => await this.openCustomViewOccurrence(occurrence),
+      createFromSelection: async selection => await this.createFromSelection(selection),
+      canAcceptExternalDrop: dataTransfer => this.canAcceptExternalDrop(dataTransfer),
+      dropExternal: (dataTransfer, selection) => this.dropExternal(dataTransfer, selection),
+      bindExternalDropTarget: (element, resolveSelection) =>
+        this.externalDropEnabled
+          ? bindCalendarExternalDropTarget(element, resolveSelection, {
+              canAcceptExternalDrop: dataTransfer => this.canAcceptExternalDrop(dataTransfer),
+              dropExternal: (dataTransfer, selection) => this.dropExternal(dataTransfer, selection),
+            })
+          : () => {},
+      moveOccurrence: async (occurrence, start, options) =>
+        await this.moveOccurrenceToStart(occurrence, start, options?.allDay ?? isDateLikeOccurrence(occurrence)),
+      resizeOccurrence: async (occurrence, edge, target) =>
+        await this.resizeOccurrenceToInstant(occurrence, edge, target),
+      goTo: value => this.goTo(value),
+      setView: view => this.setView(view),
+      announce: message => this.announce(message),
+    };
+    return Object.freeze(actions);
+  }
+
+  private customViewOccurrencePresentation(
+    occurrence: CalendarOccurrence,
+  ): CalendarCustomViewOccurrencePresentation {
+    const presentation = this.occurrencePresentation(this.authoritativeOccurrence(occurrence));
+    const icon = ownPresentationText(presentation.icon);
+    const leading = ownPresentationText(presentation.leading);
+    const title = ownPresentationText(presentation.title);
+    const subtitle = ownPresentationText(presentation.subtitle);
+    const trailing = ownPresentationText(presentation.trailing);
+    return Object.freeze({
+      classNames: Object.freeze([...presentation.classNames]),
+      data: Object.freeze({ ...presentation.data }),
+      ...(presentation.accessibleLabel !== undefined ? { accessibleLabel: presentation.accessibleLabel } : {}),
+      ...(icon ? { icon } : {}),
+      ...(leading ? { leading } : {}),
+      ...(title ? { title } : {}),
+      ...(subtitle ? { subtitle } : {}),
+      ...(trailing ? { trailing } : {}),
+      badges: Object.freeze(presentation.badges.map(badge => Object.freeze({ ...badge }))),
+    });
+  }
+
   private requestRefresh(): void {
     void this.refresh().catch(error => this.announce(error instanceof Error ? `Calendar refresh failed: ${error.message}` : "Calendar refresh failed."));
   }
 
-  public async refresh(): Promise<void> {
+  public refresh(): Promise<void> {
+    if (this.destroyed) return Promise.resolve();
+    this.refreshRequested = true;
+    if (this.refreshPromise) return this.refreshPromise;
+
+    const operation = this.drainRefreshes();
+    this.refreshPromise = operation;
+    return operation;
+  }
+
+  private async drainRefreshes(): Promise<void> {
+    try {
+      while (!this.destroyed && this.refreshRequested) {
+        this.refreshRequested = false;
+        try {
+          await this.performRefresh();
+        } catch (error) {
+          // A failed query that was superseded while in flight must not strand
+          // the newer authoritative refresh. Only the final unsuperseded failure rejects.
+          if (!this.destroyed && this.refreshRequested) continue;
+          throw error;
+        }
+      }
+    } finally {
+      this.refreshPromise = null;
+    }
+  }
+
+  private async performRefresh(): Promise<void> {
     if (this.destroyed) return;
-    const generation = ++this.renderGeneration;
     const snapshot = this.engine.snapshot();
-    this.sources = snapshot.sources;
-    for (const source of this.sources) if (!this.sourceVisibility.has(source.id)) this.sourceVisibility.set(source.id, source.visible);
-    for (const id of [...this.sourceVisibility.keys()]) if (!this.sources.some(source => source.id === id)) this.sourceVisibility.delete(id);
-    this.visibleRange = rangeForView(this.anchor, this.view, this.weekStartsOn, this.timeZone, this.agendaSpan);
+    const sources = snapshot.sources;
+    for (const source of sources) if (!this.sourceVisibility.has(source.id)) this.sourceVisibility.set(source.id, source.visible);
+    for (const id of [...this.sourceVisibility.keys()]) if (!sources.some(source => source.id === id)) this.sourceVisibility.delete(id);
+    const visibleRange = this.resolveViewRange();
     const visibleSourceIds = new Set([...this.sourceVisibility].filter(([, visible]) => visible).map(([id]) => id));
-    const sourceById = new Map(this.sources.map(source => [source.id, source] as const));
+    const sourceById = new Map(sources.map(source => [source.id, source] as const));
     const filters = (this.options.addons ?? []).filter(addon => addon.filterOccurrence);
-    const projectionRange = boundProjectionRange(this.visibleRange, this.navigationBounds, this.timeZone);
+    const projectionRange = boundProjectionRange(visibleRange, this.navigationBounds, this.timeZone);
     const result = await this.engine.query(projectionRange, {
       visibleSourceIds,
       timeZone: this.timeZone,
-      includeBackgroundRanges: this.view === "month" || this.view === "week" || this.view === "day",
+      includeBackgroundRanges: this.activeView().includeBackgroundRanges === true,
       ...(filters.length ? { predicate: (occurrence: CalendarOccurrence) => filters.every(addon => this.hostHook(`Calendar add-on ${addon.id} filter`, () => addon.filterOccurrence?.(occurrence, sourceById.get(occurrence.calendarId)) !== false, true)) } : {}),
     });
-    if (this.destroyed || generation !== this.renderGeneration) return;
+    if (this.destroyed || this.refreshRequested) return;
+
+    this.sources = sources;
+    this.visibleRange = visibleRange;
     this.occurrences = result.occurrences;
     this.backgroundRanges = result.backgroundRanges;
     const extensionContext = { occurrences: this.occurrences, range: this.visibleRange, timeZone: this.timeZone, now: this.clock.now() };
@@ -269,7 +618,18 @@ export class CalendarUi {
     this.hostHook("Calendar onRangeChange callback", () => this.options.callbacks?.onRangeChange?.(this.visibleRange, this.view), undefined);
   }
 
-  public setView(view: CalendarView): void {
+  /**
+   * Create a detached, inert clone of the active rendered view for printing.
+   * The clone owns a copy of Calendar's current stylesheet and never re-renders,
+   * queries, executes commands or receives live event listeners.
+   */
+  public createPrintSnapshot(options: CalendarPrintSnapshotOptions = {}): HTMLElement {
+    if (this.destroyed) throw new Error("Cannot create a print snapshot after CalendarUi has been destroyed");
+    return createCalendarPrintSnapshot(this.host, this.periodTitle(), options);
+  }
+
+  public setView(view: CalendarUiViewId): void {
+    this.views.get(view);
     if (this.view === view) return;
     this.view = view;
     this.hostHook("Calendar onViewChange callback", () => this.options.callbacks?.onViewChange?.(view), undefined);
@@ -304,13 +664,12 @@ export class CalendarUi {
   }
 
   private shiftAnchor(direction: 1 | -1): Date {
-    if (this.view === "year") return addYears(this.anchor, direction, this.timeZone);
-    if (this.view === "month") return addMonths(this.anchor, direction, this.timeZone);
-    if (this.view === "week") return addDays(this.anchor, 7 * direction, this.timeZone);
-    if (this.view !== "agenda") return addDays(this.anchor, direction, this.timeZone);
-    if (this.agendaSpan === "month") return addMonths(this.anchor, direction, this.timeZone);
-    const days = this.agendaSpan === "week" ? 7 : this.agendaSpan === "day" ? 1 : 30;
-    return addDays(this.anchor, days * direction, this.timeZone);
+    const definition = this.activeView();
+    return this.hostHook(
+      `Calendar view ${definition.id} navigation`,
+      () => toDate(definition.shiftAnchor(this.viewNavigationContext(), direction), this.timeZone),
+      new Date(this.anchor.getTime()),
+    );
   }
 
   private dateInNavigationBounds(value: Date | ISODateTime): boolean {
@@ -331,12 +690,14 @@ export class CalendarUi {
 
   public destroy(): void {
     this.destroyed = true;
+    this.disposeActiveView();
     this.gestures.destroy();
     this.temporalChrome.stop();
     this.dismissContextMenu();
     for (const addon of this.options.addons ?? []) this.hostHook(`Calendar add-on ${addon.id} destroy`, () => addon.destroy?.(), undefined);
     this.unsubscribeRepository();
     this.host.replaceChildren();
+    this.restoreHostTheme();
   }
 
   /** Mutation controls fail closed when the host has not supplied a command path or source capability. */
@@ -344,6 +705,53 @@ export class CalendarUi {
     if (this.options.allowCreate === false) return false;
     if (!this.sources.some(source => creatableSource(source))) return false;
     return Boolean(this.options.commandHandler || this.options.callbacks?.handleCreate);
+  }
+
+  private canCreateExternalDrop(): boolean {
+    return this.options.allowCreate !== false
+      && Boolean(this.options.commandHandler)
+      && this.sources.some(source => creatableSource(source));
+  }
+
+  private canAcceptExternalDrop(dataTransfer: DataTransfer | null): boolean {
+    if (!this.externalDropEnabled || !dataTransfer || !this.canCreateExternalDrop() || dataTransferHasType(dataTransfer, NATIVE_DRAG_TYPE)) return false;
+    if (dataTransferHasType(dataTransfer, CALENDAR_EXTERNAL_DROP_MIME)) return true;
+    return this.externalDropDecoder?.types.some(type => dataTransferHasType(dataTransfer, type)) ?? false;
+  }
+
+  /** Decode synchronously before the returned promise can cross an asynchronous boundary. */
+  private dropExternal(
+    dataTransfer: DataTransfer | null,
+    selection: CalendarSelection,
+  ): Promise<boolean> {
+    const template = this.decodeExternalDrop(dataTransfer);
+    if (!template) return Promise.resolve(false);
+    return this.createExternalDrop(template, selection);
+  }
+
+  private decodeExternalDrop(dataTransfer: DataTransfer | null): CalendarExternalDropTemplate | undefined {
+    if (!this.externalDropEnabled || !dataTransfer || dataTransferHasType(dataTransfer, NATIVE_DRAG_TYPE)) return undefined;
+    if (dataTransferHasType(dataTransfer, CALENDAR_EXTERNAL_DROP_MIME)) {
+      return decodeCalendarExternalDropData(dataTransfer);
+    }
+    const decoder = this.externalDropDecoder;
+    if (!decoder || !decoder.types.some(type => dataTransferHasType(dataTransfer, type))) return undefined;
+    try {
+      return normalizeCalendarExternalDropTemplate(decoder.decode(dataTransfer));
+    } catch {
+      return undefined;
+    }
+  }
+
+  private bindExternalDropTarget(
+    element: HTMLElement,
+    resolveSelection: (event: DragEvent) => CalendarSelection | undefined,
+  ): void {
+    if (!this.externalDropEnabled) return;
+    bindCalendarExternalDropTarget(element, resolveSelection, {
+      canAcceptExternalDrop: dataTransfer => this.canAcceptExternalDrop(dataTransfer),
+      dropExternal: (dataTransfer, selection) => this.dropExternal(dataTransfer, selection),
+    });
   }
 
   private authoritativeOccurrence(occurrence: CalendarOccurrence): CalendarOccurrence {
@@ -414,6 +822,7 @@ export class CalendarUi {
   private mountShell(): void {
     this.host.replaceChildren();
     const style = el("style");
+    style.dataset.calendarBaseStyles = "true";
     const extensionCss = calendarHostCss(
       this.options.extensions ?? [],
       this.options.addons ?? [],
@@ -437,7 +846,14 @@ export class CalendarUi {
         for (const menu of this.host.querySelectorAll<HTMLElement>(".dc-addon-menu")) menu.remove();
       }
     });
-    this.host.append(style, root);
+    this.host.append(style);
+    if (this.options.print === true) {
+      const printStyle = el("style");
+      printStyle.dataset.calendarPrintStyles = "true";
+      printStyle.textContent = CALENDAR_PRINT_CSS;
+      this.host.append(printStyle);
+    }
+    this.host.append(root);
   }
 
   private toolbar(): HTMLElement {
@@ -499,9 +915,9 @@ export class CalendarUi {
       agendaSpan.addEventListener("change", () => this.setAgendaSpan(agendaSpan.value as CalendarAgendaSpan));
       const switcher = el("div", "dc-view-switch");
       switcher.setAttribute("role", "group");
-      for (const view of ["month", "week", "day", "year", "agenda"] as const) {
-        const button = this.button(view[0]!.toUpperCase() + view.slice(1), () => this.setView(view));
-        button.dataset.view = view;
+      for (const definition of this.views.entries()) {
+        const button = this.button(definition.label, () => this.setView(definition.id));
+        button.dataset.view = definition.id;
         switcher.append(button);
       }
       bar.append(agendaSpan, switcher);
@@ -540,11 +956,9 @@ export class CalendarUi {
     const redo = root.querySelector<HTMLButtonElement>("[data-history='redo']");
     if (undo) undo.disabled = !history?.canUndo;
     if (redo) redo.disabled = !history?.canRedo;
+    this.disposeActiveView();
     body.replaceChildren();
-    if (this.view === "month") body.append(this.renderMonth());
-    else if (this.view === "year") body.append(this.renderYear());
-    else if (this.view === "agenda") body.append(this.renderAgenda());
-    else body.append(this.renderTimeGrid(this.view === "week" ? 7 : 1));
+    body.append(this.renderActiveView());
     this.temporalChrome.refresh();
   }
 
@@ -554,7 +968,13 @@ export class CalendarUi {
   }
 
   private periodTitle(): string {
-    return renderPeriodTitle({ ...this.staticRenderModel(), view: this.view });
+    const definition = this.activeView();
+    const title = this.hostHook(
+      `Calendar view ${definition.id} title`,
+      () => definition.title(this.viewTitleContext()),
+      definition.label,
+    );
+    return typeof title === "string" && title.trim() && title.length <= 4_096 ? title : definition.label;
   }
 
   private renderYear(): HTMLElement {
@@ -689,6 +1109,16 @@ export class CalendarUi {
         event.preventDefault();
         void this.moveToDay(occurrence, day, true);
       });
+      if (inBounds) {
+        this.bindExternalDropTarget(all, () => {
+          const startAt = startOfDay(day, this.timeZone);
+          return {
+            start: startAt.toISOString(),
+            end: addDays(startAt, 1, this.timeZone).toISOString(),
+            allDay: true,
+          };
+        });
+      }
       if (inBounds && this.canCreateItems()) all.addEventListener("dblclick", () => void this.createFromSelection({ start: startOfDay(day, this.timeZone).toISOString(), end: addDays(startOfDay(day, this.timeZone), 1, this.timeZone).toISOString(), allDay: true }));
       allDay.append(all);
       grid.append(this.timeColumn(day));
@@ -796,6 +1226,7 @@ export class CalendarUi {
       const visualRight = baseLeft + (baseWidth * (layout.visualLane + 1)) / layout.visualLaneCount;
       event.style.top = `${top}px`;
       event.style.height = `${height}px`;
+      event.style.setProperty("--dc-print-event-height", `${height}px`);
       event.style.left = `calc(${visualLeft}% + 2px)`;
       event.style.right = `calc(${100 - visualRight}% + 2px)`;
       event.style.zIndex = String(2 + layout.column);
@@ -853,6 +1284,20 @@ export class CalendarUi {
         await this.mutations.issueOccurrencePatch(occurrence, patch, "Move", this.mutations.moveRequirements(occurrence, false), "move");
       })();
     });
+
+    if (inBounds) {
+      this.bindExternalDropTarget(column, event => {
+        const rect = column.getBoundingClientRect();
+        const minutes = this.dayStartHour * 60 + Math.max(0, event.clientY - rect.top);
+        const start = this.timeAtGridMinute(day, minutes, this.snapPolicy.selection, "External drop");
+        if (!start) return undefined;
+        return {
+          start: start.toISOString(),
+          end: new Date(start.getTime() + 60 * 60_000).toISOString(),
+          allDay: false,
+        };
+      });
+    }
 
     if (inBounds && this.canCreateItems()) {
       column.addEventListener("pointerdown", event => {
@@ -1096,6 +1541,7 @@ export class CalendarUi {
       locale: this.locale,
       timeZone: this.timeZone,
       weekStartsOn: this.weekStartsOn,
+      ...(this.weekNumbering ? { weekNumbering: this.weekNumbering } : {}),
       anchor: this.anchor,
       visibleRange: this.visibleRange,
       agendaSpan: this.agendaSpan,
@@ -1127,6 +1573,7 @@ export class CalendarUi {
       moveToDay: (occurrence, day, allDay) => this.moveToDay(occurrence, day, allDay),
       canCreateItems: () => this.canCreateItems(),
       createFromSelection: selection => this.createFromSelection(selection),
+      bindExternalDropTarget: (element, resolveSelection) => this.bindExternalDropTarget(element, resolveSelection),
       addonEmptyMessage: () => this.addonEmptyMessage(),
       agendaSummaries: (date, occurrences) => (this.options.extensions ?? [])
         .map((extension, index) => this.hostHook(
@@ -1151,6 +1598,94 @@ export class CalendarUi {
       editPolicy: draft.editPolicy ?? this.options.defaultEditPolicy ?? "full",
       createdAt: now, updatedAt: now,
     };
+  }
+
+  private async createExternalDrop(
+    template: CalendarExternalDropTemplate,
+    selection: CalendarSelection,
+  ): Promise<boolean> {
+    if (!this.canCreateExternalDrop()) return false;
+
+    let selectionStart: Date;
+    let selectionEnd: Date;
+    try {
+      selectionStart = parseAbsoluteDateTime(selection.start, "External drop selection start");
+      selectionEnd = parseAbsoluteDateTime(selection.end, "External drop selection end");
+    } catch {
+      return false;
+    }
+
+    const requestedSource = template.calendarId
+      ? this.sources.find(source => source.id === template.calendarId)
+      : undefined;
+    const source = template.calendarId
+      ? requestedSource
+      : this.sources.find(candidate => candidate.id === this.defaultCalendarId && creatableSource(candidate))
+        ?? this.sources.find(candidate => creatableSource(candidate));
+    if (!creatableSource(source)) {
+      this.announce("External drop was blocked because the target calendar does not allow creation.");
+      return false;
+    }
+
+    let draft: CalendarCreateDraft;
+    if (selection.allDay) {
+      if (template.temporalForm === "point") return false;
+      const start = startOfDay(selectionStart, this.timeZone);
+      const selectedDays = selectionEnd.getTime() > selectionStart.getTime()
+        ? calendarDaySpan(selectionStart, selectionEnd, this.timeZone)
+        : 1;
+      const end = addDays(start, template.durationDays ?? selectedDays, this.timeZone);
+      draft = {
+        calendarId: source.id,
+        title: template.title,
+        ...(template.description ? { description: template.description } : {}),
+        ...(template.location ? { location: template.location } : {}),
+        start: dateKey(start, this.timeZone),
+        end: dateKey(end, this.timeZone),
+        allDay: true,
+        precision: "date",
+        temporal: { kind: "date" },
+        kind: template.kind ?? "event",
+        ...(template.metadata ? { metadata: template.metadata } : {}),
+      };
+    } else {
+      const start = selectionStart;
+      const point = template.temporalForm === "point";
+      if (!point && selectionEnd.getTime() <= start.getTime()) return false;
+      const selectedDuration = Math.max(1, selectionEnd.getTime() - start.getTime());
+      const end = point
+        ? new Date(start)
+        : new Date(start.getTime() + (template.durationMinutes !== undefined
+          ? template.durationMinutes * 60_000
+          : selectedDuration));
+      draft = {
+        calendarId: source.id,
+        title: template.title,
+        ...(template.description ? { description: template.description } : {}),
+        ...(template.location ? { location: template.location } : {}),
+        start: start.toISOString(),
+        end: end.toISOString(),
+        allDay: false,
+        precision: "minute",
+        temporal: { kind: "instant" },
+        ...(point ? { temporalForm: "point" as const } : {}),
+        kind: template.kind ?? "event",
+        ...(template.metadata ? { metadata: template.metadata } : {}),
+      };
+    }
+
+    const item = this.createCalendarItem(draft, "external-drop");
+    const finalSource = this.sources.find(candidate => candidate.id === item.calendarId);
+    if (!creatableSource(finalSource)) {
+      this.announce("External drop was blocked because the target calendar does not allow creation.");
+      return false;
+    }
+    if (!await this.mutations.allowDraftPlacement(item, undefined, "external-drop")) return false;
+    this.hostHook("Calendar onCreate callback", () => this.options.callbacks?.onCreate?.(selection), undefined);
+    const status = await this.mutations.dispatch({ type: "create", item });
+    if (!mutationCommitted(status)) return false;
+    if (status === "completed") this.announce(`Created ${item.title}.`);
+    return true;
   }
 
   private async createAtAnchor(): Promise<void> {
@@ -1406,6 +1941,89 @@ export class CalendarUi {
     );
   }
 
+  private async moveOccurrenceToStart(
+    occurrence: CalendarOccurrence,
+    startValue: ISODateTime,
+    allDay: boolean,
+  ): Promise<boolean> {
+    const current = this.currentCustomViewOccurrence(occurrence);
+    if (!current) {
+      this.announce("This calendar occurrence is no longer available.");
+      return false;
+    }
+    if (this.isOccurrencePending(current) || !this.canMoveOccurrenceToPlacement(current, allDay)) {
+      this.announce(`${current.title}: this move is not allowed.`);
+      return false;
+    }
+
+    const requestedStart = parseAbsoluteDateTime(startValue, "Custom view move start");
+    let start: Date;
+    let end: Date;
+    if (allDay) {
+      start = startOfDay(requestedStart, this.timeZone);
+      end = addDays(start, calendarDaySpan(toDate(current.start), toDate(current.end), this.timeZone), this.timeZone);
+    } else {
+      start = requestedStart;
+      const duration = isDateLikeOccurrence(current) ? 60 * 60_000 : durationMs(current);
+      end = new Date(start.getTime() + duration);
+    }
+    if (!await this.allowPlacement(start, end, allDay, current, "move")) return false;
+
+    const patch = allDay || isDateLikeOccurrence(current)
+      ? placementTimePatch(start, end, allDay, this.timeZone)
+      : { start: start.toISOString(), end: end.toISOString(), allDay: false, precision: "minute" as const };
+    const status = await this.mutations.issueOccurrencePatch(
+      current,
+      patch,
+      "Move",
+      this.mutations.moveRequirements(current, allDay),
+      "move",
+    );
+    return mutationCommitted(status);
+  }
+
+  private async resizeOccurrenceToInstant(
+    occurrence: CalendarOccurrence,
+    edge: CalendarResizeEdge,
+    targetValue: ISODateTime,
+  ): Promise<boolean> {
+    const current = this.currentCustomViewOccurrence(occurrence);
+    if (!current) {
+      this.announce("This calendar occurrence is no longer available.");
+      return false;
+    }
+    if (
+      this.isOccurrencePending(current)
+      || !this.canResizeOccurrence(current, edge)
+      || isPointOccurrence(current)
+      || isDateLikeOccurrence(current)
+    ) {
+      this.announce(`${current.title}: this resize is not allowed.`);
+      return false;
+    }
+
+    const resized = resizeInterval(
+      toDate(current.start),
+      toDate(current.end),
+      parseAbsoluteDateTime(targetValue, `Custom view resize ${edge}`),
+      edge,
+      this.slotMinutes,
+    );
+    if (!await this.allowPlacement(resized.start, resized.end, false, current, "resize")) return false;
+    const status = await this.mutations.issueTimedCommand(
+      {
+        type: "resize-occurrence",
+        occurrence: current,
+        start: resized.start.toISOString(),
+        end: resized.end.toISOString(),
+        scope: "this",
+      },
+      "Resize",
+      [edge === "start" ? "canResizeStart" : "canResizeEnd"],
+    );
+    return mutationCommitted(status);
+  }
+
   private setOccurrencePending(occurrenceId: string, operation: string, pending: boolean): void {
     const occurrence = this.occurrenceIndex.get(occurrenceId);
     const actions = occurrence ? new Map(this.sourceActionsFor(occurrence).map(action => [action.id, action] as const)) : new Map<string, ResolvedCalendarSourceAction>();
@@ -1434,11 +2052,11 @@ export class CalendarUi {
   }
 
   public async undo(): Promise<boolean> {
-    return await this.mutations.undo();
+    return mutationCommitted(await this.mutations.undo());
   }
 
   public async redo(): Promise<boolean> {
-    return await this.mutations.redo();
+    return mutationCommitted(await this.mutations.redo());
   }
 
   private announce(message: string): void {
@@ -1894,8 +2512,8 @@ export class CalendarUi {
       createDraft: async (draft, purpose, original) => {
         const item = self.createCalendarItem(draft, purpose, original);
         if (!await self.mutations.allowDraftPlacement(item, original, String(purpose))) return null;
-        await self.mutations.dispatch({ type: "create", item });
-        return item;
+        const status = await self.mutations.dispatch({ type: "create", item });
+        return mutationCommitted(status) ? item : null;
       },
       ...self.placementValidationPort(),
       patchOccurrence: async (occurrence, patch, label = "Edit") => {

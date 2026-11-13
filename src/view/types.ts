@@ -1,6 +1,8 @@
+import type { CalendarExternalDropDecoder } from "./external-drop.js";
 import type { CalendarClock } from "../core/time.js";
 import type {
   CalendarAgendaSpan,
+  CalendarBackgroundRange,
   CalendarCommand,
   CalendarCommandHandler,
   CalendarDisplay,
@@ -20,6 +22,7 @@ import type {
   CalendarReminder,
   CalendarReminderChannel,
   CalendarSource,
+  CalendarSnapPolicy,
   CalendarTemporalForm,
   CalendarTemporalSpec,
   CalendarView,
@@ -34,6 +37,107 @@ export interface CalendarSelection {
   readonly start: ISODateTime;
   readonly end: ISODateTime;
   readonly allDay: boolean;
+}
+
+export type CalendarUiViewId = CalendarView | (string & Record<never, never>);
+
+export interface CalendarViewNavigationContext {
+  readonly anchor: Date;
+  readonly locale: string;
+  readonly timeZone: string;
+  readonly weekStartsOn: Weekday;
+  readonly agendaSpan: CalendarAgendaSpan;
+}
+
+export interface CalendarViewTitleContext extends CalendarViewNavigationContext {
+  readonly visibleRange: CalendarRange;
+}
+
+export interface CalendarCustomViewActionPort {
+  canCreateItems(): boolean;
+  canOpenOccurrence(occurrence: CalendarOccurrence): boolean;
+  canMoveOccurrence(occurrence: CalendarOccurrence): boolean;
+  canResizeOccurrence(occurrence: CalendarOccurrence, edge: "start" | "end"): boolean;
+  isOccurrencePending(occurrence: CalendarOccurrence): boolean;
+  /** Safe resolved visual presentation; never returns host DOM or HTML. */
+  occurrencePresentation(occurrence: CalendarOccurrence): CalendarCustomViewOccurrencePresentation;
+  openOccurrence(occurrence: CalendarOccurrence): Promise<void>;
+  createFromSelection(selection: CalendarSelection): Promise<void>;
+  /** True only when this DataTransfer advertises a supported external-drop MIME type and Calendar can create. */
+  canAcceptExternalDrop(dataTransfer: DataTransfer | null): boolean;
+  /** Decode synchronously, then create through Calendar's canonical source/placement/command path. */
+  dropExternal(dataTransfer: DataTransfer | null, selection: CalendarSelection): Promise<boolean>;
+  /** Shared Calendar dragenter/dragover/drop lifecycle for custom/bundled view targets. */
+  bindExternalDropTarget(
+    element: HTMLElement,
+    resolveSelection: (event: DragEvent) => CalendarSelection | undefined,
+  ): () => void;
+  /**
+   * Move an occurrence to a new start instant. Calendar preserves ordinary duration,
+   * uses one hour when converting a date-like occurrence to timed form, and preserves
+   * day span when moving to all-day form.
+   */
+  moveOccurrence(
+    occurrence: CalendarOccurrence,
+    start: ISODateTime,
+    options?: { readonly allDay?: boolean | undefined },
+  ): Promise<boolean>;
+  /** Resize one edge through Calendar's existing snapping, placement and command lifecycle. */
+  resizeOccurrence(
+    occurrence: CalendarOccurrence,
+    edge: "start" | "end",
+    target: ISODateTime,
+  ): Promise<boolean>;
+  goTo(value: ISODateTime | Date): void;
+  setView(view: CalendarUiViewId): void;
+  announce(message: string): void;
+}
+
+export interface CalendarCustomViewRenderPort {
+  /**
+   * Render Calendar's canonical detailed Month panel for a month already covered
+   * by this custom view's visible range. Calendar retains all interaction mechanics.
+   */
+  monthPanel(monthStart: Date): HTMLElement;
+}
+
+export interface CalendarCustomViewPointerGesturePolicy {
+  readonly longPressMs: number;
+  readonly autoScrollEdgePx: number;
+  readonly autoScrollMaxPxPerFrame: number;
+}
+
+export interface CalendarCustomViewRenderContext extends CalendarViewTitleContext {
+  readonly viewId: CalendarUiViewId;
+  /** Resolved policy shared with Month-like bundled/custom views. */
+  readonly weekNumbering?: CalendarResolvedWeekNumbering | undefined;
+  readonly sources: readonly CalendarSource[];
+  readonly occurrences: readonly CalendarOccurrence[];
+  readonly backgroundRanges: readonly CalendarBackgroundRange[];
+  readonly now: Date;
+  /** Resolved interaction policy shared with bundled/custom scheduling views. */
+  readonly slotMinutes: number;
+  readonly snapPolicy: Required<CalendarSnapPolicy>;
+  readonly dstOverlapDisambiguation: CalendarOverlapDisambiguation;
+  readonly pointerGesture: CalendarCustomViewPointerGesturePolicy;
+  readonly actions: CalendarCustomViewActionPort;
+  readonly renderers: CalendarCustomViewRenderPort;
+}
+
+/**
+ * Generic DOM custom-view plugin. It receives projected/query data and a bounded
+ * Calendar action port, never repository, storage or interoperability internals.
+ */
+export interface CalendarCustomViewPlugin {
+  readonly id: string;
+  readonly label: string;
+  range(context: CalendarViewNavigationContext): CalendarRange;
+  shiftAnchor(context: CalendarViewNavigationContext, direction: 1 | -1): Date;
+  title(context: CalendarViewTitleContext): string;
+  readonly includeBackgroundRanges?: boolean | undefined;
+  render(context: CalendarCustomViewRenderContext): HTMLElement;
+  /** Dispose state owned by one rendered element before refresh, view switch or Calendar destruction. */
+  dispose?(element: HTMLElement): void;
 }
 
 /** Host-defined occurrence action. `kind` and `state` are presentation metadata only and intentionally open-ended. */
@@ -70,8 +174,8 @@ export interface CalendarUiCallbacks {
   readonly onCreate?: (selection: CalendarSelection) => void;
   readonly onOpen?: (occurrence: CalendarOccurrence) => void;
   readonly onCommand?: (command: CalendarCommand) => void;
-  readonly onRangeChange?: (range: CalendarRange, view: CalendarView) => void;
-  readonly onViewChange?: (view: CalendarView) => void;
+  readonly onRangeChange?: (range: CalendarRange, view: CalendarUiViewId) => void;
+  readonly onViewChange?: (view: CalendarUiViewId) => void;
 }
 
 export interface CalendarKindOption {
@@ -152,6 +256,18 @@ export interface CalendarOccurrencePresentation {
   readonly badges?: readonly CalendarPresentationBadge[];
 }
 
+export interface CalendarCustomViewOccurrencePresentation {
+  readonly classNames: readonly string[];
+  readonly data: Readonly<Record<string, string>>;
+  readonly accessibleLabel?: string | undefined;
+  readonly icon?: CalendarPresentationContent | undefined;
+  readonly leading?: CalendarPresentationContent | undefined;
+  readonly title?: CalendarPresentationContent | undefined;
+  readonly subtitle?: CalendarPresentationContent | undefined;
+  readonly trailing?: CalendarPresentationContent | undefined;
+  readonly badges: readonly CalendarPresentationBadge[];
+}
+
 export interface CalendarAgendaDayPresentation { readonly summary?: string; }
 
 export interface CalendarUiExtensionContext {
@@ -214,6 +330,21 @@ export interface CalendarUiAddon {
   destroy?(): void;
 }
 
+export interface CalendarWeekNumbersOptions {
+  /** 1–7. Omitted resolves from locale where supported, otherwise falls back deterministically to 4. */
+  readonly minimumDaysInFirstWeek?: number | undefined;
+}
+
+export interface CalendarResolvedWeekNumbering {
+  readonly minimumDaysInFirstWeek: number;
+}
+
+/** Options for CalendarUi.createPrintSnapshot(). The snapshot is always detached and read-only. */
+export interface CalendarPrintSnapshotOptions {
+  /** Override the generated period heading. Set false to omit the heading. */
+  readonly title?: string | false;
+}
+
 export interface CalendarUiChromeOptions {
   /** Show Calendar-owned toolbar chrome. When false, its child controls are not mounted. */
   readonly toolbar?: boolean;
@@ -221,6 +352,22 @@ export interface CalendarUiChromeOptions {
   readonly viewSwitcher?: boolean;
   readonly sourceControls?: boolean;
   readonly createControls?: boolean;
+}
+
+/**
+ * Small host-presentation bridge for embedded Calendar surfaces. Values are CSS values,
+ * may reference host custom properties with var(...), and are validated before use.
+ * Calendar continues to own geometry, spacing, hit testing and responsive layout.
+ */
+export interface CalendarUiTheme {
+  readonly background?: string;
+  readonly softBackground?: string;
+  readonly text?: string;
+  readonly mutedText?: string;
+  readonly border?: string;
+  readonly accent?: string;
+  readonly danger?: string;
+  readonly fontFamily?: string;
 }
 
 export interface CalendarUiOptions {
@@ -239,11 +386,17 @@ export interface CalendarUiOptions {
   /** Explicit trusted host command path for occurrences whose capability result selects `trusted-host`. */
   readonly trustedHostCommandHandler?: CalendarCommandHandler;
   readonly weekStartsOn?: Weekday | undefined;
-  readonly initialView?: CalendarView;
+  /** Optional Month-like week-number gutter. */
+  readonly weekNumbers?: boolean | CalendarWeekNumbersOptions | undefined;
+  readonly initialView?: CalendarUiViewId;
+  /** Explicit custom views. IDs must be unique and may not reuse built-in view IDs. */
+  readonly customViews?: readonly CalendarCustomViewPlugin[];
   readonly initialAgendaSpan?: CalendarAgendaSpan;
   readonly initialDate?: ISODateTime;
   /** Calendar-owned chrome is independently suppressible for embedded hosts; every control defaults to visible. */
   readonly chrome?: CalendarUiChromeOptions;
+  /** Optional semantic host theme. Omitted values retain Calendar's standalone defaults. */
+  readonly theme?: CalendarUiTheme;
   /** Inclusive local-date bounds. Programmatic navigation is clamped and placements outside the range fail closed. */
   readonly navigationBounds?: CalendarNavigationBounds;
   readonly slotMinutes?: 5 | 10 | 15 | 20 | 30 | 60;
@@ -262,6 +415,12 @@ export interface CalendarUiOptions {
   readonly defaultOwnership?: CalendarOwnership;
   readonly defaultEditPolicy?: EditPolicy;
   readonly itemFactory?: CalendarItemFactory;
+  /** Enable Calendar's standard external-drop MIME. A custom decoder also opts the feature in. Default: false. */
+  readonly externalDrop?: boolean;
+  /** Optional host-owned external drag formats; supplying a decoder explicitly enables external drop. */
+  readonly externalDropDecoder?: CalendarExternalDropDecoder;
+  /** Enable in-page @media print styling. Detached createPrintSnapshot() remains explicitly callable. Default: false. */
+  readonly print?: boolean;
   readonly extensions?: readonly CalendarUiExtension[];
   readonly addons?: readonly CalendarUiAddon[];
   readonly allowCreate?: boolean;

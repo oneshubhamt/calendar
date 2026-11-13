@@ -56,10 +56,11 @@ export async function mountVisualCalendar(page, {
   dayEndHour = 23,
   now = "2026-11-10T05:00:00.000Z",
   scrollHour = 7,
+  print = false,
 } = {}) {
   await page.clock.setFixedTime(new Date(now));
   await page.goto("/tests/browser/harness.html");
-  await page.evaluate(async ({ view, initialDate, timeZone, secondaryTimeZone, dayStartHour, dayEndHour, sources, items, backgrounds }) => {
+  await page.evaluate(async ({ view, initialDate, timeZone, secondaryTimeZone, dayStartHour, dayEndHour, print, sources, items, backgrounds }) => {
     const [{ CalendarEngine }, { MemoryCalendarRepository }, { RepositoryCommandHandler }, { CalendarUi }] = await Promise.all([
       import("/dist/core/calendar-engine.js"),
       import("/dist/core/store.js"),
@@ -85,10 +86,11 @@ export async function mountVisualCalendar(page, {
       dayStartHour,
       dayEndHour,
       collisionPolicy: { mode: "warn", includeAllDay: false },
+      ...(print ? { print: true } : {}),
     });
     await calendar.refresh();
     globalThis.__visualCalendar = { calendar, engine, repository };
-  }, { view, initialDate, timeZone, secondaryTimeZone, dayStartHour, dayEndHour, sources: SOURCES, items: ITEMS, backgrounds: BACKGROUNDS });
+  }, { view, initialDate, timeZone, secondaryTimeZone, dayStartHour, dayEndHour, print, sources: SOURCES, items: ITEMS, backgrounds: BACKGROUNDS });
 
   await page.locator(".dc-root").waitFor();
   if (view === "week" || view === "day") {

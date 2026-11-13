@@ -150,11 +150,11 @@ export function projectRevisionDirector(input: RevisionDirectorCalendarInput): C
         calendarId: "revision-director:due",
         title: obligation.title,
         start: due.toISOString(),
-        end: addMinutes(due, 1).toISOString(),
+        end: due.toISOString(),
+        temporalForm: "point",
         kind: "revision",
         ownership: "revision-engine",
         editPolicy: "generated",
-        display: { emphasis: due.getTime() < Date.now() ? "critical" : "normal" },
         metadata: {
           app: "revision-director",
           sourceId: obligation.id,

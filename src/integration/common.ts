@@ -89,3 +89,37 @@ export class DirectorEcosystemCommandRouter implements CalendarCommandHandler {
     throw new Error("This projected calendar item is owned by its source application and is not directly writable here.");
   }
 }
+
+
+/**
+ * Generic invalidation source for host-owned Calendar projections. A host with its own
+ * event stream can adapt it directly; an integration controller without one can use
+ * CalendarIntegrationInvalidationNotifier and call notify() after authoritative changes.
+ * Polling is intentionally outside this contract.
+ */
+export interface CalendarIntegrationInvalidationPort {
+  subscribe(listener: () => void): () => void;
+}
+
+/** Small controller-side invalidation bridge for hosts that do not already expose subscriptions. */
+export class CalendarIntegrationInvalidationNotifier implements CalendarIntegrationInvalidationPort {
+  private readonly listeners = new Set<() => void>();
+
+  public subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+
+  public notify(): void {
+    for (const listener of [...this.listeners]) {
+      try { listener(); } catch { continue; }
+    }
+  }
+}
+
+export function subscribeCalendarIntegrationInvalidation(
+  port: CalendarIntegrationInvalidationPort | undefined,
+  listener: () => void,
+): () => void {
+  return port?.subscribe(listener) ?? (() => {});
+}

@@ -16,6 +16,14 @@
       "types": "./dist/view/index.d.ts",
       "import": "./dist/view/index.js"
     },
+    "./view/multi-month": {
+      "types": "./dist/view/multi-month.d.ts",
+      "import": "./dist/view/multi-month.js"
+    },
+    "./view/timeline": {
+      "types": "./dist/view/timeline.d.ts",
+      "import": "./dist/view/timeline.js"
+    },
     "./storage": {
       "types": "./dist/storage/index.d.ts",
       "import": "./dist/storage/index.js"
@@ -107,11 +115,23 @@
     "./features/resource-scheduler-ui": {
       "types": "./dist/features/resource-scheduler-ui/index.d.ts",
       "import": "./dist/features/resource-scheduler-ui/index.js"
+    },
+    "./features/resource-time-grid-ui": {
+      "types": "./dist/features/resource-time-grid-ui/index.d.ts",
+      "import": "./dist/features/resource-time-grid-ui/index.js"
+    },
+    "./features/resource-availability": {
+      "types": "./dist/features/resource-availability.d.ts",
+      "import": "./dist/features/resource-availability.js"
+    },
+    "./features/resource-time-grid": {
+      "types": "./dist/features/resource-time-grid/index.d.ts",
+      "import": "./dist/features/resource-time-grid/index.js"
     }
   },
   "files": [
     "dist",
-    "docs",
+    "docs/ARCHITECTURE.md",
     "README.md"
   ],
   "scripts": {
@@ -119,7 +139,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs",
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
-    "check": "npm run typecheck && npm test && npm pack --dry-run",
+    "check": "npm test && npm pack --dry-run",
     "prepack": "npm run build:package",
     "build:package": "npm run clean && tsc -p tsconfig.package.json",
     "qa:browser": "npm run build && playwright test --config=playwright.config.mjs",

@@ -1,6 +1,12 @@
 import type { CalendarOccurrence, CalendarSnapPolicy, CalendarSnapStrategy } from "../core/types.js";
 import { resizePreview, snapMinuteCoordinate, type CalendarResizeEdge } from "../core/interaction.js";
 import { toDate } from "../core/time.js";
+import {
+  CalendarPointerGestureController,
+  type CalendarPointerGestureData,
+  type CalendarPointerGestureMove,
+  type CalendarPointerGestureSession,
+} from "./pointer-gesture.js";
 
 export type CalendarDragMode = "move" | "resize-start" | "resize-end";
 
@@ -17,8 +23,12 @@ export interface CalendarDragState {
   readonly grabOffsetMinutes: number;
   readonly scrollStartTop: number;
   readonly scrollStartLeft: number;
-  lastClientX: number;
-  lastClientY: number;
+}
+
+interface CalendarGestureData extends CalendarPointerGestureData {
+  readonly occurrence: CalendarOccurrence;
+  readonly mode: CalendarDragMode;
+  readonly touch: boolean;
 }
 
 export interface CalendarGestureControllerOptions {
@@ -33,279 +43,108 @@ export interface CalendarGestureControllerOptions {
   readonly finishDrag: (pointer: PointerEvent, drag: CalendarDragState) => Promise<void>;
 }
 
-/** DOM gesture lifecycle only. CalendarUi retains placement semantics and command authority. */
+/**
+ * Calendar-specific vertical drag adapter over the shared axis-neutral pointer
+ * lifecycle. Placement geometry and mutation authority remain in CalendarUi.
+ */
 export class CalendarGestureController {
   private drag: CalendarDragState | null = null;
-  private touchPress: {
-    readonly pointerId: number;
-    readonly startX: number;
-    readonly startY: number;
-    lastX: number;
-    lastY: number;
-    readonly timer: number;
-    readonly occurrence: CalendarOccurrence;
-    readonly element: HTMLElement;
-    readonly mode: CalendarDragMode;
-  } | null = null;
-  private autoScrollFrame: number | null = null;
-  private dragListenerCleanup: (() => void) | null = null;
-  private pointerArmCleanup: (() => void) | null = null;
-  private touchListenerCleanup: (() => void) | null = null;
-  private suppressOccurrenceClickUntil = 0;
+  private readonly pointer: CalendarPointerGestureController<CalendarGestureData>;
 
-  public constructor(private readonly options: CalendarGestureControllerOptions) {}
+  public constructor(private readonly options: CalendarGestureControllerOptions) {
+    this.pointer = new CalendarPointerGestureController<CalendarGestureData>({
+      scrollElement: () => this.options.host.querySelector<HTMLElement>(".dc-body") ?? undefined,
+      longPressMs: options.longPressMs,
+      autoScrollEdgePx: options.autoScrollEdgePx,
+      autoScrollMaxPxPerFrame: options.autoScrollMaxPxPerFrame,
+      onArmingChange: (data, active) => data.element.classList.toggle("is-touch-arming", active),
+      onActivate: session => this.activateDrag(session),
+      onMove: (_session, move) => this.moveDrag(move),
+      onFinish: async (_session, event) => await this.finishDrag(event),
+      onCancel: () => this.cancelDragVisual(),
+    });
+  }
 
   public beginDrag(pointer: PointerEvent, occurrence: CalendarOccurrence, element: HTMLElement, mode: CalendarDragMode): void {
-    if (pointer.button !== 0) return;
-    pointer.stopPropagation();
-    if (pointer.pointerType === "touch") this.armTouchDrag(pointer, occurrence, element, mode);
-    else this.armPointerDrag(pointer, occurrence, element, mode);
+    this.pointer.begin(pointer, {
+      occurrence,
+      mode,
+      element,
+      touch: pointer.pointerType === "touch",
+    });
   }
 
   public shouldSuppressOccurrenceClick(): boolean {
-    return Date.now() <= this.suppressOccurrenceClickUntil;
+    return this.pointer.shouldSuppressClick();
   }
 
   public isDragging(): boolean {
-    return this.drag !== null;
+    return this.pointer.isActive();
   }
 
   public cancelActiveDrag(): void {
-    this.cancelDrag();
+    this.pointer.cancel();
   }
 
   public destroy(): void {
-    this.cancelTouchPress();
-    this.cancelPointerArm();
-    this.cancelDrag();
-    this.stopAutoScroll();
+    this.pointer.destroy();
   }
 
-  private armPointerDrag(pointer: PointerEvent, occurrence: CalendarOccurrence, element: HTMLElement, mode: CalendarDragMode): void {
-    this.cancelPointerArm();
-    const pointerId = pointer.pointerId;
-    const startX = pointer.clientX;
-    const startY = pointer.clientY;
-    const move = (event: PointerEvent) => {
-      if (event.pointerId !== pointerId) return;
-      if (Math.hypot(event.clientX - startX, event.clientY - startY) < 4) return;
-      event.preventDefault();
-      cleanup();
-      this.activateDrag(pointerId, startX, startY, occurrence, element, mode);
-      this.moveDrag(event);
-    };
-    const end = (event: PointerEvent) => {
-      if (event.pointerId !== pointerId) return;
-      cleanup();
-    };
-    const cleanup = () => {
-      window.removeEventListener("pointermove", move, true);
-      window.removeEventListener("pointerup", end, true);
-      window.removeEventListener("pointercancel", end, true);
-      if (this.pointerArmCleanup === cleanup) this.pointerArmCleanup = null;
-    };
-    this.pointerArmCleanup?.();
-    this.pointerArmCleanup = cleanup;
-    window.addEventListener("pointermove", move, true);
-    window.addEventListener("pointerup", end, true);
-    window.addEventListener("pointercancel", end, true);
-  }
-
-  private cancelPointerArm(): void {
-    this.pointerArmCleanup?.();
-  }
-
-  private armTouchDrag(pointer: PointerEvent, occurrence: CalendarOccurrence, element: HTMLElement, mode: CalendarDragMode): void {
-    this.cancelTouchPress();
-    const pointerId = pointer.pointerId;
-    const startX = pointer.clientX;
-    const startY = pointer.clientY;
-    element.classList.add("is-touch-arming");
-    const timer = window.setTimeout(() => {
-      const press = this.touchPress;
-      if (!press || press.pointerId !== pointerId) return;
-      this.touchPress = null;
-      element.classList.remove("is-touch-arming");
-      this.touchListenerCleanup?.();
-      this.activateDrag(pointerId, press.lastX, press.lastY, occurrence, element, mode);
-      this.options.announce(`${mode === "move" ? "Moving" : "Resizing"} ${occurrence.title}. Drag, then release.`);
-    }, this.options.longPressMs);
-    this.touchPress = { pointerId, startX, startY, lastX: startX, lastY: startY, timer, occurrence, element, mode };
-
-    const move = (event: PointerEvent) => {
-      const press = this.touchPress;
-      if (!press || event.pointerId !== press.pointerId) return;
-      press.lastX = event.clientX;
-      press.lastY = event.clientY;
-      if (Math.hypot(event.clientX - press.startX, event.clientY - press.startY) > 10) this.cancelTouchPress();
-    };
-    const cleanup = () => {
-      window.removeEventListener("pointermove", move, true);
-      window.removeEventListener("pointerup", end, true);
-      window.removeEventListener("pointercancel", end, true);
-      if (this.touchListenerCleanup === cleanup) this.touchListenerCleanup = null;
-    };
-    const end = (event: PointerEvent) => {
-      if (event.pointerId !== pointerId) return;
-      this.cancelTouchPress();
-      cleanup();
-    };
-    this.touchListenerCleanup?.();
-    this.touchListenerCleanup = cleanup;
-    window.addEventListener("pointermove", move, true);
-    window.addEventListener("pointerup", end, true);
-    window.addEventListener("pointercancel", end, true);
-  }
-
-  private cancelTouchPress(): void {
-    if (this.touchPress) {
-      clearTimeout(this.touchPress.timer);
-      this.touchPress.element.classList.remove("is-touch-arming");
-      this.touchPress = null;
-    }
-    this.touchListenerCleanup?.();
-  }
-
-  private activateDrag(
-    pointerId: number,
-    clientX: number,
-    clientY: number,
-    occurrence: CalendarOccurrence,
-    element: HTMLElement,
-    mode: CalendarDragMode,
-  ): void {
-    this.cancelTouchPress();
+  private activateDrag(session: CalendarPointerGestureSession<CalendarGestureData>): void {
+    const { occurrence, mode, element, touch } = session.data;
     const rect = element.getBoundingClientRect();
-    try { element.setPointerCapture(pointerId); } catch { /* unavailable after some synthetic/browser transitions */ }
     element.classList.add("is-dragging");
     this.options.setDragging(true);
-    const body = this.options.host.querySelector<HTMLElement>(".dc-body");
     this.drag = {
       occurrence,
       mode,
-      pointerId,
-      pointerStartX: clientX,
-      pointerStartY: clientY,
+      pointerId: session.pointerId,
+      pointerStartX: session.pointerStartX,
+      pointerStartY: session.pointerStartY,
       originalStart: toDate(occurrence.start),
       originalEnd: toDate(occurrence.end),
       element,
       originalHeightCss: element.style.height,
-      grabOffsetMinutes: Math.max(0, clientY - rect.top),
-      scrollStartTop: body?.scrollTop ?? 0,
-      scrollStartLeft: body?.scrollLeft ?? 0,
-      lastClientX: clientX,
-      lastClientY: clientY,
+      grabOffsetMinutes: Math.max(0, session.activationY - rect.top),
+      scrollStartTop: session.scrollStartTop,
+      scrollStartLeft: session.scrollStartLeft,
     };
-    const cleanup = () => {
-      window.removeEventListener("pointermove", move, true);
-      window.removeEventListener("pointerup", end, true);
-      window.removeEventListener("pointercancel", cancel, true);
-      if (this.dragListenerCleanup === cleanup) this.dragListenerCleanup = null;
-    };
-    const move = (event: PointerEvent) => {
-      if (!this.drag || event.pointerId !== this.drag.pointerId) return;
-      event.preventDefault();
-      this.moveDrag(event);
-    };
-    const end = (event: PointerEvent) => {
-      if (!this.drag || event.pointerId !== this.drag.pointerId) return;
-      event.preventDefault();
-      cleanup();
-      void this.finishDrag(event);
-    };
-    const cancel = (event: PointerEvent) => {
-      if (!this.drag || event.pointerId !== this.drag.pointerId) return;
-      cleanup();
-      this.cancelDrag();
-    };
-    this.dragListenerCleanup?.();
-    this.dragListenerCleanup = cleanup;
-    window.addEventListener("pointermove", move, true);
-    window.addEventListener("pointerup", end, true);
-    window.addEventListener("pointercancel", cancel, true);
-    this.startAutoScroll();
+    if (touch) {
+      this.options.announce(`${mode === "move" ? "Moving" : "Resizing"} ${occurrence.title}. Drag, then release.`);
+    }
   }
 
-  private cancelDrag(): void {
-    this.dragListenerCleanup?.();
+  private moveDrag(move: CalendarPointerGestureMove): void {
+    const drag = this.drag;
+    if (!drag) return;
+    if (drag.mode !== "move") {
+      const delta = snapDragDeltaMinutes(move.deltaY, this.options.slotMinutes, this.options.snapPolicy.resize);
+      const renderedHeight = Number.parseFloat(drag.originalHeightCss);
+      const duration = Number.isFinite(renderedHeight)
+        ? Math.max(this.options.slotMinutes, renderedHeight)
+        : this.options.slotMinutes;
+      const preview = resizePreview(duration, delta, dragResizeEdge(drag.mode), this.options.slotMinutes);
+      drag.element.style.transform = `translateY(${preview.offsetMinutes}px)`;
+      drag.element.style.height = `${preview.heightMinutes}px`;
+      return;
+    }
+    const snappedDelta = snapDragDeltaMinutes(move.deltaY, this.options.slotMinutes, this.options.snapPolicy.move);
+    drag.element.style.transform = `translate(${move.deltaX}px,${snappedDelta}px)`;
+  }
+
+  private cancelDragVisual(): void {
     const drag = this.drag;
     this.drag = null;
-    this.stopAutoScroll();
     if (!drag) return;
-    this.suppressOccurrenceClickUntil = Date.now() + 350;
     restoreDragVisual(drag);
     this.options.setDragging(false);
     this.options.announce(`${drag.mode === "move" ? "Move" : "Resize"} cancelled for ${drag.occurrence.title}.`);
   }
 
-  private moveDrag(pointer: Pick<PointerEvent, "clientX" | "clientY">): void {
-    if (!this.drag) return;
-    this.drag.lastClientX = pointer.clientX;
-    this.drag.lastClientY = pointer.clientY;
-    const body = this.options.host.querySelector<HTMLElement>(".dc-body");
-    const scrollDelta = (body?.scrollTop ?? 0) - this.drag.scrollStartTop;
-    const horizontalScrollDelta = (body?.scrollLeft ?? 0) - this.drag.scrollStartLeft;
-    const rawDelta = pointer.clientY - this.drag.pointerStartY + scrollDelta;
-    if (this.drag.mode !== "move") {
-      const delta = snapDragDeltaMinutes(rawDelta, this.options.slotMinutes, this.options.snapPolicy.resize);
-      const renderedHeight = Number.parseFloat(this.drag.originalHeightCss);
-      const duration = Number.isFinite(renderedHeight) ? Math.max(this.options.slotMinutes, renderedHeight) : this.options.slotMinutes;
-      const preview = resizePreview(duration, delta, dragResizeEdge(this.drag.mode), this.options.slotMinutes);
-      this.drag.element.style.transform = `translateY(${preview.offsetMinutes}px)`;
-      this.drag.element.style.height = `${preview.heightMinutes}px`;
-      return;
-    }
-    const snappedDelta = snapDragDeltaMinutes(rawDelta, this.options.slotMinutes, this.options.snapPolicy.move);
-    const deltaX = pointer.clientX - this.drag.pointerStartX + horizontalScrollDelta;
-    this.drag.element.style.transform = `translate(${deltaX}px,${snappedDelta}px)`;
-  }
-
-  private startAutoScroll(): void {
-    if (this.autoScrollFrame !== null) return;
-    const tick = () => {
-      this.autoScrollFrame = null;
-      const drag = this.drag;
-      const body = this.options.host.querySelector<HTMLElement>(".dc-body");
-      if (!drag || !body) return;
-      const rect = body.getBoundingClientRect();
-      let verticalVelocity = 0;
-      let horizontalVelocity = 0;
-      if (drag.lastClientY < rect.top + this.options.autoScrollEdgePx) {
-        const ratio = Math.min(1, (rect.top + this.options.autoScrollEdgePx - drag.lastClientY) / this.options.autoScrollEdgePx);
-        verticalVelocity = -Math.max(2, ratio * this.options.autoScrollMaxPxPerFrame);
-      } else if (drag.lastClientY > rect.bottom - this.options.autoScrollEdgePx) {
-        const ratio = Math.min(1, (drag.lastClientY - (rect.bottom - this.options.autoScrollEdgePx)) / this.options.autoScrollEdgePx);
-        verticalVelocity = Math.max(2, ratio * this.options.autoScrollMaxPxPerFrame);
-      }
-      if (drag.lastClientX < rect.left + this.options.autoScrollEdgePx) {
-        const ratio = Math.min(1, (rect.left + this.options.autoScrollEdgePx - drag.lastClientX) / this.options.autoScrollEdgePx);
-        horizontalVelocity = -Math.max(2, ratio * this.options.autoScrollMaxPxPerFrame);
-      } else if (drag.lastClientX > rect.right - this.options.autoScrollEdgePx) {
-        const ratio = Math.min(1, (drag.lastClientX - (rect.right - this.options.autoScrollEdgePx)) / this.options.autoScrollEdgePx);
-        horizontalVelocity = Math.max(2, ratio * this.options.autoScrollMaxPxPerFrame);
-      }
-      if (verticalVelocity || horizontalVelocity) {
-        body.scrollTop += verticalVelocity;
-        body.scrollLeft += horizontalVelocity;
-        this.moveDrag({ clientX: drag.lastClientX, clientY: drag.lastClientY });
-      }
-      this.autoScrollFrame = requestAnimationFrame(tick);
-    };
-    this.autoScrollFrame = requestAnimationFrame(tick);
-  }
-
-  private stopAutoScroll(): void {
-    if (this.autoScrollFrame === null) return;
-    cancelAnimationFrame(this.autoScrollFrame);
-    this.autoScrollFrame = null;
-  }
-
   private async finishDrag(pointer: PointerEvent): Promise<void> {
     const drag = this.drag;
     this.drag = null;
-    this.stopAutoScroll();
     if (!drag) return;
-    this.suppressOccurrenceClickUntil = Date.now() + 350;
     drag.element.classList.remove("is-dragging");
     drag.element.classList.add("is-command-preview");
     this.options.setDragging(false);

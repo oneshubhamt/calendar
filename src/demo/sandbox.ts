@@ -11,7 +11,7 @@ export function mountDirectorCalendarSandbox(host: HTMLElement): CalendarUi {
     initialView: "week",
     commandHandler: fixture.ecosystem.commandHandler,
     sourceActions: fixture.ecosystem.sourceActions,
-    extensions: [createPlanningUiExtension()],
+    extensions: [createPlanningUiExtension(), ...fixture.ecosystem.createUiExtensions()],
     addons: [createPersonalCalendarUiAddon({
       routineTemplates: DIRECTOR_FIXTURE_ROUTINES,
       quickCreateOptions: { kindKeywords: { study: "study-block", revision: "revision", mock: "mock", deadline: "deadline", exam: "milestone" } },

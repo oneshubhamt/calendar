@@ -7,20 +7,37 @@ import type {
   Weekday,
 } from "../core/types.js";
 
-import { isDateLikeOccurrence } from "./occurrence-form.js";
-export { isDateLikeOccurrence } from "./occurrence-form.js";
-import type { CalendarSelection } from "./types.js";
+import type { CalendarResolvedWeekNumbering, CalendarSelection } from "./types.js";
 import type { ResolvedCalendarOccurrencePresentation } from "./presentation.js";
-import { groupAgendaByDay, groupAllDayBackgroundRangesByDay, groupByDay } from "../core/layout.js";
-import { addDays, addMonths, dateKey, rangeForView, startOfDay, toDate } from "../core/time.js";
+import { groupAgendaByDay, groupByDay } from "../core/layout.js";
+import { addDays, addMonths, dateKey, rangeForView, toDate } from "../core/time.js";
 import { instantToPlain } from "../core/temporal.js";
+import { renderMonthPanel } from "./month-panel.js";
+import {
+  el,
+  formatTime,
+  sameLocalDay,
+  SHORT_WEEKDAY_NAMES,
+  weekdayOrder,
+} from "./render-primitives.js";
 
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+export {
+  backgroundAriaSuffix,
+  dayLevelBackgroundLayer,
+  el,
+  formatDateTime,
+  formatTime,
+  humanizeKind,
+  sameLocalDay,
+  SHORT_WEEKDAY_NAMES,
+  weekdayOrder,
+} from "./render-primitives.js";
 
 export interface CalendarStaticRenderModel {
   readonly locale: string;
   readonly timeZone: string;
   readonly weekStartsOn: Weekday;
+  readonly weekNumbering?: CalendarResolvedWeekNumbering | undefined;
   readonly anchor: Date;
   readonly visibleRange: CalendarRange;
   readonly agendaSpan: CalendarAgendaSpan;
@@ -42,62 +59,14 @@ export interface CalendarStaticRenderActions {
   moveToDay(occurrence: CalendarOccurrence, day: Date, allDay: boolean): Promise<void>;
   canCreateItems(): boolean;
   createFromSelection(selection: CalendarSelection): Promise<void>;
+  bindExternalDropTarget(
+    element: HTMLElement,
+    resolveSelection: (event: DragEvent) => CalendarSelection | undefined,
+  ): void;
   addonEmptyMessage(): string | undefined;
   agendaSummaries(date: string, occurrences: readonly CalendarOccurrence[]): readonly string[];
   occurrencePresentation(occurrence: CalendarOccurrence): ResolvedCalendarOccurrencePresentation;
   applyOccurrencePresentation(element: HTMLElement, occurrence: CalendarOccurrence): void;
-}
-
-export function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  className?: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-export function sameLocalDay(a: Date, b: Date, timeZone: string): boolean {
-  return dateKey(a, timeZone) === dateKey(b, timeZone);
-}
-
-export function formatTime(date: Date, locale: string, timeZone: string): string {
-  return new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit", timeZone }).format(date);
-}
-
-export function formatDateTime(date: Date, locale: string, timeZone: string): string {
-  return new Intl.DateTimeFormat(locale, {
-    weekday: "short", day: "numeric", month: "short", year: "numeric",
-    hour: "numeric", minute: "2-digit", timeZone,
-  }).format(date);
-}
-
-export function humanizeKind(value: string): string {
-  const text = value.replace(/[-_]+/gu, " ").trim();
-  return text ? text[0]!.toUpperCase() + text.slice(1) : "Event";
-}
-
-export function backgroundAriaSuffix(ranges: readonly CalendarBackgroundRange[]): string {
-  const labels = [...new Set(ranges.map(range => range.label?.trim()).filter((label): label is string => Boolean(label)))].slice(0, 8);
-  return labels.length ? `. Background: ${labels.join(", ")}` : "";
-}
-
-export function dayLevelBackgroundLayer(
-  ranges: readonly CalendarBackgroundRange[],
-  applyPresentation: (element: HTMLElement, range: CalendarBackgroundRange) => void,
-): HTMLElement {
-  const layer = el("div", "dc-day-background-layer");
-  layer.setAttribute("aria-hidden", "true");
-  for (const [index, range] of ranges.entries()) {
-    const background = el("div", "dc-day-background-range");
-    background.dataset.backgroundRangeId = range.id;
-    background.style.zIndex = String(index);
-    applyPresentation(background, range);
-    layer.append(background);
-  }
-  return layer;
 }
 
 export function periodTitle(
@@ -136,7 +105,7 @@ export function renderYearView(model: CalendarStaticRenderModel, actions: Calend
     });
     month.append(heading);
     const weekdays = el("div", "dc-year-weekdays");
-    for (const weekday of weekdayOrder(model.weekStartsOn)) weekdays.append(el("span", undefined, DAY_NAMES[weekday]!.slice(0, 1)));
+    for (const weekday of weekdayOrder(model.weekStartsOn)) weekdays.append(el("span", undefined, SHORT_WEEKDAY_NAMES[weekday]!.slice(0, 1)));
     month.append(weekdays);
     const days = el("div", "dc-year-days");
     const monthRange = rangeForView(monthStart, "month", model.weekStartsOn, model.timeZone);
@@ -173,74 +142,10 @@ export function renderYearView(model: CalendarStaticRenderModel, actions: Calend
 }
 
 export function renderMonthView(model: CalendarStaticRenderModel, actions: CalendarStaticRenderActions): HTMLElement {
-  const wrapper = el("div");
-  const header = el("div", "dc-weekdays");
-  for (const weekday of weekdayOrder(model.weekStartsOn)) header.append(el("div", "dc-weekday", DAY_NAMES[weekday]));
-  const grid = el("div", "dc-month-grid");
-  const buckets = groupByDay(model.occurrences, model.timeZone, model.visibleRange);
-  const backgroundBuckets = groupAllDayBackgroundRangesByDay(model.backgroundRanges, model.timeZone, model.visibleRange);
-  const start = toDate(model.visibleRange.start);
-  const end = toDate(model.visibleRange.end);
-  const anchorParts = instantToPlain(model.anchor.getTime(), model.timeZone);
-  for (let cursor = new Date(start); cursor < end; cursor = addDays(cursor, 1, model.timeZone)) {
-    const date = new Date(cursor);
-    const parts = instantToPlain(date.getTime(), model.timeZone);
-    const cell = el("div", "dc-day-cell");
-    const inBounds = actions.dateInNavigationBounds(date);
-    cell.tabIndex = inBounds ? 0 : -1;
-    cell.setAttribute("role", "group");
-    const dayBackgrounds = backgroundBuckets.get(dateKey(date, model.timeZone)) ?? [];
-    const dayLabel = new Intl.DateTimeFormat(model.locale, { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: model.timeZone }).format(date);
-    cell.setAttribute("aria-label", `${dayLabel}${backgroundAriaSuffix(dayBackgrounds)}`);
-    cell.classList.toggle("is-outside", parts.month !== anchorParts.month);
-    cell.classList.toggle("is-today", sameLocalDay(date, model.now, model.timeZone));
-    cell.classList.toggle("is-out-of-bounds", !inBounds);
-    if (!inBounds) cell.setAttribute("aria-disabled", "true");
-    cell.dataset.date = date.toISOString();
-    cell.dataset.calendarDate = date.toISOString();
-    const number = el("button", "dc-day-number", String(parts.day));
-    number.type = "button";
-    number.disabled = !inBounds;
-    number.addEventListener("click", () => actions.openDay(date));
-    const events = el("div", "dc-month-events");
-    const bucket = buckets.get(dateKey(date, model.timeZone));
-    const rows = [...(bucket?.allDay ?? []), ...(bucket?.timed ?? [])];
-    for (const occurrence of rows.slice(0, 4)) events.append(actions.monthEvent(occurrence));
-    if (rows.length > 4) {
-      const more = el("button", "dc-more", `+${rows.length - 4} more`) as HTMLButtonElement;
-      more.type = "button";
-      more.setAttribute("aria-label", `Show all ${rows.length} events on ${new Intl.DateTimeFormat(model.locale, { day: "numeric", month: "long", year: "numeric", timeZone: model.timeZone }).format(date)}`);
-      more.addEventListener("click", event => { event.stopPropagation(); actions.openMonthOverflow(date, rows); });
-      events.append(more);
-    }
-    if (inBounds && dayBackgrounds.length) {
-      cell.append(dayLevelBackgroundLayer(dayBackgrounds, actions.applyBackgroundPresentation));
-    }
-    cell.append(number, events);
-    cell.addEventListener("dragover", event => {
-      if (inBounds && actions.dragOccurrenceFromTransfer(event.dataTransfer)) event.preventDefault();
-    });
-    cell.addEventListener("drop", event => {
-      const occurrence = actions.dragOccurrenceFromTransfer(event.dataTransfer);
-      if (!inBounds || !occurrence || !actions.canMoveOccurrence(occurrence)) return;
-      event.preventDefault();
-      void actions.moveToDay(occurrence, date, isDateLikeOccurrence(occurrence));
-    });
-    if (inBounds && actions.canCreateItems()) {
-      cell.addEventListener("dblclick", event => {
-        if ((event.target as Element).closest(".dc-event,.dc-day-number")) return;
-        const startAt = startOfDay(date, model.timeZone);
-        void actions.createFromSelection({
-          start: startAt.toISOString(),
-          end: addDays(startAt, 1, model.timeZone).toISOString(),
-          allDay: true,
-        });
-      });
-    }
-    grid.append(cell);
-  }
-  wrapper.append(header, grid);
-  return wrapper;
+  return renderMonthPanel(model, actions, {
+    monthStart: model.anchor,
+    range: model.visibleRange,
+  });
 }
 
 export function renderAgendaView(model: CalendarStaticRenderModel, actions: CalendarStaticRenderActions): HTMLElement {
@@ -294,8 +199,3 @@ export function renderAgendaView(model: CalendarStaticRenderModel, actions: Cale
   }
   return container;
 }
-
-function weekdayOrder(weekStartsOn: Weekday): readonly Weekday[] {
-  return Array.from({ length: 7 }, (_, index) => ((weekStartsOn + index) % 7) as Weekday);
-}
-

@@ -31,3 +31,13 @@ export type {
   CalendarResourcePlacementExecutionStatus,
   CalendarResourcePlacementExecutionResult,
 } from "./placement.js";
+
+
+export { executeCalendarResourceInteraction } from "./interaction-execution.js";
+export type {
+  CalendarResourceInteractionMode,
+  CalendarResourceInteractionCandidate,
+  CalendarResourceInteractionExecutionOptions,
+  CalendarResourceInteractionExecution,
+} from "./interaction-execution.js";
+

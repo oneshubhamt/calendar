@@ -384,7 +384,8 @@ export class CalendarMutationCoordinator {
       return "suppressed";
     }
 
-    const previewPatch = previewPatchForCommand(command);
+    const authoritativeCommand: CalendarOccurrenceCommand = { ...command, occurrence };
+    const previewPatch = previewPatchForCommand(authoritativeCommand);
     if (previewPatch) this.pendingPreviews.set(occurrence.occurrenceId, { patch: previewPatch });
     const status = await this.lifecycle.run(occurrence.occurrenceId, operation, async () => {
       const capabilities = this.capabilities(occurrence);
@@ -394,10 +395,10 @@ export class CalendarMutationCoordinator {
       const handler = this.commandHandlerFor(occurrence, capabilities);
       if (!handler) throw new Error(`${occurrence.title}: no command path is available for this action.`);
       await handler.execute(
-        command,
-        calendarOccurrenceCommandContext(command, this.options.clock.now().toISOString(), this.options.timeZone),
+        authoritativeCommand,
+        calendarOccurrenceCommandContext(authoritativeCommand, this.options.clock.now().toISOString(), this.options.timeZone),
       );
-      this.options.onCommand(command);
+      this.options.onCommand(authoritativeCommand);
     }, {
       onPendingChange: this.options.onPendingChange,
       refresh: this.options.refresh,
@@ -416,7 +417,7 @@ export class CalendarMutationCoordinator {
     return status;
   }
 
-  public async dispatch(command: CalendarCommand): Promise<void> {
+  public async dispatch(command: CalendarCommand): Promise<CalendarCommandLifecycleStatus> {
     if (
       command.type === "update-occurrence"
       || command.type === "move-occurrence"
@@ -426,35 +427,73 @@ export class CalendarMutationCoordinator {
       throw new Error("Occurrence commands must use the capability-aware command path");
     }
     const handler = this.options.commandHandler;
-    if (!handler) throw new Error("Calendar mutation requires a command handler");
-    await handler.execute(command, {
-      now: this.options.clock.now().toISOString(),
-      timeZone: this.options.timeZone,
+    if (!handler) {
+      this.options.announce("Calendar mutation requires a command handler.");
+      return "rejected";
+    }
+
+    const itemId = command.type === "create" ? command.item.id : command.id;
+    const status = await this.lifecycle.run(`item:${itemId}`, command.type, async () => {
+      await handler.execute(command, {
+        now: this.options.clock.now().toISOString(),
+        timeZone: this.options.timeZone,
+      });
+      this.options.onCommand(command);
+    }, {
+      onPendingChange: this.options.onPendingChange,
+      refresh: this.options.refresh,
+      onError: error => this.options.announce(
+        error instanceof Error ? error.message : "Calendar command could not be completed.",
+      ),
+      onRefreshError: error => this.options.announce(
+        error instanceof Error
+          ? `Calendar change was committed, but the authoritative refresh failed: ${error.message}`
+          : "Calendar change was committed, but the authoritative refresh failed. Do not retry the mutation; refresh Calendar instead.",
+      ),
     });
-    this.options.onCommand(command);
-    await this.options.refresh();
+    if (status === "suppressed") this.options.announce("A Calendar command is already pending for this item.");
+    return status;
   }
 
-  public async undo(): Promise<boolean> {
-    const undo = this.options.commandHandler?.undo;
-    if (!undo) return false;
-    const changed = await undo.call(this.options.commandHandler);
-    if (changed) {
-      this.options.announce("Calendar change undone.");
-      await this.options.refresh();
-    }
-    return changed;
+  public async undo(): Promise<CalendarMutationDispatchResult> {
+    return await this.runHistoryMutation("undo");
   }
 
-  public async redo(): Promise<boolean> {
-    const redo = this.options.commandHandler?.redo;
-    if (!redo) return false;
-    const changed = await redo.call(this.options.commandHandler);
-    if (changed) {
-      this.options.announce("Calendar change redone.");
-      await this.options.refresh();
+  public async redo(): Promise<CalendarMutationDispatchResult> {
+    return await this.runHistoryMutation("redo");
+  }
+
+  private async runHistoryMutation(operation: "undo" | "redo"): Promise<CalendarMutationDispatchResult> {
+    const handler = this.options.commandHandler;
+    const mutation = operation === "undo" ? handler?.undo : handler?.redo;
+    if (!handler || !mutation) return "cancelled";
+
+    let changed = false;
+    const status = await this.lifecycle.run("history", operation, async () => {
+      changed = await mutation.call(handler);
+    }, {
+      refresh: async () => {
+        if (changed) await this.options.refresh();
+      },
+      onError: error => this.options.announce(
+        error instanceof Error ? error.message : `Calendar ${operation} could not be completed.`,
+      ),
+      onRefreshError: error => this.options.announce(
+        error instanceof Error
+          ? `Calendar ${operation} was committed, but the authoritative refresh failed: ${error.message}`
+          : `Calendar ${operation} was committed, but the authoritative refresh failed. Do not retry it; refresh Calendar instead.`,
+      ),
+    });
+
+    if (status === "suppressed") {
+      this.options.announce("A Calendar history command is already pending.");
+      return status;
     }
-    return changed;
+    if (!changed && status === "completed") return "cancelled";
+    if (changed && status === "completed") {
+      this.options.announce(operation === "undo" ? "Calendar change undone." : "Calendar change redone.");
+    }
+    return status;
   }
 
   private resolveDraftTime(value: string, temporal: CalendarTemporalSpec | undefined): Date {

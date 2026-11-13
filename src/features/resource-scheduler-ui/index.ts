@@ -3,29 +3,34 @@ import type {
   CalendarOverlapDisambiguation,
   CalendarRange,
   CalendarSnapPolicy,
-  CalendarSource,
-  SeriesEditScope,
 } from "../../core/types.js";
-import { normalizeSnapPolicy, snapMinuteCoordinate } from "../../core/interaction.js";
+import {
+  moveOccurrenceByCivilMinutes,
+  normalizeSnapPolicy,
+  resizeOccurrenceByCivilMinutes,
+  snapMinuteCoordinate,
+} from "../../core/interaction.js";
+import { resolveHorizontalTimelineRangeGeometry } from "../../core/horizontal-timeline.js";
+import {
+  CalendarPointerGestureController,
+  type CalendarPointerGestureData,
+  type CalendarPointerGestureMove,
+  type CalendarPointerGestureSession,
+} from "../../view/pointer-gesture.js";
 import type { CalendarUiExtension } from "../../view/types.js";
 import { hostDataAttributeName, resolveOccurrencePresentation } from "../../view/presentation.js";
 import {
-  executeCalendarResourcePlacement,
   flattenCalendarResources,
   replaceCalendarResourceAssignment,
   type CalendarResource,
   type CalendarResourceAssignment,
   type CalendarResourceId,
   type CalendarResourceTimelineLayoutItem,
-  type CalendarResourcePlacementExecutionOptions,
+  type CalendarResourceInteractionExecutionOptions,
   type CalendarResourcePlacementExecutionResult,
   type CalendarResourcePlacementRequest,
 } from "../resource-scheduler/index.js";
-import { resolveResourceTimelineRangeGeometry } from "../resource-scheduler/timeline-layout.js";
-import {
-  moveResourceOccurrenceByCivilMinutes,
-  resizeResourceOccurrenceByCivilMinutes,
-} from "./interaction.js";
+import { runCalendarResourceInteractionLifecycle } from "../resource-interaction-lifecycle.js";
 import { RESOURCE_SCHEDULER_CSS } from "./styles.js";
 import {
   clamp,
@@ -35,26 +40,27 @@ import {
   safeClassTokens,
 } from "./rendering.js";
 
-const POINTER_MOVE_THRESHOLD = 4;
-const AUTO_SCROLL_ZONE = 32;
-const AUTO_SCROLL_STEP = 18;
 let schedulerUiSequence = 0;
 
 type CalendarResourceInteractionMode = "move" | "resize-start" | "resize-end";
 
+interface CalendarResourceGestureData extends CalendarPointerGestureData {
+  readonly node: HTMLElement;
+  readonly occurrence: CalendarOccurrence;
+  readonly sourceResourceId: CalendarResourceId;
+  readonly assignment: CalendarResourceAssignment;
+  readonly mode: CalendarResourceInteractionMode;
+  readonly touch: boolean;
+}
+
 interface CalendarResourceDragState {
   readonly mode: CalendarResourceInteractionMode;
-  readonly pointerId: number;
   readonly node: HTMLElement;
   readonly occurrence: CalendarOccurrence;
   readonly sourceResourceId: CalendarResourceId;
   readonly assignment: CalendarResourceAssignment;
   readonly originalStart: string;
   readonly originalEnd: string;
-  readonly startClientX: number;
-  readonly startClientY: number;
-  readonly scrollStartLeft: number;
-  readonly scrollStartTop: number;
   readonly scale: number;
   readonly ghost: HTMLElement;
   moved: boolean;
@@ -69,6 +75,12 @@ interface CalendarResourceInteractionCandidate {
   readonly valid: boolean;
 }
 
+/**
+ * Immutable host projection snapshot. After setProjection(), hosts must replace
+ * changed entities through a new snapshot rather than mutate supplied objects.
+ * The UI owns/freeze-copies collection containers but deliberately does not deep
+ * clone potentially large resource schedules.
+ */
 export interface CalendarResourceSchedulerProjection {
   readonly resources: readonly CalendarResource[];
   readonly occurrences: readonly CalendarOccurrence[];
@@ -77,22 +89,17 @@ export interface CalendarResourceSchedulerProjection {
 }
 
 export interface CalendarResourceSchedulerInteractionOptions
-  extends Omit<CalendarResourcePlacementExecutionOptions, "source" | "acceptWarnings"> {
+  extends CalendarResourceInteractionExecutionOptions {
   /** Shared Calendar snap interval. Defaults to 15 minutes. */
   readonly slotMinutes?: number | undefined;
   /** Shared Calendar move/resize/keyboard snapping semantics. */
   readonly snapPolicy?: CalendarSnapPolicy | undefined;
   readonly minimumDurationMinutes?: number | undefined;
   readonly dstOverlapDisambiguation?: CalendarOverlapDisambiguation | undefined;
-  readonly sourceForOccurrence?: ((occurrence: CalendarOccurrence) => CalendarSource | undefined) | undefined;
-  readonly resolveScope?: ((
-    occurrence: CalendarOccurrence,
-    action: CalendarResourcePlacementRequest["action"],
-  ) => SeriesEditScope | null | Promise<SeriesEditScope | null>) | undefined;
-  readonly confirmWarnings?: ((
-    messages: readonly string[],
-    request: CalendarResourcePlacementRequest,
-  ) => boolean | Promise<boolean>) | undefined;
+  /** Shared touch/pointer lifecycle configuration. */
+  readonly longPressMs?: number | undefined;
+  readonly autoScrollEdgePx?: number | undefined;
+  readonly autoScrollMaxPxPerFrame?: number | undefined;
   readonly refreshProjection?: (() =>
     | CalendarResourceSchedulerProjection
     | void
@@ -118,7 +125,7 @@ export interface CalendarResourceSchedulerUiOptions {
   readonly onOccurrenceActivate?: ((occurrence: CalendarOccurrence, resource: CalendarResource) => void) | undefined;
   readonly onCollapseChange?: ((collapsedResourceIds: readonly CalendarResourceId[]) => void) | undefined;
   readonly onError?: ((error: unknown) => void) | undefined;
-  /** Omit to preserve the R4 read-only surface exactly. */
+  /** Omit to keep the Resource Scheduler surface read-only. */
   readonly interaction?: CalendarResourceSchedulerInteractionOptions | undefined;
 }
 
@@ -148,6 +155,7 @@ export class CalendarResourceSchedulerUi {
   private readonly snapPolicy: Required<CalendarSnapPolicy>;
   private readonly interactionHelpId: string;
   private readonly status: HTMLElement;
+  private readonly pointerGestures: CalendarPointerGestureController<CalendarResourceGestureData>;
   private readonly pendingOccurrences = new Set<string>();
   private collapsed = new Set<CalendarResourceId>();
   private projection: CalendarResourceSchedulerProjection | undefined;
@@ -195,18 +203,29 @@ export class CalendarResourceSchedulerUi {
     this.status.setAttribute("role", "status");
     this.status.setAttribute("aria-live", "polite");
     this.status.setAttribute("aria-atomic", "true");
+    this.pointerGestures = new CalendarPointerGestureController<CalendarResourceGestureData>({
+      scrollElement: () => this.root.querySelector<HTMLElement>(".dc-rs-scroll") ?? undefined,
+      longPressMs: Math.max(250, this.interaction?.longPressMs ?? 420),
+      autoScrollEdgePx: Math.max(20, this.interaction?.autoScrollEdgePx ?? 32),
+      autoScrollMaxPxPerFrame: Math.max(2, this.interaction?.autoScrollMaxPxPerFrame ?? 18),
+      onArmingChange: (data, active) => data.node.classList.toggle("is-touch-arming", active),
+      onActivate: session => this.activateResourceGesture(session),
+      onMove: (_session, move) => this.moveResourceGesture(move),
+      onFinish: async (_session, event) => await this.finishResourceGesture(event),
+      onCancel: () => this.cleanupDragVisual(),
+    });
     this.replaceSurface(this.emptyState());
     this.host.replaceChildren(style, this.root);
   }
 
   public setProjection(projection: CalendarResourceSchedulerProjection): void {
     this.cancelDrag();
-    const stable: CalendarResourceSchedulerProjection = {
-      resources: [...projection.resources],
-      occurrences: [...projection.occurrences],
-      assignments: [...projection.assignments],
-      range: { start: projection.range.start, end: projection.range.end },
-    };
+    const stable: CalendarResourceSchedulerProjection = Object.freeze({
+      resources: Object.freeze([...projection.resources]),
+      occurrences: Object.freeze([...projection.occurrences]),
+      assignments: Object.freeze([...projection.assignments]),
+      range: Object.freeze({ start: projection.range.start, end: projection.range.end }),
+    });
     const ids = new Set(stable.resources.map(resource => resource.id));
     const nextCollapsed = new Set([...this.collapsed].filter(id => ids.has(id)));
     const rendered = this.renderProjection(stable, nextCollapsed);
@@ -223,7 +242,6 @@ export class CalendarResourceSchedulerUi {
     }
     const next = new Set(ids);
     if (next.size !== ids.length) throw new Error("Collapsed resource IDs must be unique");
-    // R2 validation rejects unknown collapse IDs before current UI state is changed.
     flattenCalendarResources(this.projection.resources, [...next]);
     const rendered = this.renderProjection(this.projection, next);
     this.collapsed = next;
@@ -246,7 +264,7 @@ export class CalendarResourceSchedulerUi {
   }
 
   public destroy(): void {
-    this.cancelDrag();
+    this.pointerGestures.destroy();
     this.projection = undefined;
     this.collapsed.clear();
     this.pendingOccurrences.clear();
@@ -436,12 +454,26 @@ export class CalendarResourceSchedulerUi {
     mode: CalendarResourceInteractionMode,
   ): void {
     if (!this.interaction || !this.projection || event.button !== 0 || this.pendingOccurrences.has(occurrence.occurrenceId)) return;
-    if (this.drag) this.cancelDrag();
     const assignment = this.assignmentFor(occurrence.occurrenceId);
     if (!assignment || !assignment.resourceIds.includes(sourceResourceId)) return;
-    const scroll = this.root.querySelector<HTMLElement>(".dc-rs-scroll");
-    if (!scroll) return;
-    const geometry = resolveResourceTimelineRangeGeometry(this.projection.range, this.timeZone);
+    this.pointerGestures.begin(event, {
+      element: node,
+      node,
+      occurrence,
+      sourceResourceId,
+      assignment,
+      mode,
+      touch: event.pointerType === "touch",
+    });
+  }
+
+  private activateResourceGesture(
+    session: CalendarPointerGestureSession<CalendarResourceGestureData>,
+  ): void {
+    const projection = this.projection;
+    if (!projection) return;
+    const { node, occurrence, sourceResourceId, assignment, mode, touch } = session.data;
+    const geometry = resolveHorizontalTimelineRangeGeometry(projection.range, this.timeZone);
     const timelineWidth = Math.max(this.minTimelineWidth, geometry.widthMinutes * this.pixelsPerMinute);
     const scale = timelineWidth / geometry.widthMinutes;
     const rect = node.getBoundingClientRect();
@@ -453,71 +485,50 @@ export class CalendarResourceSchedulerUi {
     ghost.hidden = true;
     this.root.append(ghost);
     node.focus({ preventScroll: true });
-    node.setPointerCapture(event.pointerId);
     node.classList.add("is-drag-source");
     this.drag = {
       mode,
-      pointerId: event.pointerId,
       node,
       occurrence,
       sourceResourceId,
       assignment,
       originalStart: occurrence.start,
       originalEnd: occurrence.end,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      scrollStartLeft: scroll.scrollLeft,
-      scrollStartTop: scroll.scrollTop,
       scale,
       ghost,
       moved: false,
       candidate: undefined,
     };
-    node.addEventListener("pointermove", this.boundPointerMove);
-    node.addEventListener("pointerup", this.boundPointerUp);
-    node.addEventListener("pointercancel", this.boundPointerCancel);
-    event.preventDefault();
+    if (touch) this.announce(`${mode === "move" ? "Moving" : "Resizing"} ${occurrence.title}. Drag, then release.`);
   }
 
-  private readonly boundPointerMove = (event: PointerEvent): void => {
+  private moveResourceGesture(move: CalendarPointerGestureMove): void {
     const drag = this.drag;
-    if (!drag || event.pointerId !== drag.pointerId) return;
-    const scroll = this.root.querySelector<HTMLElement>(".dc-rs-scroll");
-    if (!scroll) return;
-    this.autoScroll(scroll, event.clientX, event.clientY);
-    const dx = event.clientX - drag.startClientX + (scroll.scrollLeft - drag.scrollStartLeft);
-    const dy = event.clientY - drag.startClientY + (scroll.scrollTop - drag.scrollStartTop);
-    if (!drag.moved && Math.hypot(dx, dy) < POINTER_MOVE_THRESHOLD) return;
+    if (!drag) return;
+    if (!drag.moved && Math.hypot(move.deltaX, move.deltaY) < 1) return;
     drag.moved = true;
     drag.ghost.hidden = false;
-    const rawMinutes = dx / drag.scale;
+    const rawMinutes = move.deltaX / drag.scale;
     const strategy = drag.mode === "move" ? this.snapPolicy.move : this.snapPolicy.resize;
     const deltaMinutes = snapMinuteCoordinate(rawMinutes, this.slotMinutes, strategy);
-    const candidate = this.interactionCandidate(drag, deltaMinutes, event.clientX, event.clientY);
+    const candidate = this.interactionCandidate(drag, deltaMinutes, move.clientX, move.clientY);
     drag.candidate = candidate;
     this.updateDragPreview(drag, candidate);
-    event.preventDefault();
-  };
+  }
 
-  private readonly boundPointerUp = (event: PointerEvent): void => {
+  private async finishResourceGesture(_event: PointerEvent): Promise<void> {
     const drag = this.drag;
-    if (!drag || event.pointerId !== drag.pointerId) return;
-    const candidate = drag.candidate;
-    const moved = drag.moved;
-    this.cleanupDrag(drag);
-    if (!moved) return;
+    const candidate = drag?.candidate;
+    const moved = drag?.moved === true;
+    if (drag) this.cleanupDragVisual();
+    if (!drag || !moved) return;
     drag.node.dataset.suppressActivation = "true";
     if (!candidate?.valid) {
       this.announce("That placement cannot be targeted.");
       return;
     }
-    void this.submitCandidate(drag.node, drag.occurrence, drag.sourceResourceId, drag.assignment, drag.mode, candidate);
-  };
-
-  private readonly boundPointerCancel = (event: PointerEvent): void => {
-    if (!this.drag || event.pointerId !== this.drag.pointerId) return;
-    this.cancelDrag();
-  };
+    await this.submitCandidate(drag.node, drag.occurrence, drag.sourceResourceId, drag.assignment, drag.mode, candidate);
+  }
 
   private interactionCandidate(
     drag: CalendarResourceDragState,
@@ -527,11 +538,11 @@ export class CalendarResourceSchedulerUi {
   ): CalendarResourceInteractionCandidate | undefined {
     let times;
     if (drag.mode === "move") {
-      times = moveResourceOccurrenceByCivilMinutes(
+      times = moveOccurrenceByCivilMinutes(
         drag.occurrence, deltaMinutes, this.timeZone, this.overlapDisambiguation(),
       );
     } else {
-      times = resizeResourceOccurrenceByCivilMinutes(
+      times = resizeOccurrenceByCivilMinutes(
         drag.occurrence,
         drag.mode === "resize-start" ? "start" : "end",
         deltaMinutes,
@@ -586,7 +597,7 @@ export class CalendarResourceSchedulerUi {
       .find(row => row.dataset.resourceId === candidate.targetResourceId);
     const track = targetRow?.querySelector<HTMLElement>(".dc-rs-track");
     if (track) {
-      const geometry = resolveResourceTimelineRangeGeometry(this.projection.range, this.timeZone);
+      const geometry = resolveHorizontalTimelineRangeGeometry(this.projection.range, this.timeZone);
       const startMs = Date.parse(candidate.start);
       const endMs = Date.parse(candidate.end);
       const rawX = geometry.coordinate(startMs);
@@ -612,29 +623,19 @@ export class CalendarResourceSchedulerUi {
       : `${drag.occurrence.title} · ${drag.mode === "resize-start" ? "start" : "end"}`;
   }
 
-  private cleanupDrag(drag: CalendarResourceDragState): void {
-    drag.node.removeEventListener("pointermove", this.boundPointerMove);
-    drag.node.removeEventListener("pointerup", this.boundPointerUp);
-    drag.node.removeEventListener("pointercancel", this.boundPointerCancel);
-    if (drag.node.hasPointerCapture(drag.pointerId)) drag.node.releasePointerCapture(drag.pointerId);
+  private cleanupDragVisual(): void {
+    const drag = this.drag;
+    this.drag = undefined;
+    if (!drag) return;
     drag.node.classList.remove("is-drag-source");
     drag.ghost.remove();
     for (const row of this.root.querySelectorAll<HTMLElement>(".dc-rs-resource-row")) {
       row.classList.remove("is-drop-target", "is-drop-invalid");
     }
-    if (this.drag === drag) this.drag = undefined;
   }
 
   private cancelDrag(): void {
-    if (this.drag) this.cleanupDrag(this.drag);
-  }
-
-  private autoScroll(scroll: HTMLElement, clientX: number, clientY: number): void {
-    const rect = scroll.getBoundingClientRect();
-    if (clientX < rect.left + AUTO_SCROLL_ZONE) scroll.scrollLeft -= AUTO_SCROLL_STEP;
-    else if (clientX > rect.right - AUTO_SCROLL_ZONE) scroll.scrollLeft += AUTO_SCROLL_STEP;
-    if (clientY < rect.top + AUTO_SCROLL_ZONE) scroll.scrollTop -= AUTO_SCROLL_STEP;
-    else if (clientY > rect.bottom - AUTO_SCROLL_ZONE) scroll.scrollTop += AUTO_SCROLL_STEP;
+    this.pointerGestures.cancel();
   }
 
   private async keyboardMove(
@@ -646,7 +647,7 @@ export class CalendarResourceSchedulerUi {
   ): Promise<void> {
     const assignment = this.assignmentFor(occurrence.occurrenceId);
     if (!assignment) return;
-    const times = moveResourceOccurrenceByCivilMinutes(
+    const times = moveOccurrenceByCivilMinutes(
       occurrence, deltaMinutes, this.timeZone, this.overlapDisambiguation(),
     );
     if (!times) {
@@ -678,7 +679,7 @@ export class CalendarResourceSchedulerUi {
   ): Promise<void> {
     const assignment = this.assignmentFor(occurrence.occurrenceId);
     if (!assignment) return;
-    const times = resizeResourceOccurrenceByCivilMinutes(
+    const times = resizeOccurrenceByCivilMinutes(
       occurrence, edge, deltaMinutes, this.minimumDurationMinutes(), this.timeZone, this.overlapDisambiguation(),
     );
     if (!times) {
@@ -704,116 +705,31 @@ export class CalendarResourceSchedulerUi {
     const interaction = this.interaction;
     const projection = this.projection;
     if (!interaction || !projection || this.pendingOccurrences.has(occurrence.occurrenceId)) return;
-    const timeChanged = Date.parse(candidate.start) !== Date.parse(occurrence.start)
-      || Date.parse(candidate.end) !== Date.parse(occurrence.end);
-    const action = mode === "move"
-      ? (candidate.targetResourceId === sourceResourceId
-        ? "move"
-        : (timeChanged ? "resource-time-move" : "resource-reassign"))
-      : mode;
-    let scope: SeriesEditScope | null = "this";
-    try {
-      if (occurrence.recurring && interaction.resolveScope) {
-        scope = await interaction.resolveScope(occurrence, action);
-      }
-    } catch (error) {
-      this.reportError(error);
-      return;
-    }
-    if (scope === null) return;
-    if (!["this", "this-and-following", "all"].includes(scope)) {
-      this.reportError(new Error("Resource Scheduler interaction returned an invalid recurrence scope"));
-      return;
-    }
-    const request: CalendarResourcePlacementRequest = {
+
+    await runCalendarResourceInteractionLifecycle({
+      resources: projection.resources,
       occurrence,
       sourceResourceId,
-      targetResourceId: candidate.targetResourceId,
-      fromResourceIds: assignment.resourceIds,
-      toResourceIds: candidate.toResourceIds,
-      start: candidate.start,
-      end: candidate.end,
-      scope,
+      assignment,
+      mode,
+      candidate,
       timeZone: this.timeZone,
-      action,
-      ...(assignment.version === undefined ? {} : { assignmentVersion: assignment.version }),
-    };
-
-    this.setOccurrencePending(occurrence.occurrenceId, true);
-    let result: CalendarResourcePlacementExecutionResult | undefined;
-    try {
-      const executionOptions = this.executionOptionsFor(occurrence, false);
-      result = await executeCalendarResourcePlacement(projection.resources, request, executionOptions);
-      if (result.status === "warning" && interaction.confirmWarnings) {
-        let accepted = false;
-        try {
-          accepted = await interaction.confirmWarnings(result.evaluation.messages, request);
-        } catch (error) {
-          this.reportError(error);
-        }
-        if (accepted) {
-          result = await executeCalendarResourcePlacement(
-            projection.resources,
-            request,
-            this.executionOptionsFor(occurrence, true),
-          );
-        }
-      }
-    } catch (error) {
-      this.reportError(error);
-      this.announce(`${occurrence.title} was not changed.`);
-    }
-
-    if (result) {
-      try { interaction.onResult?.(result, request); } catch (error) { this.reportError(error); }
-      this.announce(this.resultAnnouncement(result, occurrence));
-      if (result.status === "committed" || result.status === "stale") {
-        try {
-          await this.refreshAuthoritativeProjection();
-        } catch (error) {
-          this.reportError(error);
-          if (result.status === "committed") this.announce(`${occurrence.title} changed, but authoritative refresh failed.`);
-        }
-      }
-    }
-    this.setOccurrencePending(occurrence.occurrenceId, false);
-    if (node.isConnected) node.focus();
-    else this.focusOccurrence(occurrence.occurrenceId, result?.status === "committed" ? candidate.targetResourceId : sourceResourceId);
-  }
-
-  private executionOptionsFor(
-    occurrence: CalendarOccurrence,
-    acceptWarnings: boolean,
-  ): CalendarResourcePlacementExecutionOptions {
-    const interaction = this.interaction;
-    if (!interaction) throw new Error("Resource Scheduler interaction is not configured");
-    return {
-      mutationPort: interaction.mutationPort,
-      ...(interaction.occurrenceCapabilityProvider === undefined ? {} : { occurrenceCapabilityProvider: interaction.occurrenceCapabilityProvider }),
-      ...(interaction.resourceCapabilityProvider === undefined ? {} : { resourceCapabilityProvider: interaction.resourceCapabilityProvider }),
-      ...(interaction.temporal === undefined ? {} : { temporal: interaction.temporal }),
-      ...(interaction.resourceGuards === undefined ? {} : { resourceGuards: interaction.resourceGuards }),
-      ...(interaction.resourceCollisionPolicy === undefined ? {} : { resourceCollisionPolicy: interaction.resourceCollisionPolicy }),
-      ...(interaction.loadResourceCollisionProjection === undefined ? {} : { loadResourceCollisionProjection: interaction.loadResourceCollisionProjection }),
-      ...(interaction.sourceForOccurrence === undefined ? {} : { source: interaction.sourceForOccurrence(occurrence) }),
-      acceptWarnings,
-    };
-  }
-
-  private resultAnnouncement(
-    result: CalendarResourcePlacementExecutionResult,
-    occurrence: CalendarOccurrence,
-  ): string {
-    if (result.status === "committed") return `${occurrence.title} changed.`;
-    if (result.status === "stale") return `${occurrence.title} changed elsewhere; refreshing authoritative data.`;
-    if (result.status === "warning") return result.evaluation.messages.join(" ");
-    if (result.status === "prevented") return result.evaluation.messages.join(" ");
-    return `${occurrence.title} is already in that position.`;
-  }
-
-  private async refreshAuthoritativeProjection(): Promise<void> {
-    const refreshed = await this.interaction?.refreshProjection?.();
-    if (refreshed) this.setProjection(refreshed);
+      executionOptions: interaction,
+      isPending: () => this.pendingOccurrences.has(occurrence.occurrenceId),
+      setPending: pending => this.setOccurrencePending(occurrence.occurrenceId, pending),
+      onResult: interaction.onResult,
+      refreshProjection: interaction.refreshProjection,
+      applyProjection: refreshed => this.setProjection(refreshed),
+      announce: message => this.announce(message),
+      reportError: error => this.reportError(error),
+      restoreFocus: result => {
+        if (node.isConnected) node.focus();
+        else this.focusOccurrence(
+          occurrence.occurrenceId,
+          result?.status === "committed" ? candidate.targetResourceId : sourceResourceId,
+        );
+      },
+    });
   }
 
   private focusOccurrence(occurrenceId: string, preferredResourceId?: CalendarResourceId): void {

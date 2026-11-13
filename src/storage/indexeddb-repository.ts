@@ -137,6 +137,8 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   private readonly initialSources: readonly CalendarSource[];
   private loaded = false;
   private db: IDBDatabase | null = null;
+  private openPromise: Promise<void> | null = null;
+  private lifecycleGeneration = 0;
   private channel: BroadcastChannel | null = null;
   private storageInvalidation: { readonly key: string; readonly dispose: () => void } | null = null;
   private refreshPromise: Promise<void> | null = null;
@@ -147,28 +149,47 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
     this.initialSources = materializeCalendarSnapshot(undefined, options.sources, [], 0).sources;
   }
 
-  public async open(): Promise<void> {
-    if (this.loaded) return;
+  public open(): Promise<void> {
+    if (this.loaded) return Promise.resolve();
+    if (this.openPromise) return this.openPromise;
+
+    const generation = this.lifecycleGeneration;
+    const operation = this.openForGeneration(generation);
+    this.openPromise = operation;
+    void operation.then(
+      () => { if (this.openPromise === operation) this.openPromise = null; },
+      () => { if (this.openPromise === operation) this.openPromise = null; },
+    );
+    return operation;
+  }
+
+  private async openForGeneration(generation: number): Promise<void> {
     let opened: IDBDatabase | null = null;
     try {
       opened = await openCalendarDatabase();
-      this.db = opened;
-      opened.onversionchange = () => this.close();
+      const persisted = await this.readPersistedState(opened);
+      if (generation !== this.lifecycleGeneration) {
+        throw new Error("IndexedDbCalendarRepository.open() was cancelled by close()");
+      }
 
-      const persisted = await this.readPersistedState();
-      this.snapshotValue = persisted
+      const snapshot = persisted
         ? materializeCalendarSnapshot(undefined, persisted.sources, persisted.items, persisted.revision)
         : materializeCalendarSnapshot(undefined, this.initialSources, [], 0);
-
+      opened.onversionchange = () => this.close();
+      this.db = opened;
+      this.snapshotValue = snapshot;
       this.loaded = true;
       this.openInvalidationChannel();
     } catch (error) {
-      this.closeInvalidationChannel();
       opened?.close();
-      if (this.db === opened) this.db = null;
-      this.snapshotValue = undefined;
-      this.loaded = false;
-      this.refreshPromise = null;
+      if (generation === this.lifecycleGeneration) {
+        this.closeInvalidationChannel();
+        if (this.db === opened) this.db = null;
+        this.snapshotValue = undefined;
+        this.loaded = false;
+        this.refreshPromise = null;
+        this.requestedRefreshRevision = -1;
+      }
       throw error;
     }
   }
@@ -180,6 +201,8 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
 
   /** Release the browser database handle. The repository may be opened again later. */
   public close(): void {
+    this.lifecycleGeneration += 1;
+    this.openPromise = null;
     this.closeInvalidationChannel();
     this.db?.close();
     this.db = null;
@@ -324,8 +347,11 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   }
 
   private requestRevisionCheck(): void {
-    void this.readPersistedRevision().then(revision => {
-      if (!this.loaded || revision <= this.read().revision) return;
+    const generation = this.lifecycleGeneration;
+    const database = this.db;
+    if (!database) return;
+    void this.readPersistedRevision(database).then(revision => {
+      if (!this.loaded || generation !== this.lifecycleGeneration || revision <= this.read().revision) return;
       this.requestReload(revision);
     }).catch(() => {
       // Advisory freshness check only; the next signal or poll can retry.
@@ -402,16 +428,24 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
   }
 
   private async reloadFromStorage(minimumRevision = -1): Promise<void> {
-    if (!this.loaded) return;
+    const generation = this.lifecycleGeneration;
+    const database = this.db;
+    if (!this.loaded || !database) return;
     this.requestedRefreshRevision = Math.max(this.requestedRefreshRevision, minimumRevision);
     if (this.refreshPromise) return await this.refreshPromise;
 
-    this.refreshPromise = (async () => {
-      while (this.loaded) {
+    const operation = (async () => {
+      while (this.loaded && generation === this.lifecycleGeneration) {
         this.requestedRefreshRevision = -1;
 
-        const persisted = await this.readPersistedState();
-        if (!this.loaded) return;
+        let persisted: PersistedCalendarState | undefined;
+        try {
+          persisted = await this.readPersistedState(database);
+        } catch (error) {
+          if (!this.loaded || generation !== this.lifecycleGeneration) return;
+          throw error;
+        }
+        if (!this.loaded || generation !== this.lifecycleGeneration) return;
         if (persisted) {
           const current = this.read();
           if (persisted.revision > current.revision) {
@@ -427,18 +461,19 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
         }
       }
     })();
+    this.refreshPromise = operation;
     try {
-      await this.refreshPromise;
+      await operation;
     } finally {
-      this.refreshPromise = null;
-      if (!this.loaded) this.requestedRefreshRevision = -1;
+      if (this.refreshPromise === operation) this.refreshPromise = null;
+      if (generation === this.lifecycleGeneration && !this.loaded) this.requestedRefreshRevision = -1;
     }
   }
 
-  private async readPersistedRevision(): Promise<number> {
-    if (!this.db) throw new Error("Calendar IndexedDB is not open");
+  private async readPersistedRevision(database: IDBDatabase | null = this.db): Promise<number> {
+    if (!database) throw new Error("Calendar IndexedDB is not open");
     const value = await new Promise<unknown>((resolve, reject) => {
-      const tx = openCalendarTransaction(this.db!, CALENDAR_STORE_NAME, "readonly");
+      const tx = openCalendarTransaction(database, CALENDAR_STORE_NAME, "readonly");
       const request = tx.objectStore(CALENDAR_STORE_NAME).get(META_KEY);
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error ?? new Error("Could not read Calendar revision"));
@@ -446,10 +481,10 @@ export class IndexedDbCalendarRepository implements CalendarRepository {
     return storedMeta(value)?.revision ?? 0;
   }
 
-  private async readPersistedState(): Promise<PersistedCalendarState | undefined> {
-    if (!this.db) throw new Error("Calendar IndexedDB is not open");
+  private async readPersistedState(database: IDBDatabase | null = this.db): Promise<PersistedCalendarState | undefined> {
+    if (!database) throw new Error("Calendar IndexedDB is not open");
     const records = await new Promise<unknown[]>((resolve, reject) => {
-      const tx = openCalendarTransaction(this.db!, CALENDAR_STORE_NAME, "readonly");
+      const tx = openCalendarTransaction(database, CALENDAR_STORE_NAME, "readonly");
       const request = tx.objectStore(CALENDAR_STORE_NAME).getAll();
       request.onsuccess = () => resolve(request.result as unknown[]);
       request.onerror = () => reject(request.error ?? new Error("Could not read Calendar storage"));

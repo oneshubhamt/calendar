@@ -77,7 +77,7 @@ export class MemorySyncStateStore implements SyncStateStore {
 }
 
 export interface SyncDecision {
-  readonly action: "none" | "apply-remote" | "push-local" | "delete-local" | "delete-remote" | "conflict";
+  readonly action: "none" | "rebase" | "apply-remote" | "push-local" | "delete-local" | "delete-remote" | "conflict";
   readonly conflict?: SyncConflict | undefined;
 }
 
@@ -113,6 +113,10 @@ export function decideSync(
   const remoteDeleted = !remote || remote.deleted;
   const localDeleted = !local;
 
+  // A failed checkpoint can leave both sides already converged while the persisted
+  // baselines still describe the older state. Rebase that stale checkpoint instead
+  // of manufacturing a both-modified conflict on retry.
+  if ((localChanged || remoteChanged) && localFingerprint === remoteFingerprint) return { action: "rebase" };
   if (!localChanged && !remoteChanged) return { action: "none" };
   if (localDeleted && remoteDeleted) return { action: "none" };
   if (localDeleted && remoteChanged && !remoteDeleted) {
@@ -220,7 +224,9 @@ export function linkAfterSync(
     identity: remote.identity,
     baseLocalFingerprint: fingerprintCalendarItem(localItem),
     baseRemoteFingerprint: remote.fingerprint,
-    ...(remote.item ? { baseRemoteItem: remote.item } : {}),
+    // Only recurring masters need the prior remote projection to fold detached-instance
+    // deltas on a later incremental pull. Ordinary links keep fingerprints only.
+    ...(remote.item?.recurrence ? { baseRemoteItem: remote.item } : {}),
     status: "clean",
     lastSyncedAt: now,
   };

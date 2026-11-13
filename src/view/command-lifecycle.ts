@@ -9,6 +9,10 @@ export interface CalendarCommandLifecycleHooks {
   readonly onRefreshError?: (error: unknown) => void;
 }
 
+function notifyLifecycleHook(run: (() => void) | undefined): void {
+  try { run?.(); } catch { /* presentation/notification hooks cannot redefine mutation completion */ }
+}
+
 /** Small generic coordinator for one authoritative command at a time per occurrence/group. */
 export class CalendarCommandLifecycle {
   private readonly pending = new Map<string, string>();
@@ -30,31 +34,35 @@ export class CalendarCommandLifecycle {
   ): Promise<CalendarCommandLifecycleStatus> {
     if (this.pending.has(group)) return "suppressed";
     this.pending.set(group, operation);
-    hooks.onPendingChange?.(group, operation, true);
+    notifyLifecycleHook(() => hooks.onPendingChange?.(group, operation, true));
 
+    let rejected = false;
     let rejection: unknown;
     try {
       await task();
     } catch (error) {
+      rejected = true;
       rejection = error;
     }
 
+    let refreshFailed = false;
     let refreshFailure: unknown;
     try {
       await hooks.refresh?.();
     } catch (error) {
+      refreshFailed = true;
       refreshFailure = error;
     } finally {
       this.pending.delete(group);
-      hooks.onPendingChange?.(group, operation, false);
+      notifyLifecycleHook(() => hooks.onPendingChange?.(group, operation, false));
     }
 
-    if (rejection !== undefined) {
-      hooks.onError?.(rejection);
+    if (rejected) {
+      notifyLifecycleHook(() => hooks.onError?.(rejection));
       return "rejected";
     }
-    if (refreshFailure !== undefined) {
-      hooks.onRefreshError?.(refreshFailure);
+    if (refreshFailed) {
+      notifyLifecycleHook(() => hooks.onRefreshError?.(refreshFailure));
       return "committed-refresh-failed";
     }
     return "completed";
