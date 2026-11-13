@@ -1979,3 +1979,17 @@ test("embedded Calendar contains owned DOM, themes opt in, and base styles do no
   expect(result.hostChildrenAfterDestroy).toBe(0);
   expect(result.outsideConnectedAfterDestroy).toBe(true);
 });
+
+test("aggregate sandbox retains Revision Director overdue indicators with its Calendar host extension", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-11-09T10:00:00.000Z"));
+  await page.goto("/tests/browser/harness.html");
+  await page.evaluate(async () => {
+    const { mountDirectorCalendarSandbox } = await import("/dist/demo/sandbox.js");
+    const host = document.getElementById("browser-test-host");
+    const calendar = mountDirectorCalendarSandbox(host);
+    await calendar.refresh();
+  });
+  const overdue = page.locator(".revision-director-overdue").first();
+  await expect(overdue).toBeVisible();
+  await expect(overdue).toContainText("Overdue");
+});
