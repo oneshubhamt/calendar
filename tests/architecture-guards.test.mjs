@@ -205,6 +205,8 @@ test("Director live adapters consume Calendar-facing host projections without sc
   assert.match(common, /class CalendarIntegrationInvalidationNotifier/);
   assert.doesNotMatch(practice + revision, /setInterval\(|setTimeout\(/);
   assert.match(ecosystem, /Convenience composition for a central\/aggregate Director Calendar surface/);
+  const sandbox = await read("../src/demo/sandbox.ts");
+  assert.match(sandbox, /fixture\.ecosystem\.createUiExtensions\(\)/);
 });
 
 test("external drop remains a view-layer creation boundary rather than a persistence path", async () => {
