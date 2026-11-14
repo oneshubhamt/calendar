@@ -138,6 +138,33 @@ test("seeded resource layouts are permutation-independent bounded and collision-
     assert.equal(new Set(timeline.map(row => row.renderId)).size, expectedRenderCount);
     assert.equal(new Set(grid.timed.map(row => row.renderId)).size, expectedRenderCount);
 
+    for (const resourceId of roomIds) {
+      const scopedAssignments = assignments
+        .filter(assignment => assignment.resourceIds.includes(resourceId))
+        .map(assignment => ({ occurrenceId: assignment.occurrenceId, resourceIds: [resourceId] }));
+      const scopedTimeline = layoutResourceTimeline(resources, occurrences, scopedAssignments, RANGE, { timeZone: "UTC" });
+      const fullTimelineRows = timeline
+        .filter(row => row.resourceId === resourceId)
+        .map(row => [row.occurrenceId, row.xMinutes, row.widthMinutes, row.lane, row.laneCount]);
+      const scopedTimelineRows = scopedTimeline
+        .filter(row => row.resourceId === resourceId)
+        .map(row => [row.occurrenceId, row.xMinutes, row.widthMinutes, row.lane, row.laneCount]);
+      assert.deepEqual(scopedTimelineRows, fullTimelineRows, "unrelated resources must not perturb timeline lanes for seed " + seed);
+
+      const scopedGrid = layoutResourceTimeGrid(resources, occurrences, scopedAssignments, DAY_RANGE, {
+        timeZone: "UTC",
+        startMinute: 8 * 60,
+        endMinute: 18 * 60,
+      });
+      const fullGridRows = grid.timed
+        .filter(row => row.resourceId === resourceId)
+        .map(row => [row.occurrenceId, row.topMinutes, row.heightMinutes, row.column, row.columnCount]);
+      const scopedGridRows = scopedGrid.timed
+        .filter(row => row.resourceId === resourceId)
+        .map(row => [row.occurrenceId, row.topMinutes, row.heightMinutes, row.column, row.columnCount]);
+      assert.deepEqual(scopedGridRows, fullGridRows, "unrelated resources must not perturb time-grid lanes for seed " + seed);
+    }
+
     for (const row of timeline) {
       assert.ok(row.xMinutes >= 0, "timeline x lower bound seed " + seed);
       assert.ok(row.widthMinutes > 0, "timeline interval width seed " + seed);
