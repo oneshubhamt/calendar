@@ -10,12 +10,6 @@ import { makeCalendarItem, makePersonalSource } from './fixtures/domain.mjs';
 const source=makePersonalSource();
 const event=(patch={})=>makeCalendarItem({ownership:'host-owned',...patch});
 
-test('sync fingerprints are canonical across equivalent property insertion order',()=>{
-  const first=event({recurrence:{rule:{frequency:'weekly',interval:2,byDay:[{weekday:1},{weekday:3}]}}});
-  const second=event({recurrence:{rule:{byDay:[{weekday:1},{weekday:3}],interval:2,frequency:'weekly'}}});
-  assert.equal(Sync.fingerprintCalendarItem(first),Sync.fingerprintCalendarItem(second));
-});
-
 test('sync links retain full remote baselines only for recurring series',()=>{
   const ordinary=event();
   const identity={provider:'google',connectionId:'c',externalCalendarId:'remote',eventId:'g1'};

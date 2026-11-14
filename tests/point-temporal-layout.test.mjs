@@ -79,13 +79,6 @@ test('point values participate in month/year day buckets and agenda ordering at 
   assert.deepEqual(agenda[0].occurrences.map(row=>row.sourceItemId),['early','duration','later']);
 });
 
-test('points do not become scheduling-duration collisions',()=>{
-  const marker=occurrence(point({id:'marker'}));
-  const block=occurrence(item({id:'block',start:'2026-11-09T14:30:00.000Z',end:'2026-11-09T15:30:00.000Z'}));
-  assert.deepEqual(C.placementCollisions([block],new Date(marker.start),new Date(marker.end),false,{mode:'prevent'}),[]);
-  assert.deepEqual(C.placementCollisions([marker],new Date(block.start),new Date(block.end),false,{mode:'prevent'}),[]);
-});
-
 test('point geometry disables resize and all-day conversion even on the trusted-host path',()=>{
   const marker=occurrence(point({editPolicy:'readonly'}));
   const lockedSource={...source,readOnly:true};

@@ -64,27 +64,6 @@ test("rejects invalid assignment projections including duplicates, unknown IDs, 
   assert.deepEqual(validateCalendarResourceAssignments(resources,occurrences,[]),[]);
 });
 
-test("stable multi-resource associations preserve all assignments independent of projection order",()=>{
-  const assignments=[
-    {occurrenceId:"z",resourceIds:["doctor","roomB","roomA"],version:{revision:7}},
-    {occurrenceId:"a",resourceIds:["roomB"]},
-  ];
-  const normalized=validateCalendarResourceAssignments(resources,occurrences,assignments);
-  assert.deepEqual(normalized.map(x=>[x.occurrenceId,x.resourceIds]),[
-    ["a",["roomB"]],["z",["roomA","roomB","doctor"]],
-  ]);
-  const pairs=associateCalendarResources(resources,occurrences,assignments);
-  assert.deepEqual(pairs.map(x=>[x.resourceId,x.occurrenceId]),[
-    ["roomA","z"],["roomB","a"],["roomB","z"],["doctor","z"],
-  ]);
-  assert.deepEqual(associateCalendarResources([...resources].reverse(),[...occurrences].reverse(),[...assignments].reverse())
-    .map(x=>[x.resourceId,x.occurrenceId]),pairs.map(x=>[x.resourceId,x.occurrenceId]));
-  assert.deepEqual(pairs.find(x=>x.resourceId==="roomA").assignmentVersion,{revision:7});
-  assert.equal(pairs.some(x=>x.occurrenceId==="unassigned"),false);
-  assert.deepEqual(assignments[0].resourceIds,["doctor","roomB","roomA"],"must not mutate host state");
-});
-
-
 test("flattening remains stack-safe and deterministic for a very deep valid hierarchy",()=>{
   const depth=12000;
   const deep=Array.from({length:depth},(_,index)=>({
