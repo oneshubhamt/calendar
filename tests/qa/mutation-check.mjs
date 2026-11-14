@@ -27,7 +27,7 @@ const mutations = [
     name: "recurrence COUNT leaks an extra occurrence",
     file: "dist/core/recurrence.js",
     from: /yielded\s*>=\s*\(rule\.count\s*\?\?\s*MAX_OCCURRENCES\)/,
-    to: "if (yielded > (rule.count ?? MAX_OCCURRENCES)) return;",
+    to: "yielded > (rule.count ?? MAX_OCCURRENCES)",
     test: "tests/node/temporal/mathematical-invariants.test.mjs",
     title: "UTC daily and weekly recurrence matches an independent civil-date enumeration across leap and year boundaries",
   },
