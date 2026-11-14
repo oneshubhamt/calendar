@@ -140,4 +140,39 @@ export const requiredInvariants = Object.freeze([
       { kind: "browser", id: "visual.resource-grid" },
     ]),
   },
+  {
+    id: "state.seeded-reference-machine",
+    risk: "state",
+    witnesses: Object.freeze([
+      { kind: "node", file: "tests/node/engine/state-machine.test.mjs", title: "seeded calendar state machine agrees with an independent reference model across mutation history and refresh" },
+    ]),
+  },
+  {
+    id: "state.staged-multi-record-rollback",
+    risk: "state",
+    witnesses: Object.freeze([
+      { kind: "node", file: "tests/node/engine/state-machine.test.mjs", title: "multi-record recurrence split rolls back completely when staged tail creation fails" },
+    ]),
+  },
+  {
+    id: "temporal.monthly-yearly-reference-oracle",
+    risk: "temporal",
+    witnesses: Object.freeze([
+      { kind: "node", file: "tests/node/temporal/mathematical-invariants.test.mjs", title: "monthly and yearly recurrence match an independent bounded UTC oracle including filters limits exceptions and partitions" },
+    ]),
+  },
+  {
+    id: "resources.seeded-layout-invariants",
+    risk: "resources",
+    witnesses: Object.freeze([
+      { kind: "node", file: "tests/node/resources/generated-invariants.test.mjs", title: "seeded resource layouts are permutation-independent bounded and collision-safe" },
+    ]),
+  },
+  {
+    id: "resources.atomic-host-state",
+    risk: "resources",
+    witnesses: Object.freeze([
+      { kind: "node", file: "tests/node/resources/generated-invariants.test.mjs", title: "seeded resource placement outcomes preserve atomic host state on warning prevention and stale rejection" },
+    ]),
+  },
 ]);
