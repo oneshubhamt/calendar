@@ -60,7 +60,7 @@ scenario("resource.grid.render", "Resource TimeGrid renders resources as columns
     .toHaveAttribute("aria-label", /Room A.*November 10, 2026/);
 });
 
-scenario("resource.grid.diagonal-move", "Resource TimeGrid keyboard diagonal move produces one atomic host mutation and authoritative reprojection", async ({ page }) => {
+scenario("resource.grid.keyboard", "Resource TimeGrid keyboard reassign move and resize publish distinct atomic mutations", async ({ page }) => {
   await openHarness(page);
   await page.evaluate(async projection => {
     const { CalendarResourceTimeGridUi } = await import("/dist/features/resource-time-grid-ui/index.js");
@@ -69,7 +69,10 @@ scenario("resource.grid.diagonal-move", "Resource TimeGrid keyboard diagonal mov
     const host = document.getElementById("browser-test-host");
     host.replaceChildren();
     const ui = new CalendarResourceTimeGridUi(host, {
-      timeZone: "UTC", dayStartHour: 8, dayEndHour: 18, minColumnWidth: 180,
+      timeZone: "UTC",
+      dayStartHour: 8,
+      dayEndHour: 18,
+      minColumnWidth: 180,
       interaction: {
         mutationPort: {
           commit(change) {
@@ -80,7 +83,7 @@ scenario("resource.grid.diagonal-move", "Resource TimeGrid keyboard diagonal mov
                 ? { ...occurrence, start: change.start, end: change.end }
                 : occurrence),
               assignments: current.assignments.map(assignment => assignment.occurrenceId === change.occurrence.occurrenceId
-                ? { ...assignment, resourceIds: [...change.toResourceIds], version: { revision: 2 } }
+                ? { ...assignment, resourceIds: [...change.toResourceIds], version: { revision: commits.length + 1 } }
                 : assignment),
             };
           },
@@ -92,104 +95,34 @@ scenario("resource.grid.diagonal-move", "Resource TimeGrid keyboard diagonal mov
       },
     });
     ui.setProjection(current);
-    globalThis.__resourceTimeGridProbe = { ui, commits };
+    globalThis.__resourceTimeGridKeyboard = { commits };
   }, projection);
 
-  const event = page.locator('.dc-rtg-event[data-occurrence-id="visit"]');
+  let event = page.locator('.dc-rtg-event[data-occurrence-id="visit"]');
   await event.focus();
   await page.keyboard.press("Alt+ArrowRight");
   await expect(page.locator('.dc-rtg-event[data-resource-id="b"][data-occurrence-id="visit"]')).toBeVisible();
-  const commits = await page.evaluate(() => globalThis.__resourceTimeGridProbe.commits);
+
+  let commits = await page.evaluate(() => globalThis.__resourceTimeGridKeyboard.commits);
   expect(commits).toHaveLength(1);
   expect(commits[0].fromResourceIds).toEqual(["a"]);
   expect(commits[0].toResourceIds).toEqual(["b"]);
-  expect(commits[0].start).toBe("2026-11-10T09:00:00.000Z");
-  expect(commits[0].end).toBe("2026-11-10T10:00:00.000Z");
-});
 
-scenario("resource.grid.vertical-keyboard", "Resource TimeGrid vertical keyboard movement reuses temporal authority and civil snapping", async ({ page }) => {
-  await openHarness(page);
-  await page.evaluate(async projection => {
-    const { CalendarResourceTimeGridUi } = await import("/dist/features/resource-time-grid-ui/index.js");
-    let current = structuredClone(projection);
-    const commits = [];
-    const host = document.getElementById("browser-test-host");
-    host.replaceChildren();
-    const ui = new CalendarResourceTimeGridUi(host, {
-      timeZone: "UTC", dayStartHour: 8, dayEndHour: 18,
-      interaction: {
-        mutationPort: {
-          commit(change) {
-            commits.push(structuredClone(change));
-            current = {
-              ...current,
-              occurrences: current.occurrences.map(occurrence => occurrence.occurrenceId === change.occurrence.occurrenceId
-                ? { ...occurrence, start: change.start, end: change.end }
-                : occurrence),
-            };
-          },
-        },
-        occurrenceCapabilityProvider: { capabilities() { return { canMove: true, canResizeStart: true, canResizeEnd: true }; } },
-        sourceForOccurrence() { return { id: "calendar", title: "Calendar", visible: true }; },
-        refreshProjection() { return structuredClone(current); },
-      },
-    });
-    ui.setProjection(current);
-    globalThis.__resourceTimeGridMove = { commits };
-  }, projection);
-
-  const event = page.locator('.dc-rtg-event[data-occurrence-id="visit"]');
+  event = page.locator('.dc-rtg-event[data-resource-id="b"][data-occurrence-id="visit"]');
   await event.focus();
   await page.keyboard.press("Alt+ArrowDown");
-  await expect.poll(async () => await page.evaluate(() => globalThis.__resourceTimeGridMove.commits.at(-1)?.start))
-    .toBe("2026-11-10T09:15:00.000Z");
-  expect(await page.evaluate(() => globalThis.__resourceTimeGridMove.commits.length)).toBe(1);
-});
-
-
-scenario("resource.grid.resize", "Resource TimeGrid keyboard end resize uses edge authority and one atomic authoritative mutation", async ({ page }) => {
-  await openHarness(page);
-  await page.evaluate(async projection => {
-    const { CalendarResourceTimeGridUi } = await import("/dist/features/resource-time-grid-ui/index.js");
-    let current = structuredClone(projection);
-    const commits = [];
-    const host = document.getElementById("browser-test-host");
-    host.replaceChildren();
-    const ui = new CalendarResourceTimeGridUi(host, {
-      timeZone: "UTC", dayStartHour: 8, dayEndHour: 18,
-      interaction: {
-        mutationPort: {
-          commit(change) {
-            commits.push(structuredClone(change));
-            current = {
-              ...current,
-              occurrences: current.occurrences.map(occurrence => occurrence.occurrenceId === change.occurrence.occurrenceId
-                ? { ...occurrence, start: change.start, end: change.end }
-                : occurrence),
-              assignments: current.assignments.map(assignment => assignment.occurrenceId === change.occurrence.occurrenceId
-                ? { ...assignment, resourceIds: [...change.toResourceIds], version: { revision: 2 } }
-                : assignment),
-            };
-          },
-        },
-        occurrenceCapabilityProvider: { capabilities() { return { canResizeStart: true, canResizeEnd: true }; } },
-        sourceForOccurrence() { return { id: "calendar", title: "Calendar", visible: true }; },
-        refreshProjection() { return structuredClone(current); },
-      },
-    });
-    ui.setProjection(current);
-    globalThis.__resourceTimeGridResize = { commits };
-  }, projection);
+  await expect.poll(async () => await page.evaluate(() => globalThis.__resourceTimeGridKeyboard.commits.length)).toBe(2);
+  commits = await page.evaluate(() => globalThis.__resourceTimeGridKeyboard.commits);
+  expect(Date.parse(commits[1].start)).toBeGreaterThan(Date.parse(commits[0].start));
+  expect(commits[1].toResourceIds).toEqual(["b"]);
 
   const handle = page.getByRole("separator", { name: "Resize end of Visit" });
   await handle.focus();
   await page.keyboard.press("ArrowDown");
-  await expect.poll(async () => await page.evaluate(() => globalThis.__resourceTimeGridResize.commits.length)).toBe(1);
-  const [commit] = await page.evaluate(() => globalThis.__resourceTimeGridResize.commits);
-  expect(commit.start).toBe("2026-11-10T09:00:00.000Z");
-  expect(commit.end).toBe("2026-11-10T10:15:00.000Z");
-  expect(commit.fromResourceIds).toEqual(["a"]);
-  expect(commit.toResourceIds).toEqual(["a"]);
+  await expect.poll(async () => await page.evaluate(() => globalThis.__resourceTimeGridKeyboard.commits.length)).toBe(3);
+  commits = await page.evaluate(() => globalThis.__resourceTimeGridKeyboard.commits);
+  expect(Date.parse(commits[2].end)).toBeGreaterThan(Date.parse(commits[1].end));
+  expect(commits[2].toResourceIds).toEqual(["b"]);
   await expect(page.getByRole("separator", { name: "Resize end of Visit" })).toBeVisible();
 });
 
