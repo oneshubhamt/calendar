@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import * as C from '../../../dist/index.js';
 import * as Personal from '../../../dist/features/personal.js';
 import * as Availability from '../../../dist/features/availability.js';
@@ -94,9 +93,6 @@ test('generic public API uses application-neutral primary names',()=>{
   assert.equal(typeof C.CalendarEngine,'function');
   assert.equal(typeof C.CalendarUi,'function');
   assert.equal(typeof C.CALENDAR_CSS,'string');
-  assert.equal('DirectorCalendarEngine' in C,false);
-  assert.equal('DirectorCalendar' in C,false);
-  assert.equal('DIRECTOR_CALENDAR_CSS' in C,false);
 });
 
 test('host projection invalidations participate in engine subscriptions without owning storage',()=>{
@@ -240,8 +236,6 @@ test('availability definitions fail closed and remain an optional feature bounda
   const root=await import('../../../dist/index.js');
   assert.equal('expandAvailabilityDefinitions' in root,false);
   assert.equal('createAvailabilityBackgroundProvider' in root,false);
-  const pkg=JSON.parse(await fs.readFile(new URL('../../../package.json',import.meta.url),'utf8'));
-  assert.equal(pkg.exports['./features/availability'].import,'./dist/features/availability.js');
 });
 
 

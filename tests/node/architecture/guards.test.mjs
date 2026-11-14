@@ -115,19 +115,3 @@ test("recurrence, availability, external-drop and background boundaries stay one
   assertNoDependenciesInto(graph, ["view/external-drop.ts"], ["storage/", "interoperability/", "integration/", "adapters/"]);
   assertNoDependenciesInto(graph, [...idsUnder(graph, "storage/"), ...idsUnder(graph, "interoperability/")], ["view/external-drop.ts"]);
 });
-
-test("published package contract remains production-only", async () => {
-  const pkg = JSON.parse(await read("../../../package.json"));
-  assert.deepEqual(pkg.files, ["dist", "docs/ARCHITECTURE.md", "README.md"]);
-  assert.equal(Object.hasOwn(pkg.exports, "../../fixtures/director"), false);
-  assert.equal(Object.hasOwn(pkg.exports, "./package-contract"), false);
-  for (const [subpath, target] of Object.entries(pkg.exports)) {
-    assert.equal(typeof target?.import, "string", `${subpath} must publish an import target`);
-    assert.equal(typeof target?.types, "string", `${subpath} must publish a type target`);
-    assert.equal(target.import.startsWith("./dist/"), true, `${subpath} import must come from dist`);
-    assert.equal(target.types.startsWith("./dist/"), true, `${subpath} types must come from dist`);
-    // Test resolved public artifacts, not the absence of a historical output filename.
-    await fs.access(new URL(`../../../${target.import.slice(2)}`, import.meta.url));
-    await fs.access(new URL(`../../../${target.types.slice(2)}`, import.meta.url));
-  }
-});

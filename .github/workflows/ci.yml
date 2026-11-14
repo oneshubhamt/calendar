@@ -60,8 +60,7 @@ jobs:
         if: github.ref == 'refs/heads/main' || github.base_ref == 'main' || inputs.full == true
         run: npm run check:full
 
-      - name: Executable coverage and lane census
-        if: github.ref == 'refs/heads/main' || github.base_ref == 'main' || inputs.full == true || inputs.mutation == true
+      - name: Invariant witness and lane coverage
         run: npm run qa:coverage
 
       - name: Selective fault injection

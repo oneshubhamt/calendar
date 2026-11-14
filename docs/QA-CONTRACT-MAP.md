@@ -482,3 +482,72 @@ The **4.5 s WebKit foreground-fallback interval** is an outlier and should be re
 4. **Runtime profiled:** all 25 Node modules and all 55 browser scenarios have measured current-run cost evidence.
 5. **Removal ledger is safe:** every proposed deletion names a surviving witness. Partial overlaps are explicitly marked consolidation-only.
 6. **Scope respected:** production and executable QA remain untouched in Pass E. Pass F may now perform the mechanical cleanup against this ledger, assertion by assertion.
+
+
+## Pass F — canonical test structure and assertion cleanup (2026-11-14)
+
+**Implementation source:** `qa-pass-f`, based on `working@c4662f4bf2769acf24d71f4b614244007fdebbdc`. Production `src/` remains untouched. Pass F implements the Pass E removal/consolidation ledger rather than optimizing for a target test count.
+
+### Browser test-body cleanup
+
+The two largest rendering specs now keep **expectations and scenario narrative in the spec** while moving only setup mechanics, host fixtures and reusable browser operations into explicit support modules:
+
+| Scenario owner | Before | After | Extracted setup |
+|---|---:|---:|---|
+| `rendering/custom-views.spec.mjs` | ~730 lines | **234 lines** | `support/custom-view-fixtures.mjs`: four named mount/lifecycle helpers |
+| `rendering/external-drop.spec.mjs` | ~448 lines | **162 lines** | `support/external-drop-fixtures.mjs`: authorized-drop mount + default-off probe |
+
+The support modules contain no assertions and expose no mini test framework. The scenarios still state the observable DOM, mutation, authority, range, responsive, disposal and default-off expectations directly. All six original scenario IDs remain unchanged.
+
+### Node engine ownership
+
+The former ~780-line `engine/core.test.mjs` is split by behaviour rather than chronology:
+
+- `engine/semantics.test.mjs`: **16** semantic engine contracts — canonical values, recurrence/series behaviour, placement/background geometry, source/item policy, planning/personal boundaries, invalidation generation and occurrence identity.
+- `engine/repository-mutations.test.mjs`: **11** repository/mutation contracts — snapshot ownership, guarded commit, independent CAS state model, delta undo/redo, history staging and observer/subscriber failure isolation.
+
+The split preserves the original 27 engine cases. The stale-revision mutation witness now points to the mutation-owned suite.
+
+### Assertion cleanup from the Pass E ledger
+
+Removed only evidence already superseded by a stronger witness:
+
+- the duplicate architecture test that pinned exact `package.files` and export-target string shape; real `npm pack --dry-run` manifest verification remains canonical;
+- historical negative API-name probes for `DirectorCalendarEngine`, `DirectorCalendar` and `DIRECTOR_CALENDAR_CSS`; positive generic API contracts remain;
+- the literal availability export-path assertion; explicit optional-subpath/root-boundary and real archive resolution remain;
+- exact `tsconfig.package.exclude` array equality; full-build/package-build parity and archive leakage checks remain.
+
+No mathematical, authority, IndexedDB, cross-tab, pointer/keyboard or accessibility witness was removed.
+
+### Invariant/witness registry replaces numeric census
+
+`tests/qa/witness-registry.mjs` now defines **15 required invariants** across architecture, temporal, state, authority, integration, persistence, interoperability, resources, presentation and visual risk classes.
+
+`tests/qa/coverage-audit.mjs` now verifies semantic contracts instead of arbitrary totals:
+
+1. every required invariant declares at least one executable Node, browser or QA-script witness;
+2. every referenced witness exists in executable source;
+3. every browser scenario ID is declared exactly once and the executable scenario set equals the scenario registry;
+4. routine smoke and release browser discovery match their scenario-tag membership as sets, not counts;
+5. the combined routine lane covers every routine-required risk class, and the release lane additionally covers visual evidence.
+
+The invariant audit now runs on ordinary CI as well as release CI. Cross/visual helper lanes remain selectable but are no longer invoked merely to prove historical execution totals.
+
+### Targeted verification during Pass F
+
+Permanent QA selection was not widened. For verification only, two release-only refactored scenarios were temporarily tagged into Chromium smoke and the four mutation injections were temporarily enabled; both changes were reverted after evidence was collected.
+
+- Routine CI on the refactored tree: **210 declarations = 206 pass + 4 deliberate deep skips**, ~**1.26 s** Node runner; package manifest **185 files / 31 export subpaths**; all **15 invariant-registry contracts** and required routine/release risk classes verified.
+- Normal browser smoke passed before the temporary QA expansion.
+- Targeted expanded browser smoke passed **55/55**, explicitly including custom-view disposal and default-off external-drop/print behaviour.
+- Selective mutation verification detected **4/4** injected defects: half-open interval boundary, stale CAS guard, recurrence COUNT leak and prefer-local sync deletion error; compiled artifacts were restored and hash-checked.
+- Temporary smoke tags and unconditional mutation execution were then removed; canonical routine selection and mutation opt-in policy are restored.
+
+### Pass F reconciliation
+
+- **Canonical structure:** large scenario bodies now emphasize behaviour; setup mechanics are named and centralized without hiding expectations.
+- **Node readability:** general engine semantics and repository mutation/history evidence have distinct owners.
+- **Evidence quality:** superficial numeric, historical-name and package-string checks are gone; stronger publication and behavioural witnesses survive.
+- **No count fetish:** declaration/file totals may now change without failing QA when invariant coverage remains intact.
+- **Routine protection:** semantic invariant/lane coverage is enforced on ordinary CI.
+- **CLEER outcome:** less spec-body duplication and weaker assertion debt, with no production behaviour change and no loss of independent mathematical or browser failure domains.
