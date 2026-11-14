@@ -53,16 +53,14 @@ jobs:
           test "$(npx tsc --version)" = "Version 7.0.2"
 
       - name: Fast single-build QA
-        if: github.ref != 'refs/heads/main' && github.base_ref != 'main' && inputs.full != true
+        if: false
         run: npm run check:fast
 
       - name: Full native package/parity QA
-        if: github.ref == 'refs/heads/main' || github.base_ref == 'main' || inputs.full == true
         run: npm run check:full
 
       - name: Invariant witness and lane coverage
         run: npm run qa:coverage
 
       - name: Selective fault injection
-        if: inputs.mutation == true
         run: npm run qa:mutation
