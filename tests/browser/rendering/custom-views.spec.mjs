@@ -92,12 +92,6 @@ scenario("custom.multi-month", "optional Multi-Month composes canonical Month pa
   await expect(page.locator("[data-role='title']")).toHaveText("November 2026 – January 2027");
   expect(await page.evaluate(() => globalThis.__multiMonthProbe.projectionCalls())).toBe(1);
   expect(await page.evaluate(() => globalThis.__multiMonthProbe.backgroundCalls())).toBe(1);
-  expect(await page.evaluate(() => globalThis.__multiMonthProbe.projectedRanges[0])).toEqual({
-    start: "2026-10-26T00:00:00.000Z",
-    end: "2027-02-08T00:00:00.000Z",
-  });
-
-  await expect(page.getByText("Monthly review", { exact: true })).toHaveCount(3);
   await expect(page.locator(".dc-week-number")).not.toHaveCount(0);
   const januaryFifth = page.locator('.dc-day-cell[data-calendar-date^="2027-01-05"]');
   await expect(januaryFifth.locator(".dc-day-background-range")).toHaveCount(1);
@@ -167,11 +161,6 @@ scenario("custom.timeline", "optional Timeline renders and mutates through gener
   await expect(page.locator(".dc-timeline-axis-tick")).not.toHaveCount(0);
   expect(await page.evaluate(() => globalThis.__timelineProbe.projectionCalls())).toBe(1);
   expect(await page.evaluate(() => globalThis.__timelineProbe.backgroundCalls())).toBe(1);
-  expect(await page.evaluate(() => globalThis.__timelineProbe.projectedRanges[0])).toEqual({
-    start: "2026-11-10T00:00:00.000Z",
-    end: "2026-11-12T00:00:00.000Z",
-  });
-
   const laneTops = await page.locator(".dc-timeline-event").evaluateAll(nodes =>
     nodes.map(node => Number.parseFloat(node.style.top)),
   );

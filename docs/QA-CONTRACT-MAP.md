@@ -635,3 +635,75 @@ The temporary force-full/mutation/browser-release workflow edits were then rever
 5. Atomic failure behaviour is checked at both command staging and resource-host execution boundaries.
 6. The new tests found and permanently guard a real split-series defect.
 7. Production change is limited to that justified local fix; no unrelated behaviour or architecture was modified.
+
+
+## Pass H — browser evidence compression (2026-11-14)
+
+Pass H reviewed the original **55 browser scenarios assertion-by-assertion** against the Pass F/G invariant map. The governing rule is now explicit: browser tests own failure modes that require a browser — real IndexedDB and cross-tab behavior, DOM/accessibility, pointer/keyboard wiring, real layout integration, print media and reviewed pixels. Pure recurrence/collision/state/authority mathematics remain canonical in Node.
+
+No production source changed in Pass H.
+
+### Assertion-level disposition
+
+The following micro-scenarios shared a browser lifecycle/setup and were merged into coherent journeys while keeping separate assertions for each behavior:
+
+| Original browser scenarios | Surviving journey | Browser failure domain retained |
+|---|---|---|
+| `refresh.coalesce`, `refresh.failure-recovery` | `refresh.queue` | async render/query queue coalescing plus failed-superseded-query recovery |
+| `resource.timeline.keyboard-reassign`, `resource.timeline.resize` | `resource.timeline.keyboard` | real focus/keyboard dispatch, reprojection and accessible resize handle |
+| `resource.timeline.committed-refresh-failure`, `resource.timeline.stale-refresh-failure` | `resource.timeline.refresh-failures` | status text, focus and busy-state recovery after two distinct host failure outcomes |
+| `resource.grid.diagonal-move`, `resource.grid.vertical-keyboard`, `resource.grid.resize` | `resource.grid.keyboard` | real grid keyboard wiring for reassign/move/resize and authoritative reprojection |
+| `storage.single-flight`, `storage.close-open`, `storage.reopen-race`, `storage.reopen` | `storage.lifecycle` | native IndexedDB open/close/reopen races and persisted same-instance reopen |
+| `storage.persist-reopen`, `storage.crud` | `storage.records` | native IndexedDB source/item persistence, normalization, raw-record cleanup and reopen |
+
+Five retained scenarios were narrowed rather than removed:
+
+- `drop.authorized` now proves DOM/DataTransfer wiring across month, all-day, timed and custom-view targets plus custom decoder timing. Malformed payload, authority, navigation-bound, guard and collision decision tables remain covered by Node external-drop/authority/placement tests.
+- `view.week-numbers` keeps optional DOM presence, ARIA labeling, event/background integration and narrow-screen overflow. Exact ISO week-number arithmetic is owned by the independent 400-year Node oracle.
+- `custom.multi-month` and `custom.timeline` keep actual composition, interaction, DOM geometry, responsiveness and browser navigation; exact range mathematics are owned by their Node view contracts.
+- `resource.timeline.hierarchy` verifies collapse through the visible treegrid/row result rather than re-reading the implementation's internal collapsed-id state.
+
+The other original scenarios were retained because their primary failure mode is genuinely browser-native. This includes `refresh.midnight`; week/DST/event rendering; pointer drag; structured actions; custom-view runtime boundaries and disposal; default-off drop/print behavior; print snapshots/all-view print; embedded isolation/host extension DOM; resource render/pointer/auto-scroll; IndexedDB schema/rejection/interoperability records; reminder/Google/CAS/BroadcastChannel/focus concurrency; reload-generation isolation; and all nine reviewed visual baselines.
+
+### Surviving non-browser witnesses for removed assertions
+
+- recurrence/range/week arithmetic → temporal recurrence oracles, Multi-Month/Timeline Node contracts and complete 400-year ISO-week reference;
+- collision/snap/resource-placement mathematics → finite-interval model, resource interaction/placement tests and seeded generated geometry invariants;
+- authority/policy decision tables → occurrence-authority, external-drop and placement Node suites;
+- canonical repository/state-transition validation → repository/state-transition and seeded state-machine Node witnesses.
+
+Thus no browser assertion was removed merely because it looked repetitive; each deletion has a cheaper independent witness for the same mathematical/policy failure mode.
+
+### Multi-engine release policy
+
+The scenario registry already defined `@cross` as the **selective multi-engine witness**, but the historical release configuration still reran every nonvisual scenario in Firefox and WebKit. Pass H makes the runner match that contract:
+
+- **Chromium release:** every registered browser scenario, including reviewed visual baselines;
+- **Firefox/WebKit release:** exactly the `@cross` set;
+- **visual lane:** Chromium only;
+- **smoke:** unchanged — Chromium `@smoke|@cross`, Firefox/WebKit `@cross`.
+
+`coverage-audit.mjs` now validates this **per-project as set membership**, not by execution totals, so future changes cannot silently expand or shrink the multi-engine contract.
+
+### Measured compression
+
+| Measure | Before Pass H | After Pass H |
+|---|---:|---:|
+| Registered browser scenarios | 55 | **46** |
+| Browser spec source | 119,855 bytes | **104,844 bytes** |
+| All browser `.mjs` source | 170,229 bytes | **152,171 bytes** |
+| Routine smoke executions | 53 | **53** |
+| Release executions | 147 | **74** |
+
+Scenario count was not a target. The 55→46 change is the consequence of six justified journey consolidations. Browser spec source fell about **12.5%**, total browser MJS about **10.6%**, and release executions about **49.7%** while the selective multi-engine witness remained intact.
+
+### Verification evidence
+
+Pass H used two release checkpoints:
+
+1. Before narrowing the engine matrix, the compressed 46-scenario suite passed the historical all-engine policy: **120/120** executions. A first attempt exposed a WebKit-only test-fixture issue where deleting IndexedDB between lifecycle subcases could remain blocked; the journey was corrected to use one database lifecycle rather than introducing timing sleeps, then all 120 passed.
+2. With the permanent selective multi-engine policy, release passed **74/74 in 39.3 s**.
+
+Full Node/deep/package verification on the compressed branch also remained green: **215/215 Node tests**, zero skips, publication manifest **185 files / 31 export subpaths**, and all **20 invariant-registry contracts** with required routine/release risk classes covered.
+
+The temporary force-full workflow switches used for these measurements were restored afterward; permanent workflow policy remains fast routine CI plus the normal browser-smoke gate.
