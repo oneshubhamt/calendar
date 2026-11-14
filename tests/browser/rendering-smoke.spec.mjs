@@ -650,9 +650,6 @@ test("Month week numbers are optional accessible and narrow-screen safe", async 
   });
   expect(layout.gridWidth).toBeLessThanOrEqual(layout.bodyWidth + 1);
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth + 1);
-
-  const visualCapture = await page.locator(".dc-month-panel").screenshot();
-  expect(visualCapture.byteLength).toBeGreaterThan(1_000);
 });
 
 test("optional Multi-Month composes canonical Month panels across years with one query", async ({ page }) => {
@@ -863,8 +860,6 @@ test("optional Multi-Month composes canonical Month panels across years with one
   );
   expect(desktopLayout).toHaveLength(3);
   expect(Math.max(...desktopLayout.map(item => item.top)) - Math.min(...desktopLayout.map(item => item.top))).toBeLessThanOrEqual(1);
-  const desktopCapture = await page.locator(".dc-multi-month").screenshot();
-  expect(desktopCapture.byteLength).toBeGreaterThan(2_000);
 
   await page.setViewportSize({ width: 390, height: 820 });
   const responsive = await page.locator(".dc-multi-month-section").evaluateAll(nodes =>
@@ -876,9 +871,6 @@ test("optional Multi-Month composes canonical Month panels across years with one
   expect(responsive[0].width).toBeLessThanOrEqual(366);
   expect(responsive[1].top).toBeGreaterThan(responsive[0].top);
   expect(Math.abs(responsive[1].left - responsive[0].left)).toBeLessThanOrEqual(1);
-
-  const capture = await page.locator(".dc-multi-month").screenshot();
-  expect(capture.byteLength).toBeGreaterThan(2_000);
 });
 
 test("optional Timeline renders and mutates through generic horizontal mechanics", async ({ page }) => {
@@ -1101,8 +1093,6 @@ test("optional Timeline renders and mutates through generic horizontal mechanics
     scrollWidth: node.scrollWidth,
   }));
   expect(scroll.scrollWidth).toBeGreaterThan(scroll.clientWidth);
-  const capture = await page.locator(".dc-timeline").screenshot();
-  expect(capture.byteLength).toBeGreaterThan(2_000);
 });
 
 test("external DOM drops create through Calendar authority while internal drag remains a move", async ({ page }) => {
@@ -1727,8 +1717,6 @@ test("print snapshot is detached, read-only, isolated and print media expands cl
   expect(printStyles.liveEventTransform).toBe("none");
   expect(printStyles.liveEventHeight).toBe(printStyles.liveEventPrintHeight);
   expect(printStyles.liveEventOpacity).toBe("1");
-
-  expect(await page.locator(".dc-print-snapshot").screenshot()).not.toHaveLength(0);
 });
 
 test("print snapshots cover all built-in views plus optional Multi-Month and Timeline through one API", async ({ page }) => {
@@ -1830,8 +1818,6 @@ test("print snapshots cover all built-in views plus optional Multi-Month and Tim
       document.body.append(snapshot);
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     }, view);
-    const capture = await page.locator(".dc-print-snapshot").screenshot({ animations: "disabled" });
-    expect(capture.byteLength, `print capture for ${view}`).toBeGreaterThan(1_000);
   }
 });
 

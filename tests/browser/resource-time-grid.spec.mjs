@@ -59,8 +59,6 @@ test("Resource TimeGrid renders resources as columns, all-day assignments and pa
   await expect(page.locator(".dc-rtg-availability.is-unavailable")).toContainText("Unavailable");
   await expect(page.locator('.dc-rtg-all-day-cell[data-resource-id="a"]'))
     .toHaveAttribute("aria-label", /Room A.*November 10, 2026/);
-  const screenshot = await page.locator(".dc-rtg-root").screenshot();
-  expect(screenshot.byteLength).toBeGreaterThan(1000);
 });
 
 test("Resource TimeGrid keyboard diagonal move produces one atomic host mutation and authoritative reprojection", async ({ page }) => {

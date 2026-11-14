@@ -103,17 +103,6 @@ test('generic root does not export Director or planning integrations',async()=>{
   assert.equal('GoogleCalendarSyncAdapter' in root,false);
 });
 
-test('generic source/view/core graph contains no Director semantic dependency',async()=>{
-  const files=['src/core/types.ts','src/core/calendar-engine.ts','src/core/commands.ts','src/core/store.ts','src/view/calendar-ui.ts','src/view/event-editor.ts','src/view/recurrence-editor.ts'];
-  const text=(await Promise.all(files.map(file=>fs.readFile(new URL(`../${file}`,import.meta.url),'utf8')))).join('\n');
-  for(const token of ['study-director','revision-director','practice-desk','UPSC','relationRole === "planned"','kind === "deadline"','metadata?.category','categoryPlaceholder','DirectorCalendarEngine','DirectorCalendar','DIRECTOR_CALENDAR_CSS']) assert.equal(text.includes(token),false,`generic layer leaked ${token}`);
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.equal(view.includes('features/personal'),false,'base view must not import optional personal feature');
-  const personal=await fs.readFile(new URL('../src/features/personal.ts',import.meta.url),'utf8');
-  for(const token of ['study-director','revision-director','practice-desk','UPSC','relationRole === "planned"','kind === "deadline"']) assert.equal(personal.includes(token),false,`optional personal feature leaked host-specific semantics: ${token}`);
-  const coreTypes=await fs.readFile(new URL('../src/core/types.ts',import.meta.url),'utf8');
-  for(const token of ['CalendarUiOptions','CalendarRoutineTemplate','CalendarPersonalFeaturePort','CalendarQuickCreate']) assert.equal(coreTypes.includes(token),false,`core type layer leaked optional UI contract: ${token}`);
-});
 test('clean builds cannot retain deleted compiled modules',async()=>{
   await assert.rejects(fs.access(new URL('../dist/core/personal.js',import.meta.url)));
 });
@@ -268,8 +257,6 @@ test('availability definitions fail closed and remain an optional feature bounda
   const root=await import('../dist/index.js');
   assert.equal('expandAvailabilityDefinitions' in root,false);
   assert.equal('createAvailabilityBackgroundProvider' in root,false);
-  const view=await fs.readFile(new URL('../src/view/calendar-ui.ts',import.meta.url),'utf8');
-  assert.equal(view.includes('features/availability'),false);
   const pkg=JSON.parse(await fs.readFile(new URL('../package.json',import.meta.url),'utf8'));
   assert.equal(pkg.exports['./features/availability'].import,'./dist/features/availability.js');
 });

@@ -9,15 +9,9 @@ import {
   resizeOccurrenceByCivilMinutes,
   snapMinuteCoordinate,
 } from "../dist/index.js";
+import { makeResourceOccurrence } from "./fixtures/domain.mjs";
 
-function occurrence(overrides={}){
-  return {
-    occurrenceId:"occ",sourceItemId:"item",calendarId:"calendar",title:"Visit",
-    start:"2026-11-10T09:00:00.000Z",end:"2026-11-10T10:00:00.000Z",
-    originalStart:"2026-11-10T09:00:00.000Z",recurring:false,
-    kind:"event",ownership:"host",editPolicy:"full",...overrides,
-  };
-}
+const occurrence = makeResourceOccurrence;
 
 test("replacing one rendered multi-resource assignment preserves every unrelated assignment",()=>{
   assert.deepEqual(replaceCalendarResourceAssignment(["room-a","doctor","device"],"room-a","room-b"),[

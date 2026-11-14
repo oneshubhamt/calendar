@@ -5,6 +5,7 @@ import {
   executeCalendarResourcePlacement,
 } from "../dist/features/resource-scheduler/index.js";
 import { CalendarCommandStaleError } from "../dist/core/commands.js";
+import { makeResourceOccurrence } from "./fixtures/domain.mjs";
 
 const resources=[
   {id:"rooms",title:"Rooms"},
@@ -13,14 +14,7 @@ const resources=[
   {id:"doctor",title:"Doctor",order:2,acceptsAssignments:true},
 ];
 const source={id:"calendar",title:"Calendar",visible:true};
-function occurrence(overrides={}){
-  return {
-    occurrenceId:"occ",sourceItemId:"item",calendarId:"calendar",title:"Visit",
-    start:"2026-11-10T09:00:00.000Z",end:"2026-11-10T10:00:00.000Z",
-    originalStart:"2026-11-10T09:00:00.000Z",recurring:false,
-    kind:"event",ownership:"host",editPolicy:"full",...overrides,
-  };
-}
+const occurrence = makeResourceOccurrence;
 function request(overrides={}){
   return {
     occurrence:occurrence(),sourceResourceId:"a",targetResourceId:"b",

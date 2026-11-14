@@ -4,9 +4,10 @@ import * as C from '../dist/index.js';
 import * as Planning from '../dist/features/planning.js';
 import * as Personal from '../dist/features/personal.js';
 import { canonicalValueString, sameCanonicalValue } from '../dist/core/canonical-value.js';
+import { makeCalendarItem, makePersonalSource } from './fixtures/domain.mjs';
 
-const source={id:'personal',title:'Personal',visible:true,sourceType:'personal',removable:true};
-const event=(patch={})=>({id:'e1',calendarId:'personal',title:'Event',start:'2026-03-01T14:00:00.000Z',end:'2026-03-01T15:00:00.000Z',kind:'event',ownership:'calendar',editPolicy:'full',...patch});
+const source=makePersonalSource({removable:true});
+const event=(patch={})=>makeCalendarItem(patch);
 
 test('canonical value comparison ignores object key order and optional undefined properties while preserving array order',()=>{
   const left={b:2,a:{z:3,y:undefined,x:1},optional:undefined,list:[1,2,3]};

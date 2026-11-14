@@ -5,9 +5,10 @@ import * as ICS from '../dist/interoperability/ics.js';
 import * as Google from '../dist/interoperability/google-calendar.js';
 import * as Sync from '../dist/interoperability/sync.js';
 import * as Reminder from '../dist/interoperability/reminders.js';
+import { makeCalendarItem, makePersonalSource } from './fixtures/domain.mjs';
 
-const source={id:'personal',title:'Personal',visible:true,sourceType:'personal'};
-const event=(patch={})=>({id:'e1',calendarId:'personal',title:'Event',start:'2026-03-01T14:00:00.000Z',end:'2026-03-01T15:00:00.000Z',kind:'event',ownership:'host-owned',editPolicy:'full',...patch});
+const source=makePersonalSource();
+const event=(patch={})=>makeCalendarItem({ownership:'host-owned',...patch});
 
 test('sync fingerprints are canonical across equivalent property insertion order',()=>{
   const first=event({recurrence:{rule:{frequency:'weekly',interval:2,byDay:[{weekday:1},{weekday:3}]}}});

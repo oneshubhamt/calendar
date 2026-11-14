@@ -9,10 +9,11 @@ import {
   recurrenceRuleFromEditor,
   recurrenceUntilFromEditor,
 } from '../dist/view/recurrence-editor.js';
+import { makeCalendarItem, makePersonalSource } from './fixtures/domain.mjs';
 
-const source={id:'personal',title:'Personal',visible:true,sourceType:'personal',removable:true};
+const source=makePersonalSource({removable:true});
 function event(overrides={}){
-  return {id:'e1',calendarId:'personal',title:'Event',start:'2026-01-30T09:00:00.000Z',end:'2026-01-30T10:00:00.000Z',kind:'event',ownership:'calendar',editPolicy:'full',...overrides};
+  return makeCalendarItem({start:'2026-01-30T09:00:00.000Z',end:'2026-01-30T10:00:00.000Z',...overrides});
 }
 
 test('year and agenda list ranges are explicit, timezone-safe view contracts',()=>{
