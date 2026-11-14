@@ -1,0 +1,54 @@
+name: Retire already-merged QA branches (one-time)
+
+on:
+  push:
+    branches: [working]
+    paths: [.github/workflows/retire-qa-branches-once.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  retire:
+    if: github.repository == 'oneshubhamt/calendar'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Verify exact refs, release parity, and merged PRs before retirement
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch origin main working
+          test "$(git rev-parse origin/main)" = "ab3ab43a3a83d6529c5e798e61ec596e4977d718"
+          test "$(git rev-parse origin/working)" = "$GITHUB_SHA"
+          git diff --exit-code origin/main origin/working -- . ':(exclude).github/workflows/retire-qa-branches-once.yml'
+          declare -A expected=(
+            [qa-browser-pass-c]=4faf72cd25642a58d3348011cb7bbc601777b189
+            [qa-ci-pass-d]=48a2561517d2b5389a1d299130dc770e741d4ab1
+            [qa-closure-audit]=1a6f331159095c67ea314269933327bd42962ebe
+            [qa-node-pass-b]=6ad8b437dda73975b2a9306f8d3d73af45740346
+            [qa-objective-closure]=63e2aff9bcea72313dd16716088d9fb884661dc2
+            [qa-pass-f]=5b3d4ba7e0b30816c167592fc5f53b7f42f6df78
+            [qa-pass-g]=4f117a8eb8c43b4de177edbe9dfc9d6703ec3954
+            [qa-pass-h]=4c672529d8bfa8e1bb52869bb23f10ba89efa5c4
+            [qa-pass-i]=0bbc486c074150a1722bbbace415281353abaf3d
+            [qa-pass-j]=8ffccfb10e746d44c25cf0afa86d5e3c67d60fd0
+          )
+          mapfile -t actual_branches < <(gh api --paginate "repos/${GITHUB_REPOSITORY}/branches?per_page=100" --jq '.[].name' | LC_ALL=C sort)
+          mapfile -t desired_branches < <(printf "%s\n" main working "${!expected[@]}" | LC_ALL=C sort)
+          diff -u <(printf "%s\n" "${desired_branches[@]}") <(printf "%s\n" "${actual_branches[@]}")
+          for number in 5 6 7 8 9 10; do
+            test "$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${number}" --jq '.merged_at != null')" = "true"
+          done
+          for branch in "${!expected[@]}"; do
+            test "$(gh api "repos/${GITHUB_REPOSITORY}/branches/${branch}" --jq '.commit.sha')" = "${expected[$branch]}"
+          done
+          for branch in "${!expected[@]}"; do
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" >/dev/null
+            echo "Retired $branch"
+          done
