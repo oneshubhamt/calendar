@@ -270,6 +270,6 @@ After those corrections, temporary full-verification gates passed:
 - **12/12** mutation faults detected with artifact restoration;
 - **120/120** exhaustive browser executions in **59.2 s**.
 
-Before the temporary full gates were enabled, the repaired branch also passed routine CI (**211 pass + 4 deliberate deep skips**) and routine browser QA (**34/34 in 33.5 s**). A final exact-head routine run is required after restoring normal workflow conditions.
+After restoring the normal workflow conditions, the repaired exact-head branch passed routine CI (**211 pass + 4 deliberate deep skips**, package manifest **185 files / 31 exported subpaths**, semantic coverage audit green) and routine browser QA (**34/34 in 24.2 s**).
 
 Numbers in this section are dated evidence, not future pass/fail thresholds. The registries and semantic audits define the enduring contract.
