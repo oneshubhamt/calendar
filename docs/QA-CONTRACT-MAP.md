@@ -212,3 +212,43 @@ Each scenario always has `@release`, with selective `@cross`, `@smoke`, or `@vis
 Durations are observed on GitHub runners and subject to environmental variation. The reliable economic gain is *selection*: 53 smoke executions instead of 147 full, without discarding the latter. Selection and cross/visual tags are configured but standalone `cross` and `visual` commands are not independently timed; their cases are covered by the successful smoke and full release jobs.
 
 **Pass D:** final gate timing/economics, and compare behavioural/mutation sensitivity of the selected smoke set against full release; do not infer that any single green run proves absence of flakiness.
+
+## Pass D — CI economics and independent verification (2026-11-14)
+
+**Independent stage verification:** [Node/type/package/coverage/mutations run 43572885721](https://github.com/oneshubhamt/calendar/actions/runs/43572885721) and [full browser run 43572885762](https://github.com/oneshubhamt/calendar/actions/runs/43572885762) both succeeded. Pass A source baseline `20f06c826f37` remains the immutable census anchor. No production `src/` changes occurred in Passes A–D.
+
+### QA commands and publication correctness
+
+| Command | Work performed | Compilations |
+|---|---|---:|
+| `npm run check:fast` | Full strict compiler → all 211 Node cases → remove `dist/demo` and `dist/fixtures` → validate package contents and every exports target using script-free npm dry-run | **1** |
+| `npm run check` / `check:full` | Full strict compiler → all 211 Node cases → snapshot production output hashes → genuine `prepack` package compilation → compare every canonical emitted file → validate package manifest | **2** |
+| `npm run qa:fast` | One full build shared by Node + 53 tagged browser executions, then script-free package audit | **1** |
+| `npm run qa:full` | One full build shared by Node + 147 browser executions, then native publication compilation, parity and manifest checks | **2** |
+
+`npm run qa:browser:smoke` and `qa:browser` are standalone browser gates and build independently for their separate CI runners. The original `prepack` and `build:package` commands remain canonical; skipping lifecycle scripts is allowed **only** in the validated fast manifest check. The fast preparation explicitly verifies `tsconfig.package.json` exclusions and fails if they change without a reviewed policy update.
+
+On the same staged GitHub runner, [paired run 43572721264](https://github.com/oneshubhamt/calendar/actions/runs/43572721264) measured fast **~4.47 s** versus native full **~5.40 s** quality steps, an observed ~**0.93 s (17%)** difference. Not a statistically reliable fixed speedup; both execute the same Node tests. The native parity check found **182 byte-identical published compiled artifacts** and the npm manifest contained **185 files / 31 exported subpaths**, with no demo/test fixture output.
+
+### Independently observed verification
+
+| Invariant/evidence | Result |
+|---|---|
+| Node suite | **211/211 pass**, original 212 → remove 3 superseded declarations + add 2 independent reference tests = 211; all Pass A failure modes reconciled in Pass B |
+| Original browser release matrix | **147/147 pass**, 55 Chromium + 46 Firefox + 46 WebKit, with nine intact screenshot baselines; Pass D full test phase ~84 seconds |
+| Live Playwright discovery via `--list` | **147 full / 53 smoke / 42 cross / 9 visual**; exactly 55 distinct scenario IDs in 13 specs, 25 Node modules |
+| Half-open interval mutant | Inclusive boundary rejected by independent finite lattice oracle |
+| Repository stale revision mutant | Removed revision guard rejected by multi-step CAS reference model |
+| Recurrence COUNT mutant | Extra recurrence occurrence rejected by independent UTC calendar enumeration |
+| Sync prefer-local mutant | Incorrect remote-apply result rejected by local/remote/policy decision-table model |
+
+**All four targeted mutations were detected by their *intended named tests*.** Fault injection altered only ephemeral compiled output; the harness checked and restored each original artifact hash. These are selective, meaningful sensitivity proofs, not a claim of exhaustive mutation testing.
+
+### Final gate ownership and cost audit
+
+- Ordinary branch pushes: `check:fast`; `working` pushes and PRs targeting `working` also run browser smoke (53 executions). PRs targeting `main` and main pushes: native `check:full` + independent full browser-release matrix (147 executions), with Playwright discovery census.
+- CI manual dispatch exposes `full` and `mutation` controls; local `qa:coverage` and `qa:mutation` remain available without running on every quick pass.
+- Remaining slow Node witnesses are civil/DST algebra (~1.7–2.0 s), independent 400-year ISO-week verification (~0.7–0.8 s), dependency graph (~0.6 s) and recurrence properties (~0.4–0.5 s). Retain them: their semantic value and fault detection outweigh the modest runtime.
+- Real-browser storage/gesture/visual checks dominate release cost. Smoke selection provides the structural savings; release scope was not reduced. Timings vary between GitHub runners; repeated-green results do not prove the suite is flake-free. Live Google and actual host-provider contracts still require separate authorized integration evidence.
+
+**Closure:** 25 product-domain Node modules / **211 cases** (all original essential contracts preserved or strengthened), 13 browser specs / **55 distinct scenarios**, nine reference screenshots and the unchanged **147-execution** complete release matrix. Production files, canonical data, initialization, and observable calendar behaviour are untouched. Further test growth or optimization should be driven by observed regressions or costs.
