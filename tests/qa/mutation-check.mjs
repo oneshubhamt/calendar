@@ -26,7 +26,7 @@ const mutations = [
   {
     name: "recurrence COUNT leaks an extra occurrence",
     file: "dist/core/recurrence.js",
-    from: "if (yielded >= (rule.count ?? MAX_OCCURRENCES)) return;",
+    from: /yielded\s*>=\s*\(rule\.count\s*\?\?\s*MAX_OCCURRENCES\)/,
     to: "if (yielded > (rule.count ?? MAX_OCCURRENCES)) return;",
     test: "tests/node/temporal/mathematical-invariants.test.mjs",
     title: "UTC daily and weekly recurrence matches an independent civil-date enumeration across leap and year boundaries",
@@ -34,7 +34,7 @@ const mutations = [
   {
     name: "prefer-local deletion sync silently applies remote",
     file: "dist/interoperability/sync.js",
-    from: 'if (policy === "prefer-local") return { action: "delete-remote" };',
+    from: /if\s*\(policy === "prefer-local"\)\s*return\s*\{\s*action:\s*"delete-remote"\s*\};/,
     to: 'if (policy === "prefer-local") return { action: "apply-remote" };',
     test: "tests/node/interop/contracts.test.mjs",
     title: "sync decision model covers every local/remote deletion-change state and conflict policy",
@@ -44,7 +44,9 @@ const mutations = [
 for (const entry of mutations) {
   const file = resolve(entry.file);
   const original = readFileSync(file, "utf8");
-  const occurrences = original.split(entry.from).length - 1;
+  const occurrences = entry.from instanceof RegExp
+    ? [...original.matchAll(new RegExp(entry.from.source, "g"))].length
+    : original.split(entry.from).length - 1;
   assert.equal(occurrences, 1, `${entry.name}: mutation must have precisely one canonical target`);
   const originalHash = createHash("sha256").update(original).digest("hex");
   let outcome;
