@@ -18,7 +18,7 @@ import {
 } from "../../../dist/core/recurrence.js";
 import { makeResourceOccurrence } from "../../fixtures/domain.mjs";
 import { permutations } from "../../fixtures/combinatorics.mjs";
-import { DAY_MS, utcDateKey, referenceUtcRecurrence } from "../../fixtures/reference-temporal.mjs";
+import { DAY_MS, utcDateKey, referenceUtcCalendarRecurrence, referenceUtcRecurrence } from "../../fixtures/reference-temporal.mjs";
 
 function layoutSignature(rows) {
   return [...rows]
@@ -258,5 +258,83 @@ test("recurrence follows independently known leap, month-end, and DST transition
       start: "2024-01-01T00:00:00.000Z", end: "2033-01-01T00:00:00.000Z",
     }, {timeZone: zone ?? "UTC"});
     assert.deepEqual(occurrences.map(value => value.start), expected, label);
+  }
+});
+
+
+test("monthly and yearly recurrence match an independent bounded UTC oracle including filters limits exceptions and partitions", () => {
+  const cases = [
+    {
+      label: "monthly negative month-days with exceptions",
+      start: "2024-01-31T08:00:00.000Z",
+      rule: { frequency: "monthly", byMonthDay: [1, -1], count: 10 },
+      exceptions: [
+        { originalStart: "2024-02-29T08:00:00.000Z", cancelled: true },
+        { originalStart: "2024-04-30T08:00:00.000Z", replacement: { start: "2024-04-29T08:00:00.000Z" } },
+      ],
+      range: { start: "2024-01-01T00:00:00.000Z", end: "2024-07-01T00:00:00.000Z" },
+      cuts: ["2024-01-01T00:00:00.000Z", "2024-03-01T00:00:00.000Z", "2024-05-01T00:00:00.000Z", "2024-07-01T00:00:00.000Z"],
+    },
+    {
+      label: "monthly ordinal BYDAY bounded by UNTIL",
+      start: "2024-01-08T09:00:00.000Z",
+      rule: {
+        frequency: "monthly",
+        byDay: [{ weekday: 1, ordinal: 1 }, { weekday: 5, ordinal: -1 }],
+        count: 50,
+        until: "2024-06-30T23:59:59.999Z",
+      },
+      exceptions: [],
+      range: { start: "2024-01-01T00:00:00.000Z", end: "2024-08-01T00:00:00.000Z" },
+      cuts: ["2024-01-01T00:00:00.000Z", "2024-03-01T00:00:00.000Z", "2024-05-01T00:00:00.000Z", "2024-08-01T00:00:00.000Z"],
+    },
+    {
+      label: "yearly selected months and negative month-day",
+      start: "2024-02-29T07:00:00.000Z",
+      rule: {
+        frequency: "yearly",
+        byMonth: [2, 11],
+        byMonthDay: [-1],
+        count: 8,
+        until: "2027-12-31T23:59:59.999Z",
+      },
+      exceptions: [],
+      range: { start: "2024-01-01T00:00:00.000Z", end: "2028-01-01T00:00:00.000Z" },
+      cuts: ["2024-01-01T00:00:00.000Z", "2025-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", "2027-01-01T00:00:00.000Z", "2028-01-01T00:00:00.000Z"],
+    },
+    {
+      label: "yearly BYDAY enumerates selected month weekdays",
+      start: "2024-01-15T10:00:00.000Z",
+      rule: { frequency: "yearly", byMonth: [3], byDay: [{ weekday: 1 }], count: 9 },
+      exceptions: [],
+      range: { start: "2024-01-01T00:00:00.000Z", end: "2026-01-01T00:00:00.000Z" },
+      cuts: ["2024-01-01T00:00:00.000Z", "2024-07-01T00:00:00.000Z", "2025-01-01T00:00:00.000Z", "2025-07-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z"],
+    },
+  ];
+
+  for (const entry of cases) {
+    const series = { id: entry.label, start: entry.start, end: entry.start, temporalForm: "point" };
+    const recurrence = { rule: entry.rule, ...(entry.exceptions.length ? { exceptions: entry.exceptions } : {}) };
+    const actual = expandTemporalSeries(series, recurrence, entry.range, { timeZone: "UTC" })
+      .map(({ originalStart, start }) => ({ originalStart, start }));
+    const expected = referenceUtcCalendarRecurrence({
+      start: entry.start,
+      rule: entry.rule,
+      exceptions: entry.exceptions,
+      rangeStart: entry.range.start,
+      rangeEnd: entry.range.end,
+    });
+    assert.deepEqual(actual, expected, `\${entry.label} must match independent UTC date-scan oracle`);
+
+    const partitioned = [];
+    for (let index = 0; index + 1 < entry.cuts.length; index += 1) {
+      partitioned.push(...expandTemporalSeries(
+        series,
+        recurrence,
+        { start: entry.cuts[index], end: entry.cuts[index + 1] },
+        { timeZone: "UTC" },
+      ).map(({ originalStart, start }) => ({ originalStart, start })));
+    }
+    assert.deepEqual(partitioned, actual, `\${entry.label} must be invariant under bounded query partitioning`);
   }
 });
