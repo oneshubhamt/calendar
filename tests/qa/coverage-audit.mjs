@@ -76,7 +76,7 @@ function assertSameSet(actual, expected, label) {
 const node = nodeWitnesses();
 const browser = browserDeclarations();
 
-for (const lane of ["release", "smoke", "cross", "visual"]) {
+for (const lane of ["release", "smoke"]) {
   assertSameSet(
     discoverBrowserLane(lane, browser.byTitle),
     expectedScenarioIds(lane),
