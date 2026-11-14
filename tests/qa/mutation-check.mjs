@@ -20,7 +20,7 @@ const mutations = [
     file: "dist/core/store.js",
     from: "if (this.snapshotValue.revision !== expectedRevision) {",
     to: "if (false) {",
-    test: "tests/node/engine/core.test.mjs",
+    test: "tests/node/engine/repository-mutations.test.mjs",
     title: "revision-guarded repository transitions match an independent state model and never partially apply a stale proposal",
   },
   {
