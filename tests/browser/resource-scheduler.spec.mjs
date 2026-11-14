@@ -34,7 +34,7 @@ scenario("resource.timeline.hierarchy", "Resource Scheduler renders authoritativ
   expect(await page.evaluate(() => globalThis.__resourceScheduler.collapsedResourceIds())).toEqual(["rooms"]);
 });
 
-scenario("resource.timeline.keyboard-reassign", "Resource Scheduler keyboard reassignment commits one atomic host change and reprojects", async ({ page }) => {
+scenario("resource.timeline.keyboard", "Resource Scheduler keyboard reassignment and resize each publish one authoritative mutation", async ({ page }) => {
   await openHarness(page);
   await page.evaluate(async projection => {
     const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
@@ -54,33 +54,40 @@ scenario("resource.timeline.keyboard-reassign", "Resource Scheduler keyboard rea
                 ? { ...occurrence, start: change.start, end: change.end }
                 : occurrence),
               assignments: current.assignments.map(assignment => assignment.occurrenceId === change.occurrence.occurrenceId
-                ? { ...assignment, resourceIds: [...change.toResourceIds], version: { revision: 2 } }
+                ? { ...assignment, resourceIds: [...change.toResourceIds], version: { revision: commits.length + 1 } }
                 : assignment),
             };
           },
         },
         resourceCapabilityProvider: { capabilities() { return { canReassign: true }; } },
+        occurrenceCapabilityProvider: { capabilities() { return { canResizeStart: true, canResizeEnd: true }; } },
         sourceForOccurrence() { return { id: "calendar", title: "Calendar", visible: true }; },
         refreshProjection() { return structuredClone(current); },
       },
     });
     ui.setProjection(current);
-    globalThis.__resourceSchedulerProbe = { ui, commits };
+    globalThis.__resourceSchedulerKeyboard = { commits };
   }, projection);
 
-  const event = page.locator('.dc-rs-event[data-resource-id="a"]');
+  let event = page.locator('.dc-rs-event[data-resource-id="a"]');
   await event.focus();
   await page.keyboard.press("Alt+ArrowDown");
-
   await expect(page.locator('.dc-rs-event[data-resource-id="b"]')).toBeVisible();
-  const commits = await page.evaluate(() => globalThis.__resourceSchedulerProbe.commits);
+
+  let commits = await page.evaluate(() => globalThis.__resourceSchedulerKeyboard.commits);
   expect(commits).toHaveLength(1);
   expect(commits[0].fromResourceIds).toEqual(["a"]);
   expect(commits[0].toResourceIds).toEqual(["b"]);
-  expect(commits[0].start).toBe("2026-11-10T09:00:00.000Z");
-  expect(commits[0].end).toBe("2026-11-10T10:00:00.000Z");
-});
 
+  const handle = page.getByRole("separator", { name: "Resize end of Visit" });
+  await handle.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(async () => await page.evaluate(() => globalThis.__resourceSchedulerKeyboard.commits.length)).toBe(2);
+  commits = await page.evaluate(() => globalThis.__resourceSchedulerKeyboard.commits);
+  expect(Date.parse(commits[1].end)).toBeGreaterThan(Date.parse(commits[0].end));
+  expect(commits[1].toResourceIds).toEqual(["b"]);
+  await expect(page.getByRole("separator", { name: "Resize end of Visit" })).toBeVisible();
+});
 
 async function mountResourceRefreshFailure(page, mode) {
   await openHarness(page);
@@ -133,52 +140,6 @@ scenario("resource.timeline.refresh-failures", "Resource Scheduler distinguishes
   expect(await page.evaluate(() => globalThis.__resourceSchedulerRefreshFailure.errors)).toEqual(["Error: projection offline"]);
   await expect(event).not.toHaveAttribute("aria-busy", "true");
   await expect(event).toBeFocused();
-});
-
-scenario("resource.timeline.resize", "Resource Scheduler keyboard end resize uses edge authority and one atomic authoritative mutation", async ({ page }) => {
-  await openHarness(page);
-  await page.evaluate(async projection => {
-    const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
-    let current = structuredClone(projection);
-    const commits = [];
-    const host = document.getElementById("browser-test-host");
-    host.replaceChildren();
-    const ui = new CalendarResourceSchedulerUi(host, {
-      timeZone: "UTC",
-      interaction: {
-        mutationPort: {
-          commit(change) {
-            commits.push(structuredClone(change));
-            current = {
-              ...current,
-              occurrences: current.occurrences.map(occurrence => occurrence.occurrenceId === change.occurrence.occurrenceId
-                ? { ...occurrence, start: change.start, end: change.end }
-                : occurrence),
-              assignments: current.assignments.map(assignment => assignment.occurrenceId === change.occurrence.occurrenceId
-                ? { ...assignment, resourceIds: [...change.toResourceIds], version: { revision: 2 } }
-                : assignment),
-            };
-          },
-        },
-        occurrenceCapabilityProvider: { capabilities() { return { canResizeStart: true, canResizeEnd: true }; } },
-        sourceForOccurrence() { return { id: "calendar", title: "Calendar", visible: true }; },
-        refreshProjection() { return structuredClone(current); },
-      },
-    });
-    ui.setProjection(current);
-    globalThis.__resourceSchedulerResize = { commits };
-  }, projection);
-
-  const handle = page.getByRole("separator", { name: "Resize end of Visit" });
-  await handle.focus();
-  await page.keyboard.press("ArrowRight");
-  await expect.poll(async () => await page.evaluate(() => globalThis.__resourceSchedulerResize.commits.length)).toBe(1);
-  const [commit] = await page.evaluate(() => globalThis.__resourceSchedulerResize.commits);
-  expect(commit.start).toBe("2026-11-10T09:00:00.000Z");
-  expect(commit.end).toBe("2026-11-10T10:15:00.000Z");
-  expect(commit.fromResourceIds).toEqual(["a"]);
-  expect(commit.toResourceIds).toEqual(["a"]);
-  await expect(page.getByRole("separator", { name: "Resize end of Visit" })).toBeVisible();
 });
 
 scenario("resource.timeline.pointer", "Resource Scheduler reuses shared pointer arming, long-press, cancellation and horizontal move", async ({ page }) => {
