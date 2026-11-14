@@ -149,8 +149,8 @@
     "qa:browser:visual": "npm run build && node tests/browser/run-suite.mjs visual",
     "check:fast": "npm run build && node tests/run-node.mjs && node tests/qa/package-audit.mjs prepare && node tests/qa/package-audit.mjs verify",
     "check:full": "npm run build && node tests/run-node.mjs && node tests/qa/package-audit.mjs snapshot && npm pack --dry-run && node tests/qa/package-audit.mjs compare && node tests/qa/package-audit.mjs verify",
-    "qa:fast": "npm run check:fast && npm run qa:browser:smoke",
-    "qa:full": "npm run check:full && npm run qa:browser",
+    "qa:fast": "npm run build && node tests/run-node.mjs && node tests/browser/run-suite.mjs smoke && node tests/qa/package-audit.mjs prepare && node tests/qa/package-audit.mjs verify",
+    "qa:full": "npm run build && node tests/run-node.mjs && node tests/browser/run-suite.mjs release && node tests/qa/package-audit.mjs snapshot && npm pack --dry-run && node tests/qa/package-audit.mjs compare && node tests/qa/package-audit.mjs verify",
     "qa:mutation": "npm run build && node tests/qa/mutation-check.mjs",
     "qa:coverage": "node tests/qa/coverage-audit.mjs"
   },
