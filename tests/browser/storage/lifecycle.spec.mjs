@@ -1,18 +1,17 @@
 import { expect } from "@playwright/test";
 import { scenario } from "../scenario-registry.mjs";
 import { openHarness } from "../support/harness.mjs";
-import { deleteDatabase } from "../helpers.mjs";
+import { DATABASE_NAME, SOURCE, deleteDatabase } from "../helpers.mjs";
 
 scenario("storage.lifecycle", "IndexedDB repository open close and reopen lifecycle remains race-safe and persistent", async ({ page }) => {
   await openHarness(page);
   await deleteDatabase(page);
 
-  const result = await page.evaluate(async () => {
+  const result = await page.evaluate(async ({ databaseName, source }) => {
     const { IndexedDbCalendarRepository } = await import("/dist/storage/indexeddb-repository.js");
-    const source = { id: "personal", title: "Personal", visible: true };
     const createRepository = () => new IndexedDbCalendarRepository({ sources: [source] });
     const erase = () => new Promise((resolve, reject) => {
-      const request = indexedDB.deleteDatabase("calendar");
+      const request = indexedDB.deleteDatabase(databaseName);
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
       request.onblocked = () => reject(new Error("database deletion blocked"));
@@ -89,7 +88,7 @@ scenario("storage.lifecycle", "IndexedDB repository open close and reopen lifecy
         itemIds: reopened.items.map(item => item.id),
       },
     };
-  });
+  }, { databaseName: DATABASE_NAME, source: SOURCE });
 
   expect(result.singleFlight).toEqual({ samePromise: true, revision: 0 });
   expect(result.closeDuringOpen.openError).toMatch(/cancelled by close/i);
