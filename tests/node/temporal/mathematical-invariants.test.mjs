@@ -15,24 +15,9 @@ import {
   temporalSeriesIdentityAtOrdinal,
   temporalSeriesOrdinal,
 } from "../../../dist/core/recurrence.js";
-import {
-  associateCalendarResources,
-  validateCalendarResourceAssignments,
-} from "../../../dist/features/resource-scheduler/index.js";
-import * as Sync from "../../../dist/interoperability/sync.js";
-import { makeCalendarItem, makeResourceOccurrence } from "../../fixtures/domain.mjs";
+import { makeResourceOccurrence } from "../../fixtures/domain.mjs";
+import { permutations } from "../../fixtures/combinatorics.mjs";
 import { DAY_MS, utcDateKey, referenceUtcRecurrence } from "../../fixtures/reference-temporal.mjs";
-
-function permutations(values) {
-  if (values.length <= 1) return [values.slice()];
-  const output = [];
-  for (let index = 0; index < values.length; index += 1) {
-    const head = values[index];
-    const tail = [...values.slice(0, index), ...values.slice(index + 1)];
-    for (const rest of permutations(tail)) output.push([head, ...rest]);
-  }
-  return output;
-}
 
 function layoutSignature(rows) {
   return [...rows]
@@ -214,113 +199,6 @@ test("interval collision semantics match the half-open interval model exhaustive
   const block = makeResourceOccurrence({ occurrenceId: "block", sourceItemId: "block", start: "2026-11-10T09:30:00.000Z", end: "2026-11-10T10:30:00.000Z" });
   assert.deepEqual(placementCollisions([block], new Date(marker.start), new Date(marker.end), false, { mode: "prevent" }), []);
   assert.deepEqual(placementCollisions([marker], new Date(block.start), new Date(block.end), false, { mode: "prevent" }), []);
-});
-
-test("resource assignment normalization is invariant under every small-input permutation", () => {
-  const resources = [
-    { id: "group", title: "Rooms" },
-    { id: "a", title: "A", parentId: "group", order: 2, acceptsAssignments: true },
-    { id: "b", title: "B", parentId: "group", order: 1, acceptsAssignments: true },
-    { id: "c", title: "C", parentId: "group", order: 3, acceptsAssignments: true },
-  ];
-  const occurrences = [
-    makeResourceOccurrence({ occurrenceId: "x", sourceItemId: "x", title: "X" }),
-    makeResourceOccurrence({ occurrenceId: "y", sourceItemId: "y", title: "Y" }),
-  ];
-  const expectedAssignments = [
-    { occurrenceId: "x", resourceIds: ["b", "a", "c"], version: { revision: 7 } },
-    { occurrenceId: "y", resourceIds: ["b", "a"] },
-  ];
-  const expectedAssociations = [["b", "x", 7], ["b", "y", null], ["a", "x", 7], ["a", "y", null], ["c", "x", 7]];
-
-  for (const resourceOrder of permutations(resources)) {
-    for (const occurrenceOrder of permutations(occurrences)) {
-      for (const xIds of permutations(["a", "b", "c"])) {
-        for (const yIds of permutations(["a", "b"])) {
-          for (const assignmentOrder of permutations([
-            { occurrenceId: "x", resourceIds: xIds, version: { revision: 7 } },
-            { occurrenceId: "y", resourceIds: yIds },
-          ])) {
-            const beforeX = xIds.slice();
-            const beforeY = yIds.slice();
-            assert.deepEqual(
-              validateCalendarResourceAssignments(resourceOrder, occurrenceOrder, assignmentOrder),
-              expectedAssignments,
-            );
-            assert.deepEqual(
-              associateCalendarResources(resourceOrder, occurrenceOrder, assignmentOrder)
-                .map(row => [row.resourceId, row.occurrenceId, row.assignmentVersion?.revision ?? null]),
-              expectedAssociations,
-            );
-            assert.deepEqual(xIds, beforeX);
-            assert.deepEqual(yIds, beforeY);
-          }
-        }
-      }
-    }
-  }
-});
-
-test("sync decision model covers every local/remote deletion-change state and conflict policy", () => {
-  const identity = { provider: "google", connectionId: "model", externalCalendarId: "remote", eventId: "g1" };
-  const base = makeCalendarItem({ ownership: "host-owned" });
-  const recurrenceA = makeCalendarItem({ ownership: "host-owned", recurrence: { rule: { frequency: "weekly", interval: 2, byDay: [{ weekday: 1 }, { weekday: 3 }] } } });
-  const recurrenceB = makeCalendarItem({ ownership: "host-owned", recurrence: { rule: { byDay: [{ weekday: 1 }, { weekday: 3 }], interval: 2, frequency: "weekly" } } });
-  assert.equal(Sync.fingerprintCalendarItem(recurrenceA), Sync.fingerprintCalendarItem(recurrenceB));
-  const localChanged = makeCalendarItem({ ownership: "host-owned", title: "Local changed" });
-  const remoteChangedItem = makeCalendarItem({ ownership: "host-owned", title: "Remote changed" });
-  const converged = makeCalendarItem({ ownership: "host-owned", title: "Converged" });
-  const snapshot = item => ({ identity, item, deleted: false, fingerprint: Sync.fingerprintCalendarItem(item) });
-  const deleted = { identity, deleted: true, fingerprint: "<deleted>" };
-  const link = {
-    localItemId: base.id,
-    identity,
-    baseLocalFingerprint: Sync.fingerprintCalendarItem(base),
-    baseRemoteFingerprint: Sync.fingerprintCalendarItem(base),
-    status: "clean",
-    lastSyncedAt: "2026-01-01T00:00:00.000Z",
-  };
-  const locals = { same: base, changed: localChanged, deleted: undefined };
-  const remotes = { same: snapshot(base), changed: snapshot(remoteChangedItem), deleted, missing: undefined };
-  const policies = ["manual", "prefer-local", "prefer-remote"];
-  const policyAction = (manual, local, remote, policy) =>
-    policy === "manual" ? manual : policy === "prefer-local" ? local : remote;
-  const expected = (localState, remoteState, policy) => {
-    if (localState === "same") {
-      if (remoteState === "same") return "none";
-      if (remoteState === "changed") return "apply-remote";
-      return "delete-local";
-    }
-    if (localState === "changed") {
-      if (remoteState === "same") return "push-local";
-      if (remoteState === "changed") return policyAction("conflict", "push-local", "apply-remote", policy);
-      return policyAction("conflict", "push-local", "delete-local", policy);
-    }
-    if (remoteState === "same") return "delete-remote";
-    if (remoteState === "changed") return policyAction("conflict", "delete-remote", "apply-remote", policy);
-    return "rebase";
-  };
-  const conflictReason = (localState, remoteState) => {
-    if (localState === "changed" && remoteState === "changed") return "both-modified";
-    if (localState === "changed") return "local-modified-remote-deleted";
-    return "remote-modified-local-deleted";
-  };
-
-  for (const [localState, local] of Object.entries(locals)) {
-    for (const [remoteState, remote] of Object.entries(remotes)) {
-      for (const policy of policies) {
-        const decision = Sync.decideSync(link, local, remote, policy, "2026-01-02T00:00:00.000Z");
-        const action = expected(localState, remoteState, policy);
-        assert.equal(decision.action, action, `${localState}/${remoteState}/${policy}`);
-        if (action === "conflict") assert.equal(decision.conflict?.reason, conflictReason(localState, remoteState));
-        else assert.equal(decision.conflict, undefined);
-      }
-    }
-  }
-
-  for (const policy of policies) {
-    assert.equal(Sync.decideSync(link, converged, snapshot(converged), policy).action, "rebase");
-  }
 });
 
 test("UTC daily and weekly recurrence matches an independent civil-date enumeration across leap and year boundaries", () => {

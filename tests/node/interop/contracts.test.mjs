@@ -362,3 +362,65 @@ test('Google sync removes a stale link once both local and remote are already de
   assert.deepEqual(result.state.links,[]);
   assert.equal(result.conflicts.length,0);
 });
+
+test("sync decision model covers every local/remote deletion-change state and conflict policy", () => {
+  const identity = { provider: "google", connectionId: "model", externalCalendarId: "remote", eventId: "g1" };
+  const base = makeCalendarItem({ ownership: "host-owned" });
+  const recurrenceA = makeCalendarItem({ ownership: "host-owned", recurrence: { rule: { frequency: "weekly", interval: 2, byDay: [{ weekday: 1 }, { weekday: 3 }] } } });
+  const recurrenceB = makeCalendarItem({ ownership: "host-owned", recurrence: { rule: { byDay: [{ weekday: 1 }, { weekday: 3 }], interval: 2, frequency: "weekly" } } });
+  assert.equal(Sync.fingerprintCalendarItem(recurrenceA), Sync.fingerprintCalendarItem(recurrenceB));
+  const localChanged = makeCalendarItem({ ownership: "host-owned", title: "Local changed" });
+  const remoteChangedItem = makeCalendarItem({ ownership: "host-owned", title: "Remote changed" });
+  const converged = makeCalendarItem({ ownership: "host-owned", title: "Converged" });
+  const snapshot = item => ({ identity, item, deleted: false, fingerprint: Sync.fingerprintCalendarItem(item) });
+  const deleted = { identity, deleted: true, fingerprint: "<deleted>" };
+  const link = {
+    localItemId: base.id,
+    identity,
+    baseLocalFingerprint: Sync.fingerprintCalendarItem(base),
+    baseRemoteFingerprint: Sync.fingerprintCalendarItem(base),
+    status: "clean",
+    lastSyncedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const locals = { same: base, changed: localChanged, deleted: undefined };
+  const remotes = { same: snapshot(base), changed: snapshot(remoteChangedItem), deleted, missing: undefined };
+  const policies = ["manual", "prefer-local", "prefer-remote"];
+  const policyAction = (manual, local, remote, policy) =>
+    policy === "manual" ? manual : policy === "prefer-local" ? local : remote;
+  const expected = (localState, remoteState, policy) => {
+    if (localState === "same") {
+      if (remoteState === "same") return "none";
+      if (remoteState === "changed") return "apply-remote";
+      return "delete-local";
+    }
+    if (localState === "changed") {
+      if (remoteState === "same") return "push-local";
+      if (remoteState === "changed") return policyAction("conflict", "push-local", "apply-remote", policy);
+      return policyAction("conflict", "push-local", "delete-local", policy);
+    }
+    if (remoteState === "same") return "delete-remote";
+    if (remoteState === "changed") return policyAction("conflict", "delete-remote", "apply-remote", policy);
+    return "rebase";
+  };
+  const conflictReason = (localState, remoteState) => {
+    if (localState === "changed" && remoteState === "changed") return "both-modified";
+    if (localState === "changed") return "local-modified-remote-deleted";
+    return "remote-modified-local-deleted";
+  };
+
+  for (const [localState, local] of Object.entries(locals)) {
+    for (const [remoteState, remote] of Object.entries(remotes)) {
+      for (const policy of policies) {
+        const decision = Sync.decideSync(link, local, remote, policy, "2026-01-02T00:00:00.000Z");
+        const action = expected(localState, remoteState, policy);
+        assert.equal(decision.action, action, `${localState}/${remoteState}/${policy}`);
+        if (action === "conflict") assert.equal(decision.conflict?.reason, conflictReason(localState, remoteState));
+        else assert.equal(decision.conflict, undefined);
+      }
+    }
+  }
+
+  for (const policy of policies) {
+    assert.equal(Sync.decideSync(link, converged, snapshot(converged), policy).action, "rebase");
+  }
+});

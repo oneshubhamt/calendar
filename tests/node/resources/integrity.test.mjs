@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { permutations } from "../../fixtures/combinatorics.mjs";
+import { makeResourceOccurrence } from "../../fixtures/domain.mjs";
 import {
   validateCalendarResources, flattenCalendarResources,
   validateCalendarResourceAssignments, associateCalendarResources,
@@ -80,4 +82,49 @@ test("flattening remains stack-safe and deterministic for a very deep valid hier
     {occurrenceId:"deep",resourceIds:[`r${depth-1}`]},
   ]);
   assert.deepEqual(normalized[0].resourceIds,[`r${depth-1}`]);
+});
+
+test("resource assignment normalization is invariant under every small-input permutation", () => {
+  const resources = [
+    { id: "group", title: "Rooms" },
+    { id: "a", title: "A", parentId: "group", order: 2, acceptsAssignments: true },
+    { id: "b", title: "B", parentId: "group", order: 1, acceptsAssignments: true },
+    { id: "c", title: "C", parentId: "group", order: 3, acceptsAssignments: true },
+  ];
+  const occurrences = [
+    makeResourceOccurrence({ occurrenceId: "x", sourceItemId: "x", title: "X" }),
+    makeResourceOccurrence({ occurrenceId: "y", sourceItemId: "y", title: "Y" }),
+  ];
+  const expectedAssignments = [
+    { occurrenceId: "x", resourceIds: ["b", "a", "c"], version: { revision: 7 } },
+    { occurrenceId: "y", resourceIds: ["b", "a"] },
+  ];
+  const expectedAssociations = [["b", "x", 7], ["b", "y", null], ["a", "x", 7], ["a", "y", null], ["c", "x", 7]];
+
+  for (const resourceOrder of permutations(resources)) {
+    for (const occurrenceOrder of permutations(occurrences)) {
+      for (const xIds of permutations(["a", "b", "c"])) {
+        for (const yIds of permutations(["a", "b"])) {
+          for (const assignmentOrder of permutations([
+            { occurrenceId: "x", resourceIds: xIds, version: { revision: 7 } },
+            { occurrenceId: "y", resourceIds: yIds },
+          ])) {
+            const beforeX = xIds.slice();
+            const beforeY = yIds.slice();
+            assert.deepEqual(
+              validateCalendarResourceAssignments(resourceOrder, occurrenceOrder, assignmentOrder),
+              expectedAssignments,
+            );
+            assert.deepEqual(
+              associateCalendarResources(resourceOrder, occurrenceOrder, assignmentOrder)
+                .map(row => [row.resourceId, row.occurrenceId, row.assignmentVersion?.revision ?? null]),
+              expectedAssociations,
+            );
+            assert.deepEqual(xIds, beforeX);
+            assert.deepEqual(yIds, beforeY);
+          }
+        }
+      }
+    }
+  }
 });
