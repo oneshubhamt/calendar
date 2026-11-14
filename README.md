@@ -93,10 +93,11 @@ Use the repository-pinned toolchain:
 ```bash
 nvm use
 npm ci
-npm run check
+npm run check:fast   # one build, full Node coverage, publication manifest
+npm run check        # native prepack and byte-for-byte publication parity
 ```
 
-The normal quality gate is strict TypeScript typechecking, the complete non-visual test suite, and package-content validation. Native browser QA remains a separate release gate.
+Use `npm run qa:browser:smoke` for routine cross-browser journeys and `npm run qa:browser` for the unchanged 147-execution release matrix. Combined `qa:fast` and `qa:full` share compilation between Node and browser QA. See `CONTRIBUTING.md` and `docs/QA-CONTRACT-MAP.md`.
 
 There is no migration or legacy-compatibility layer: the package supports only its current contracts. The permanent suite covers recurrence/DST, series edits, view-range/list grouping, resize geometry and recurring resize commands, source and item authority, fail-closed undo/redo under concurrent changes, persistence invariants, generic host semantics, optional-feature boundaries, temporal-preserving edits, interoperability/reminders and the optional Director integrations. Native browser QA is a separate release gate covering storage/cross-tab behavior, real DOM interactions and visual baselines.
 

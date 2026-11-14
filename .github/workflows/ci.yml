@@ -4,6 +4,15 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      full:
+        description: "Run native publication compiler and byte-parity gate"
+        type: boolean
+        default: false
+      mutation:
+        description: "Run four targeted regression fault injections"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -42,17 +51,17 @@ jobs:
           test "$(npx tsc --version)" = "Version 7.0.2"
 
       - name: Fast single-build QA
-        if: github.ref != 'refs/heads/main' && github.base_ref != 'main' || github.ref == 'refs/heads/qa-ci-pass-d'
+        if: github.ref != 'refs/heads/main' && github.base_ref != 'main' && inputs.full != true
         run: npm run check:fast
 
       - name: Full native package/parity QA
-        if: github.ref == 'refs/heads/main' || github.base_ref == 'main' || github.ref == 'refs/heads/qa-ci-pass-d'
+        if: github.ref == 'refs/heads/main' || github.base_ref == 'main' || inputs.full == true
         run: npm run check:full
 
       - name: Executable coverage and lane census
-        if: github.ref == 'refs/heads/main' || github.base_ref == 'main' || github.ref == 'refs/heads/qa-ci-pass-d'
+        if: github.ref == 'refs/heads/main' || github.base_ref == 'main' || inputs.full == true || inputs.mutation == true
         run: npm run qa:coverage
 
       - name: Selective fault injection
-        if: github.ref == 'refs/heads/qa-ci-pass-d'
+        if: inputs.mutation == true
         run: npm run qa:mutation
