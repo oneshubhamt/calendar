@@ -1,141 +1,110 @@
 import { expect } from "@playwright/test";
 import { scenario } from "../scenario-registry.mjs";
 import { openHarness } from "../support/harness.mjs";
-import { closeRepository, deleteDatabase, event, openRepository, repositoryState } from "../helpers.mjs";
+import { deleteDatabase } from "../helpers.mjs";
 
-scenario("storage.single-flight", "repository open is single-flight across concurrent callers", async ({ page }) => {
+scenario("storage.lifecycle", "IndexedDB repository open close and reopen lifecycle remains race-safe and persistent", async ({ page }) => {
   await openHarness(page);
   await deleteDatabase(page);
 
   const result = await page.evaluate(async () => {
     const { IndexedDbCalendarRepository } = await import("/dist/storage/indexeddb-repository.js");
-    const repository = new IndexedDbCalendarRepository({
-      sources: [{ id: "personal", title: "Personal", visible: true }],
+    const source = { id: "personal", title: "Personal", visible: true };
+    const createRepository = () => new IndexedDbCalendarRepository({ sources: [source] });
+    const erase = () => new Promise((resolve, reject) => {
+      const request = indexedDB.deleteDatabase("calendar");
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+      request.onblocked = () => reject(new Error("database deletion blocked"));
     });
-    const first = repository.open();
-    const second = repository.open();
-    const third = repository.open();
-    const samePromise = first === second && second === third;
-    await Promise.all([first, second, third]);
-    const revision = repository.read().revision;
-    repository.close();
-    return { samePromise, revision };
-  });
-
-  expect(result).toEqual({ samePromise: true, revision: 0 });
-  await deleteDatabase(page);
-});
-
-scenario("storage.close-open", "close during open cancels the pending lifecycle and cannot resurrect a closed repository", async ({ page }) => {
-  await openHarness(page);
-  await deleteDatabase(page);
-
-  const result = await page.evaluate(async () => {
-    const { IndexedDbCalendarRepository } = await import("/dist/storage/indexeddb-repository.js");
-    const repository = new IndexedDbCalendarRepository({
-      sources: [{ id: "personal", title: "Personal", visible: true }],
-    });
-    const opening = repository.open();
-    repository.close();
-
-    let openError = null;
-    try { await opening; } catch (error) { openError = String(error); }
-
-    let readError = null;
-    try { repository.read(); } catch (error) { readError = String(error); }
-    return { openError, readError };
-  });
-
-  expect(result.openError).toMatch(/cancelled by close/i);
-  expect(result.readError).toMatch(/open\(\) must complete before read/i);
-  await deleteDatabase(page);
-});
-
-scenario("storage.reopen-race", "immediate reopen after close wins over an older in-flight open", async ({ page }) => {
-  await openHarness(page);
-  await deleteDatabase(page);
-
-  const result = await page.evaluate(async () => {
-    const { IndexedDbCalendarRepository } = await import("/dist/storage/indexeddb-repository.js");
-    const repository = new IndexedDbCalendarRepository({
-      sources: [{ id: "personal", title: "Personal", visible: true }],
-    });
-
-    const firstOpen = repository.open();
-    repository.close();
-    const secondOpen = repository.open();
-    const [first, second] = await Promise.allSettled([firstOpen, secondOpen]);
-    const state = repository.read();
-
-    await repository.create({
-      id: "after-reopen",
+    const row = id => ({
+      id,
       calendarId: "personal",
-      title: "After reopen",
+      title: id,
       start: "2026-11-10T09:00:00.000Z",
       end: "2026-11-10T10:00:00.000Z",
       kind: "event",
       ownership: "calendar",
       editPolicy: "full",
     });
-    const committed = repository.read();
-    repository.close();
+
+    const single = createRepository();
+    const first = single.open();
+    const second = single.open();
+    const third = single.open();
+    const singleFlight = {
+      samePromise: first === second && second === third,
+    };
+    await Promise.all([first, second, third]);
+    singleFlight.revision = single.read().revision;
+    single.close();
+    await erase();
+
+    const cancelled = createRepository();
+    const opening = cancelled.open();
+    cancelled.close();
+    let openError = null;
+    try { await opening; } catch (error) { openError = String(error); }
+    let readError = null;
+    try { cancelled.read(); } catch (error) { readError = String(error); }
+    await erase();
+
+    const raced = createRepository();
+    const staleOpen = raced.open();
+    raced.close();
+    const freshOpen = raced.open();
+    const [stale, fresh] = await Promise.allSettled([staleOpen, freshOpen]);
+    await raced.create(row("after-reopen"));
+    const racedSnapshot = raced.read();
+    raced.close();
+
+    const verifyRace = createRepository();
+    await verifyRace.open();
+    const persistedRace = verifyRace.read();
+    verifyRace.close();
+    await erase();
+
+    const sameInstance = createRepository();
+    await sameInstance.open();
+    await sameInstance.create(row("persisted-same-instance"));
+    sameInstance.close();
+    await sameInstance.open();
+    const reopened = sameInstance.read();
+    sameInstance.close();
 
     return {
-      firstStatus: first.status,
-      firstReason: first.status === "rejected" ? String(first.reason) : null,
-      secondStatus: second.status,
-      initialRevision: state.revision,
-      committedRevision: committed.revision,
-      itemIds: committed.items.map(item => item.id),
+      singleFlight,
+      closeDuringOpen: { openError, readError },
+      reopenRace: {
+        staleStatus: stale.status,
+        staleReason: stale.status === "rejected" ? String(stale.reason) : null,
+        freshStatus: fresh.status,
+        revision: racedSnapshot.revision,
+        itemIds: racedSnapshot.items.map(item => item.id),
+        persistedRevision: persistedRace.revision,
+        persistedItemIds: persistedRace.items.map(item => item.id),
+      },
+      sameInstance: {
+        revision: reopened.revision,
+        itemIds: reopened.items.map(item => item.id),
+      },
     };
   });
 
-  expect(result).toMatchObject({
-    firstStatus: "rejected",
-    secondStatus: "fulfilled",
-    initialRevision: 0,
-    committedRevision: 1,
-    itemIds: ["after-reopen"],
-  });
-  expect(result.firstReason).toMatch(/cancelled by close/i);
-
-  await openRepository(page);
-  expect(await repositoryState(page)).toMatchObject({
+  expect(result.singleFlight).toEqual({ samePromise: true, revision: 0 });
+  expect(result.closeDuringOpen.openError).toMatch(/cancelled by close/i);
+  expect(result.closeDuringOpen.readError).toMatch(/open\(\) must complete before read/i);
+  expect(result.reopenRace).toMatchObject({
+    staleStatus: "rejected",
+    freshStatus: "fulfilled",
     revision: 1,
-    items: [{ id: "after-reopen" }],
+    itemIds: ["after-reopen"],
+    persistedRevision: 1,
+    persistedItemIds: ["after-reopen"],
   });
-  await closeRepository(page);
-  await deleteDatabase(page);
-});
+  expect(result.reopenRace.staleReason).toMatch(/cancelled by close/i);
+  expect(result.sameInstance).toEqual({ revision: 1, itemIds: ["persisted-same-instance"] });
 
-scenario("storage.reopen", "one repository instance can close and reopen persisted state deterministically", async ({ page }) => {
-  await openHarness(page);
-  await deleteDatabase(page);
-
-  const result = await page.evaluate(async () => {
-    const { IndexedDbCalendarRepository } = await import("/dist/storage/indexeddb-repository.js");
-    const repository = new IndexedDbCalendarRepository({
-      sources: [{ id: "personal", title: "Personal", visible: true }],
-    });
-    await repository.open();
-    await repository.create({
-      id: "persisted-same-instance",
-      calendarId: "personal",
-      title: "Persisted same instance",
-      start: "2026-11-10T09:00:00.000Z",
-      end: "2026-11-10T10:00:00.000Z",
-      kind: "event",
-      ownership: "calendar",
-      editPolicy: "full",
-    });
-    repository.close();
-    await repository.open();
-    const snapshot = repository.read();
-    repository.close();
-    return { revision: snapshot.revision, itemIds: snapshot.items.map(item => item.id) };
-  });
-
-  expect(result).toEqual({ revision: 1, itemIds: ["persisted-same-instance"] });
   await deleteDatabase(page);
 });
 
