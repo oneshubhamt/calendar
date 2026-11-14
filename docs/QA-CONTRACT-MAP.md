@@ -707,3 +707,107 @@ Pass H used two release checkpoints:
 Full Node/deep/package verification on the compressed branch also remained green: **215/215 Node tests**, zero skips, publication manifest **185 files / 31 export subpaths**, and all **20 invariant-registry contracts** with required routine/release risk classes covered.
 
 The temporary force-full workflow switches used for these measurements were restored afterward; permanent workflow policy remains fast routine CI plus the normal browser-smoke gate.
+
+
+## Pass I — CI economics (2026-11-14)
+
+Pass I changes **where** browser evidence runs, not what product behavior is tested. The Pass-H browser suite remains at 46 registered scenarios; no scenario body or production source is deleted in this pass.
+
+### Routine multi-engine re-audit
+
+The 14 Pass-H `@cross` scenarios were re-evaluated against the Pass-E witness audit and the browser-specific failure mode each scenario owns.
+
+Eight remain genuinely engine-sensitive and therefore continue to run in Chromium, Firefox and WebKit during routine QA:
+
+| Cross-engine witness | Why all three engines remain justified |
+|---|---|
+| `interaction.timed-drag` | native mouse/pointer dispatch and drag gesture integration |
+| `view.dst-fallback` | timezone/DST rendering around a repeated civil hour |
+| `drop.authorized` | native `DataTransfer` / `DragEvent` DOM integration |
+| `print.snapshot` | print-media CSS, detached DOM and browser print layout behavior |
+| `resource.timeline.pointer` | shared PointerEvent/touch long-press, cancellation and horizontal gesture lifecycle |
+| `storage.schema` | real IndexedDB topology/opening behavior across implementations |
+| `storage.cas` | two-tab IndexedDB revision/CAS concurrency |
+| `storage.focus-fallback` | visibility/focus fallback when `BroadcastChannel` is unavailable |
+
+Six former cross-engine scenarios no longer consume Firefox/WebKit routinely:
+
+- `refresh.midnight` remains Chromium smoke because its value is live temporal DOM/timer integration, not an engine-specific mathematical oracle;
+- `custom.host-view` moves to exhaustive QA because the host boundary is already independently protected by Node adapter contracts;
+- `resource.timeline.keyboard` and `resource.grid.keyboard` move to exhaustive QA because keyboard mutation mathematics/authority are strongly covered in Node and routine Chromium still exercises interactive resource surfaces;
+- `resource.grid.pointer` remains Chromium smoke to cover its distinct grid/geometry adapter, while the shared pointer lifecycle keeps one all-engine witness in Resource Scheduler;
+- `storage.reminder-claim` moves to exhaustive QA; routine storage coverage still includes real IndexedDB schema/CAS/focus behavior plus Chromium persistence and BroadcastChannel convergence.
+
+Two low-yield Chromium smoke cases also move to exhaustive-only QA: the host-specific overdue indicator and basic Resource Scheduler hierarchy rendering. Their contracts remain tested; they simply no longer gate every feature-branch push.
+
+### Routine lane after the audit
+
+Routine Chromium now contains broad evidence for:
+
+- core Week rendering;
+- live midnight refresh;
+- structured accessible actions;
+- narrow accessible week-number presentation;
+- Multi-Month and Timeline optional views;
+- embedded DOM/style isolation;
+- base timed drag;
+- external DOM drop;
+- print snapshot;
+- DST fall-back rendering;
+- Resource Scheduler shared pointer behavior;
+- Resource TimeGrid pointer/geometry integration;
+- IndexedDB schema, records and CAS;
+- BroadcastChannel convergence;
+- focus fallback without BroadcastChannel.
+
+This currently resolves to **18 Chromium scenarios**, with the **8 engine-sensitive scenarios** repeated on Firefox and WebKit: **34 executions total**. These counts are measurements, not pinned contracts; `coverage-audit.mjs` continues to validate scenario/project membership as sets and required risk classes semantically.
+
+Measured on GitHub Actions, routine browser QA passed **34/34 in 27.7 s**, versus Pass H's **53/53 in 40.6 s**. That is about **35.8% fewer executions** and roughly **31.8% lower Playwright test duration** on the observed run.
+
+### Exhaustive high-confidence lane
+
+Pass H had temporarily made the release lane selective across Firefox/WebKit. Pass I restores an explicit exhaustive release policy:
+
+- Chromium: every registered scenario, including the nine reviewed visual baselines;
+- Firefox and WebKit: every **nonvisual** registered scenario;
+- visual baselines remain Chromium-only.
+
+Because Pass H consolidated 55 scenarios into 46 coherent journeys, the exhaustive matrix is now **120 executions** rather than the historical 147. Recreating 147 would require restoring intentionally superseded micro-scenarios or duplicating executions and would violate the evidence-compression objective. The 120-run matrix is therefore the current semantic equivalent of the old exhaustive gate.
+
+The exact Pass-I branch passed this exhaustive matrix **120/120 in about 1.5 minutes**.
+
+### CI routing
+
+The browser workflow now has one explicit economic policy:
+
+- ordinary feature-branch pushes/PRs → routine tagged smoke;
+- pushes to `main` → exhaustive release browser QA;
+- PRs targeting `main` → exhaustive release browser QA;
+- version-tag pushes → exhaustive release browser QA;
+- weekly scheduled browser QA → exhaustive release browser QA;
+- manual workflow dispatch with `full=true` → exhaustive release browser QA, intended for major refactors or other high-risk changes.
+
+Local `npm run qa:browser` and the browser portion of `qa:full` use the exhaustive release lane. `qa:browser:smoke` remains the routine gate.
+
+### Durable anti-drift contract
+
+`coverage-audit.mjs` now distinguishes routine and release project membership:
+
+- routine Chromium must equal the union of `@smoke` and `@cross`;
+- routine Firefox/WebKit must equal exactly `@cross`;
+- release Chromium must contain every registered scenario;
+- release Firefox/WebKit must contain every registered nonvisual scenario.
+
+These are set contracts derived from tags, not hard-coded scenario totals.
+
+### Verification
+
+On the permanent lane definitions before documentation-only closure:
+
+- routine Node/package CI: **211 pass + 4 deliberate deep skips**, zero failures;
+- publication manifest: **185 files / 31 export subpaths**;
+- invariant registry: all **20 required invariants** and every routine/release risk class covered;
+- routine browser lane: **34/34 passed in 27.7 s**;
+- exhaustive browser lane: **120/120 passed in ~1.5 min**.
+
+No production source changed in Pass I.
