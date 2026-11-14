@@ -85,7 +85,7 @@ function splitModel(item, occurrence, start, end, ordinal) {
     end,
     recurrence: {
       ...item.recurrence,
-      rule: { ...item.recurrence.rule, count: originalCount - ordinal + 1 },
+      rule: { ...item.recurrence.rule, count: originalCount - ordinal + 1, until: item.recurrence.rule.until },
       exceptions: undefined,
     },
   };
