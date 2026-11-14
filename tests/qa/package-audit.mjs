@@ -65,7 +65,9 @@ function verify() {
   });
   if (child.error) throw child.error;
   assert.equal(child.status, 0, `npm pack manifest failed: ${child.stderr || child.stdout}`);
-  const [manifest] = JSON.parse(child.stdout);
+  // npm 12 may return one package object rather than an array for dry-run JSON.
+  const parsed = JSON.parse(child.stdout);
+  const manifest = Array.isArray(parsed) ? parsed[0] : parsed;
   assert.ok(Array.isArray(manifest?.files), "npm pack returned no manifest");
   const files = new Set(manifest.files.map(file => file.path));
   assert.ok(files.has("package.json") && files.has("README.md"), "publication metadata missing");
