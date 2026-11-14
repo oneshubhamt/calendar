@@ -59,14 +59,24 @@ function discoverBrowserLane(lane, byTitle) {
   assert.equal(result.status, 0, `${lane} discovery failed: ${result.stderr || result.stdout}`);
 
   const ids = new Set();
+  const byProject = new Map();
   for (const line of result.stdout.split("\n")) {
     if (!line.includes(" › ")) continue;
+    const project = line.match(/^\s*\[([^\]]+)\]\s*›/)?.[1];
     const tail = line.split(" › ").at(-1)?.replace(/\s+@release(?:\s+@\w+)*\s*$/, "");
-    if (!tail) continue;
+    if (!project || !tail) continue;
     const id = byTitle.get(tail);
-    if (id) ids.add(id);
+    if (!id) continue;
+    ids.add(id);
+    if (!byProject.has(project)) byProject.set(project, new Set());
+    byProject.get(project).add(id);
   }
-  return ids;
+  return { ids, byProject };
+}
+
+function expectedProjectScenarioIds(lane, project) {
+  if (project === "chromium") return expectedScenarioIds(lane);
+  return expectedScenarioIds("cross");
 }
 
 function assertSameSet(actual, expected, label) {
@@ -77,11 +87,24 @@ const node = nodeWitnesses();
 const browser = browserDeclarations();
 
 for (const lane of ["release", "smoke"]) {
+  const discovered = discoverBrowserLane(lane, browser.byTitle);
   assertSameSet(
-    discoverBrowserLane(lane, browser.byTitle),
+    discovered.ids,
     expectedScenarioIds(lane),
     `${lane} browser lane membership differs from scenario tags`,
   );
+  assertSameSet(
+    new Set(discovered.byProject.keys()),
+    new Set(["chromium", "firefox", "webkit"]),
+    `${lane} browser projects differ from the canonical engine set`,
+  );
+  for (const project of ["chromium", "firefox", "webkit"]) {
+    assertSameSet(
+      discovered.byProject.get(project) ?? new Set(),
+      expectedProjectScenarioIds(lane, project),
+      `${lane}/${project} browser membership differs from the scenario-tag policy`,
+    );
+  }
 }
 
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
