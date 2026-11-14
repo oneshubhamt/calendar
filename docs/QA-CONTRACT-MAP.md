@@ -121,3 +121,38 @@ The workflow elapsed time includes checkout, pinned npm/Node setup and dependenc
 - **Measured CI:** Node and browser both green on the pinned source; those runs predate this documentation-only commit. Browser costs are measured in existing CI, no local rerun claimed.
 - **Pass B/C must preserve:** all E contracts; the unique parts of every C/R/I contract; executable deep witnesses available in a separate lane; and real-browser multi-tab, DST, atomic resource mutation and accessibility evidence.
 - **Verification required after consolidation:** executable inventory counts; invariant-to-witness matrix reconciliation; clean typecheck/build/package; targeted browser journeys; full three-engine QA; before/after wall-clock timings. Delete nothing without another test proving the same invariant and failure mode.
+
+## Pass B — Node consolidation (2026-11-14)
+
+**Implementation source:** [`qa-node-pass-b`](https://github.com/oneshubhamt/calendar/tree/qa-node-pass-b), to be fast-forwarded to `working` after validation. The exhaustive Pass A census above remains **immutably anchored** to its original commit; this section is the crosswalk to the canonical replacement tree.
+
+### Current product-domain ownership
+
+| Node domain directory | Modules | Test cases | Contract ownership |
+|---|---:|---:|---|
+| `tests/node/architecture/` | 1 | 7 | Dependency direction, package surface |
+| `tests/node/engine/` | 2 | 45 | Repository, mutation/undo, occurrence authority |
+| `tests/node/host/` | 3 | 27 | Generic contracts, host integrations/adapters |
+| `tests/node/interop/` | 1 | 17 | ICS, Google sync, reminders, independent sync decision model |
+| `tests/node/projection/` | 1 | 14 | Occurrence/provider behavior and background-query isolation |
+| `tests/node/resources/` | 6 | 41 | Hierarchy, normalization oracle, availability, geometry, atomic placement |
+| `tests/node/temporal/` | 4 | 23 | Time/DST, recurrence, overlap, ISO week numbers |
+| `tests/node/view/` | 7 | 37 | Navigation, extensions, optional views, editor/placement presentation |
+| **Total** | **25** | **211** | All risk domains from Pass A retained |
+
+Tests are discovered by `tests/run-node.mjs` using Node's cross-platform `globSync`, rather than a shell-specific nonrecursive wildcard. Shared immutable domain objects remain in `tests/fixtures/domain.mjs`; independent Gregorian day-scan, civil constants and permutation combinatorics live in `tests/fixtures/reference-temporal.mjs` and `tests/fixtures/combinatorics.mjs`. Do not import production algorithms into these reference helpers.
+
+**Case reconciliation:** original **212**, remove three superseded case declarations, add two independent recurrence-oracle cases = **211**. The unchanged 208 cases retain their inputs/assertions (apart from relative import adjustments and moving two existing mathematical cases into their owning modules); one existing stale-revision test was strengthened into a multi-step reference state machine.
+
+| Superseded case | Independent contract kept in |
+|---|---|
+| `genericity:#10` root optional-exports | `tests/node/architecture/guards.test.mjs`: union of all forbidden root symbols + optional path contracts |
+| `genericity:#11` one stale `dist/core/personal.js` filename | canonical clean build + `npm pack --dry-run` and actual export-target existence checks |
+| `core:#14` event-only background skip/throw | `tests/node/projection/occurrences.test.mjs`: concurrent projected item/occurrence providers, skipped throwing background provider, full-query failure |
+| `core:#19` single stale CAS attempt (replaced in place) | `tests/node/engine/core.test.mjs`: independent accepted/stale/future transition table with state invariant after each attempt |
+
+New independent temporal cases combine a UTC date-scanning oracle (daily/biweekly across leap-year and year boundaries) with explicit **known** month-end, leap-day, New York DST and Lord Howe 30-minute rollback instants. Existing ordinal/partition metamorphic tests and the 400-year independent week-number oracle remain intact. Existing resource permutation invariants and Google sync decision matrices are relocated, not removed.
+
+**Measured validation:** baseline `working` (212 pass, **4.071 s** Node test runner); first staged run [43569572707](https://github.com/oneshubhamt/calendar/actions/runs/43569572707) (211 pass, **3.190 s**); consolidated-domain run [43569832277](https://github.com/oneshubhamt/calendar/actions/runs/43569832277) (211 pass, **3.441 s**). Both staged runs passed clean build, Node QA and packaging. Differences are observed CI timing, not statistically demonstrated speedup. Browser specs and `src/` are untouched. Pass C/D own browser selection and workflow economics.
+
+**Future change rule:** Move or remove a test only after the precise risk and its unique failure-mode witness are accounted for in the owning domain. Avoid growth of parallel architecture-guard and legacy-syntax test files.
