@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - "main"
+      - "qa-ci-pass-d" # temporary staged full-release verification
     tags:
       - "v*"
 

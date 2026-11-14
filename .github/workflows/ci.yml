@@ -41,5 +41,18 @@ jobs:
           test "$(npm --version)" = "12.2.2"
           test "$(npx tsc --version)" = "Version 7.0.2"
 
-      - name: Quality gate
-        run: npm run check
+      - name: Fast single-build QA
+        if: github.ref != 'refs/heads/main' && github.base_ref != 'main' || github.ref == 'refs/heads/qa-ci-pass-d'
+        run: npm run check:fast
+
+      - name: Full native package/parity QA
+        if: github.ref == 'refs/heads/main' || github.base_ref == 'main' || github.ref == 'refs/heads/qa-ci-pass-d'
+        run: npm run check:full
+
+      - name: Executable coverage and lane census
+        if: github.ref == 'refs/heads/main' || github.base_ref == 'main' || github.ref == 'refs/heads/qa-ci-pass-d'
+        run: npm run qa:coverage
+
+      - name: Selective fault injection
+        if: github.ref == 'refs/heads/qa-ci-pass-d'
+        run: npm run qa:mutation
