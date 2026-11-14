@@ -76,7 +76,7 @@ export const mutationCases = Object.freeze([
     invariantIds: Object.freeze(["authority.fail-closed"]),
     name: "capability provider failure falls back to writable baseline authority",
     file: "dist/core/authority.js",
-    from: "try { supplied = provider?.capabilities(occurrence); } catch {",
+    from: /try\s*\{\s*supplied\s*=\s*provider\?\.capabilities\(occurrence\);\s*\}\s*catch\s*\{/,
     to: "try { supplied = provider?.capabilities(occurrence); } catch { return baseline; } if (false) {",
     test: "tests/node/engine/occurrence-authority.test.mjs",
     title: "capability provider failure fails closed instead of crashing or falling back to writable authority",
