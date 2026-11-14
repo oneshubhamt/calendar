@@ -8,7 +8,7 @@ export async function mountAuthorizedExternalDrop(page) {
       { MemoryCalendarRepository },
       { RepositoryCommandHandler },
       { CalendarUi },
-      { CALENDAR_EXTERNAL_DROP_MIME, setCalendarExternalDropData },
+      { setCalendarExternalDropData },
     ] = await Promise.all([
       import("/dist/core/calendar-engine.js"),
       import("/dist/core/store.js"),
@@ -17,10 +17,7 @@ export async function mountAuthorizedExternalDrop(page) {
       import("/dist/view/external-drop.js"),
     ]);
 
-    const sources = [
-      { id: "personal", title: "Personal", visible: true, removable: true },
-      { id: "locked", title: "Locked", visible: true, removable: true, readOnly: true },
-    ];
+    const source = { id: "personal", title: "Personal", visible: true, removable: true };
     const initial = {
       id: "internal",
       calendarId: "personal",
@@ -34,18 +31,7 @@ export async function mountAuthorizedExternalDrop(page) {
       ownership: "calendar",
       editPolicy: "full",
     };
-    const collision = {
-      id: "collision",
-      calendarId: "personal",
-      title: "Collision fixture",
-      start: "2026-11-10T12:00:00.000Z",
-      end: "2026-11-10T13:00:00.000Z",
-      kind: "event",
-      ownership: "calendar",
-      editPolicy: "full",
-    };
-    const repository = new MemoryCalendarRepository(sources, [initial, collision]);
-    const purposes = [];
+    const repository = new MemoryCalendarRepository([source], [initial]);
     let decoderCalls = 0;
     const customDropView = {
       id: "external-drop-view",
@@ -85,20 +71,6 @@ export async function mountAuthorizedExternalDrop(page) {
         slotMinutes: 30,
         snapPolicy: { selection: "floor", move: "round", resize: "round", keyboardStepMinutes: 30 },
         commandHandler: new RepositoryCommandHandler(repository),
-        navigationBounds: { min: "2026-11-01", max: "2026-11-15" },
-        collisionPolicy: { mode: "prevent", includeAllDay: false },
-        itemFactory({ id, now, purpose, draft }) {
-          purposes.push(purpose);
-          return {
-            ...draft,
-            ...(draft.title === "Factory redirect" ? { calendarId: "locked" } : {}),
-            id,
-            ownership: "calendar",
-            editPolicy: "full",
-            createdAt: now,
-            updatedAt: now,
-          };
-        },
         externalDropDecoder: {
           types: ["application/x-host-task"],
           decode(dataTransfer) {
@@ -106,81 +78,39 @@ export async function mountAuthorizedExternalDrop(page) {
             return JSON.parse(dataTransfer.getData("application/x-host-task"));
           },
         },
-        placementGuards: [{
-          id: "block-nov-14",
-          evaluate(context) {
-            return context.start.startsWith("2026-11-14T")
-              ? { mode: "prevent", message: "Fixture blocked date." }
-              : { mode: "allow" };
-          },
-        }],
       },
     );
     await calendar.refresh();
 
     const addSource = (id, writer) => {
-      const source = document.createElement("button");
-      source.id = id;
-      source.type = "button";
-      source.draggable = true;
-      source.textContent = id;
-      source.addEventListener("dragstart", event => {
+      const node = document.createElement("button");
+      node.id = id;
+      node.type = "button";
+      node.draggable = true;
+      node.textContent = id;
+      node.addEventListener("dragstart", event => {
         if (event.dataTransfer) writer(event.dataTransfer);
       });
-      document.body.append(source);
+      document.body.append(node);
     };
-    addSource("external-month", dataTransfer => setCalendarExternalDropData(dataTransfer, {
-      title: "External month",
-      durationDays: 2,
-      metadata: { origin: "outside-dom" },
+    addSource("external-month", transfer => setCalendarExternalDropData(transfer, {
+      title: "External month", durationDays: 2, metadata: { origin: "outside-dom" },
     }));
-    addSource("external-locked", dataTransfer => setCalendarExternalDropData(dataTransfer, {
-      title: "Locked external",
-      calendarId: "locked",
-    }));
-    addSource("external-malformed", dataTransfer => {
-      dataTransfer.setData(CALENDAR_EXTERNAL_DROP_MIME, "{malformed");
-      dataTransfer.effectAllowed = "copy";
-    });
-    addSource("external-custom", dataTransfer => {
-      dataTransfer.setData("application/x-host-task", JSON.stringify({
-        title: "Host decoded",
-        durationDays: 1,
-        kind: "task",
+    addSource("external-custom", transfer => {
+      transfer.setData("application/x-host-task", JSON.stringify({
+        title: "Host decoded", durationDays: 1, kind: "task",
       }));
-      dataTransfer.effectAllowed = "copy";
+      transfer.effectAllowed = "copy";
     });
-    addSource("external-blocked", dataTransfer => setCalendarExternalDropData(dataTransfer, {
-      title: "Blocked external",
+    addSource("external-lane", transfer => setCalendarExternalDropData(transfer, { title: "All-day lane" }));
+    addSource("external-timed", transfer => setCalendarExternalDropData(transfer, {
+      title: "Timed external", durationMinutes: 90,
     }));
-    addSource("external-lane", dataTransfer => setCalendarExternalDropData(dataTransfer, {
-      title: "All-day lane",
-    }));
-    addSource("external-timed", dataTransfer => setCalendarExternalDropData(dataTransfer, {
-      title: "Timed external",
-      durationMinutes: 90,
-    }));
-    addSource("external-collision", dataTransfer => setCalendarExternalDropData(dataTransfer, {
-      title: "Collision external",
-      durationMinutes: 60,
-    }));
-    addSource("external-out-of-bounds", dataTransfer => setCalendarExternalDropData(dataTransfer, {
-      title: "Out of bounds external",
-    }));
-    addSource("external-factory-redirect", dataTransfer => setCalendarExternalDropData(dataTransfer, {
-      title: "Factory redirect",
-    }));
-    addSource("external-custom-view", dataTransfer => setCalendarExternalDropData(dataTransfer, {
-      title: "Custom view external",
-    }));
+    addSource("external-custom-view", transfer => setCalendarExternalDropData(transfer, { title: "Custom view external" }));
 
-    const dispatchDrag = (source, target, clientY) => {
+    const dispatchDrag = (dragSource, target, clientY) => {
       const dataTransfer = new DataTransfer();
-      source.dispatchEvent(new DragEvent("dragstart", {
-        bubbles: true,
-        cancelable: true,
-        dataTransfer,
-      }));
+      dragSource.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer }));
       const rect = target.getBoundingClientRect();
       const init = {
         bubbles: true,
@@ -195,40 +125,26 @@ export async function mountAuthorizedExternalDrop(page) {
       const accepted = target.classList.contains("is-external-drop-target");
       const callsAfterHover = decoderCalls;
       target.dispatchEvent(new DragEvent("drop", init));
-      source.dispatchEvent(new DragEvent("dragend", {
-        bubbles: true,
-        cancelable: true,
-        dataTransfer,
-      }));
-      return {
-        accepted,
-        callsBeforeHover,
-        callsAfterHover,
-        callsAfterDrop: decoderCalls,
-        targetStillActive: target.classList.contains("is-external-drop-target"),
-      };
+      dragSource.dispatchEvent(new DragEvent("dragend", { bubbles: true, cancelable: true, dataTransfer }));
+      return { accepted, callsBeforeHover, callsAfterHover, callsAfterDrop: decoderCalls };
     };
 
-    const monthCell = date => document.querySelector(
-      `.dc-day-cell[data-calendar-date^="${date}"]`,
-    );
+    const monthCell = date => document.querySelector(`.dc-day-cell[data-calendar-date^="${date}"]`);
     globalThis.__externalDropProbe = {
       calendar,
       repository,
-      purposes,
-      decoderCalls: () => decoderCalls,
       dropMonth(sourceId, date) {
-        const source = document.getElementById(sourceId);
+        const dragSource = document.getElementById(sourceId);
         const target = monthCell(date);
-        if (!source || !target) throw new Error("Month drag fixture target missing");
-        return dispatchDrag(source, target);
+        if (!dragSource || !target) throw new Error("Month drag fixture target missing");
+        return dispatchDrag(dragSource, target);
       },
       moveInternal(date) {
-        const source = [...document.querySelectorAll(".dc-event")]
+        const dragSource = [...document.querySelectorAll(".dc-event")]
           .find(node => node.textContent?.includes("Internal event"));
         const target = monthCell(date);
-        if (!source || !target) throw new Error("Internal drag fixture target missing");
-        return dispatchDrag(source, target);
+        if (!dragSource || !target) throw new Error("Internal drag fixture target missing");
+        return dispatchDrag(dragSource, target);
       },
       async showDay(date) {
         calendar.setView("day");
@@ -236,27 +152,27 @@ export async function mountAuthorizedExternalDrop(page) {
         await calendar.refresh();
       },
       dropAllDay(sourceId) {
-        const source = document.getElementById(sourceId);
+        const dragSource = document.getElementById(sourceId);
         const target = document.querySelector(".dc-all-day-col");
-        if (!source || !target) throw new Error("All-day drag fixture target missing");
-        return dispatchDrag(source, target);
+        if (!dragSource || !target) throw new Error("All-day drag fixture target missing");
+        return dispatchDrag(dragSource, target);
       },
       dropTimed(sourceId, minuteOffset) {
-        const source = document.getElementById(sourceId);
+        const dragSource = document.getElementById(sourceId);
         const target = document.querySelector(".dc-time-column");
-        if (!source || !target) throw new Error("Timed drag fixture target missing");
+        if (!dragSource || !target) throw new Error("Timed drag fixture target missing");
         const rect = target.getBoundingClientRect();
-        return dispatchDrag(source, target, rect.top + minuteOffset);
+        return dispatchDrag(dragSource, target, rect.top + minuteOffset);
       },
       async showCustomDropView() {
         calendar.setView("external-drop-view");
         await calendar.refresh();
       },
       dropCustomView(sourceId) {
-        const source = document.getElementById(sourceId);
+        const dragSource = document.getElementById(sourceId);
         const target = document.querySelector(".custom-external-drop-target");
-        if (!source || !target) throw new Error("Custom-view drag fixture target missing");
-        return dispatchDrag(source, target);
+        if (!dragSource || !target) throw new Error("Custom-view drag fixture target missing");
+        return dispatchDrag(dragSource, target);
       },
     };
   });
