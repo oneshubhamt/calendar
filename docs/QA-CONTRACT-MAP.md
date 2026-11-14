@@ -551,3 +551,87 @@ Permanent QA selection was not widened. For verification only, two release-only 
 - **No count fetish:** declaration/file totals may now change without failing QA when invariant coverage remains intact.
 - **Routine protection:** semantic invariant/lane coverage is enforced on ordinary CI.
 - **CLEER outcome:** less spec-body duplication and weaker assertion debt, with no production behaviour change and no loss of independent mathematical or browser failure domains.
+
+
+## Pass G — mathematical and behavioural strengthening (2026-11-14)
+
+Pass G strengthens independent defect detection rather than increasing example count. Existing finite-interval, civil-time, ISO-week, recurrence, CAS and permutation witnesses remain intact.
+
+### Deterministic calendar state-machine reference model
+
+`tests/node/engine/state-machine.test.mjs` adds a small seeded model family using fixed seeds only; there is no nondeterministic `Math.random()` input. Each run independently models and checks:
+
+`create → move(all) → resize(all) → recurrence edit(all) → split(this-and-following) → undo → redo → stale CAS rejection → refreshed engine query`.
+
+The reference state owns expected item anchors, recurrence counts/intervals, split identity, durable revision and refreshed occurrence projection. After every successful transition, both the repository snapshot and `CalendarEngine.query()` result must agree with the model. The stale CAS attempt must neither publish a snapshot nor advance generation.
+
+A separate staged-failure witness deliberately causes the second half of a multi-record recurrence split to collide with an existing tail id. The command must fail without publishing the already-staged head edit, without advancing revision and without creating undo history.
+
+### Production defect found and corrected
+
+The new state machine exposed a real split bug in `src/core/commands.ts`: a `this-and-following` split projected the tail edit against the **original series anchor**. The new tail therefore stored a shifted version of the old anchor and could regenerate tail occurrences before the split boundary, overlapping the retained head.
+
+The correction makes the split occurrence itself the projection anchor before constructing the new tail series. This preserves the requested placement and temporal representation while ensuring the tail begins at the split boundary. The independent state machine is the permanent regression witness; a targeted mutation now explicitly restores the old defect and must be detected.
+
+### Independent monthly/yearly recurrence oracle
+
+`tests/fixtures/reference-temporal.mjs` now contains a bounded UTC calendar **date-scan** oracle for monthly/yearly recurrence. It imports no Calendar recurrence/temporal implementation and does not reuse production period iterators.
+
+The corresponding mathematical witness covers:
+
+- monthly positive and negative `BYMONTHDAY`;
+- ordinal and ordinary `BYDAY`;
+- yearly `BYMONTH` filtering;
+- `COUNT` and inclusive `UNTIL`;
+- cancelled and moved recurrence exceptions;
+- whole-range versus partitioned-query equivalence.
+
+The oracle intentionally supports only the bounded subset under test and rejects unsupported `BYSETPOS` rather than silently imitating production beyond its independent model.
+
+### Seeded resource geometry and placement properties
+
+`tests/node/resources/generated-invariants.test.mjs` generates fixed-seed schedules and assignments, then exercises both Resource Scheduler timeline and Resource TimeGrid geometry.
+
+For every generated schedule it verifies:
+
+- permutation independence of resource, occurrence, assignment and assignment-resource input order;
+- unique render identity and expected fan-out cardinality;
+- bounded horizontal/vertical coordinates;
+- positive interval geometry;
+- overlapping occurrences on one resource never share a visual lane/column;
+- **resource-isolation metamorphism**: removing unrelated resource assignments cannot alter one resource's geometry or lane allocation.
+
+A second seeded family drives resource placement through committed, warning, prevented and stale-version outcomes. Successful diagonal changes replace host time/resource state once; warning/prevented paths never call the mutation port; stale rejection occurs before host state replacement and is never retried.
+
+### Durable witness registry and mutation sensitivity
+
+The Pass F invariant registry now includes the new state-machine, staged rollback, monthly/yearly oracle, seeded geometry and atomic host-state witnesses.
+
+Selective fault injection grew from four to six named faults. The two Pass G additions deliberately:
+
+1. restore the old split-tail/original-anchor defect; and
+2. move negative `BYMONTHDAY` one day early.
+
+Both must fail their new independent witnesses.
+
+### Pass G verification
+
+On the temporary full-verification staging commit:
+
+- full Node/deep suite: **215/215 passed**, zero skipped, runner duration about **3.63 s**;
+- publication audit: **185 files / 31 exported subpaths**, parity and archive checks green;
+- invariant registry: **20 required invariants**, all routine and release risk classes covered;
+- targeted mutation verification: **6/6 faults detected**, compiled artifacts restored and hash-checked;
+- full browser release matrix: **147/147 passed** across Chromium, Firefox and WebKit (about **1.2 min**).
+
+The temporary force-full/mutation/browser-release workflow edits were then reverted. Permanent workflow policy is unchanged.
+
+### Pass G reconciliation
+
+1. Existing high-value mathematical evidence was preserved.
+2. State transitions now have an independent multi-step reference model rather than only isolated examples.
+3. Monthly/yearly recurrence has a genuinely separate bounded oracle covering the requested filters, limits, exceptions and partition law.
+4. Resource geometry now has deterministic generated/metamorphic evidence across both resource surfaces.
+5. Atomic failure behaviour is checked at both command staging and resource-host execution boundaries.
+6. The new tests found and permanently guard a real split-series defect.
+7. Production change is limited to that justified local fix; no unrelated behaviour or architecture was modified.
