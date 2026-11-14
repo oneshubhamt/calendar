@@ -4,6 +4,7 @@ import { existsSync, globSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { scenarioTags } from "../browser/scenario-registry.mjs";
 import { requiredInvariants, requiredRiskClasses } from "./witness-registry.mjs";
+import { mutationCases } from "./mutation-cases.mjs";
 
 const nodeFiles = globSync("tests/node/**/*.test.mjs").sort();
 const browserFiles = globSync("tests/browser/**/*.spec.mjs").sort();
@@ -163,8 +164,31 @@ for (const lane of ["routine", "release"]) {
   }
 }
 
+const invariantIds = new Set(requiredInvariants.map(invariant => invariant.id));
+const mutationIds = new Set();
+const mutationCoverage = new Map();
+for (const mutation of mutationCases) {
+  assert.equal(mutationIds.has(mutation.id), false, `Duplicate mutation id: ${mutation.id}`);
+  mutationIds.add(mutation.id);
+  assert.ok(mutation.invariantIds.length > 0, `${mutation.id} does not name an invariant`);
+  for (const invariantId of mutation.invariantIds) {
+    assert.ok(invariantIds.has(invariantId), `${mutation.id} references unknown invariant: ${invariantId}`);
+    if (!mutationCoverage.has(invariantId)) mutationCoverage.set(invariantId, []);
+    mutationCoverage.get(invariantId).push(mutation.id);
+  }
+}
+
+for (const invariant of requiredInvariants) {
+  if (invariant.mutationRequired !== true) continue;
+  assert.ok(
+    mutationCoverage.has(invariant.id),
+    `${invariant.id} is mutation-critical but has no realistic injected fault witness`,
+  );
+}
+
 console.log(
   `QA contract registry verified: ${requiredInvariants.length} required invariants; `
   + `routine risks [${[...risksForLane("routine")].sort().join(", ")}]; `
-  + `release risks [${[...risksForLane("release")].sort().join(", ")}]`,
+  + `release risks [${[...risksForLane("release")].sort().join(", ")}]; `
+  + `mutation cases ${mutationCases.length}, mutation-critical invariants ${requiredInvariants.filter(invariant => invariant.mutationRequired === true).length}`,
 );
