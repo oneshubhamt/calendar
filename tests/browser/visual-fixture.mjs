@@ -1,3 +1,4 @@
+import { openHarness } from "./support/harness.mjs";
 const SOURCES = [
   { id: "personal", title: "Personal", visible: true, sourceType: "personal", removable: true, display: { color: "#e8f0fe", textColor: "#174ea6", icon: "•" } },
   { id: "work", title: "Work", visible: true, sourceType: "work", removable: true, display: { color: "#e6f4ea", textColor: "#137333", icon: "W" } },
@@ -59,7 +60,7 @@ export async function mountVisualCalendar(page, {
   print = false,
 } = {}) {
   await page.clock.setFixedTime(new Date(now));
-  await page.goto("/tests/browser/harness.html");
+  await openHarness(page);
   await page.evaluate(async ({ view, initialDate, timeZone, secondaryTimeZone, dayStartHour, dayEndHour, print, sources, items, backgrounds }) => {
     const [{ CalendarEngine }, { MemoryCalendarRepository }, { RepositoryCommandHandler }, { CalendarUi }] = await Promise.all([
       import("/dist/core/calendar-engine.js"),

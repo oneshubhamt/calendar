@@ -2,6 +2,19 @@ import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = "http://127.0.0.1:4173";
 
+// Routine smoke runs broad Chromium evidence plus the selective @cross subset in all engines.
+// Release is exhaustive: every nonvisual browser contract runs in Chromium, Firefox and WebKit,
+// while reviewed visual baselines remain Chromium-only.
+const lane = process.env.CALENDAR_QA_LANE ?? "release";
+if (!["release", "smoke", "cross", "visual"].includes(lane)) {
+  throw new Error(`Unknown Calendar browser QA lane: ${lane}`);
+}
+const chromiumGrep = lane === "smoke" ? /@smoke|@cross/
+  : lane === "cross" ? /@cross/
+    : lane === "visual" ? /@visual/ : undefined;
+const otherGrep = lane === "release" ? /@release/ : /@cross/;
+
+
 export default defineConfig({
   testDir: "./tests/browser",
   fullyParallel: false,
@@ -38,17 +51,22 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      grep: chromiumGrep,
       use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 1000 } },
     },
-    {
-      name: "firefox",
-      testMatch: ["**/storage.spec.mjs", "**/rendering-smoke.spec.mjs", "**/resource-scheduler.spec.mjs", "**/resource-time-grid.spec.mjs"],
-      use: { ...devices["Desktop Firefox"], viewport: { width: 1440, height: 1000 } },
-    },
-    {
-      name: "webkit",
-      testMatch: ["**/storage.spec.mjs", "**/rendering-smoke.spec.mjs", "**/resource-scheduler.spec.mjs", "**/resource-time-grid.spec.mjs"],
-      use: { ...devices["Desktop Safari"], viewport: { width: 1440, height: 1000 } },
-    },
+    ...lane === "visual" ? [] : [
+      {
+        name: "firefox",
+        grep: otherGrep,
+        testIgnore: "**/visual.spec.mjs",
+        use: { ...devices["Desktop Firefox"], viewport: { width: 1440, height: 1000 } },
+      },
+      {
+        name: "webkit",
+        grep: otherGrep,
+        testIgnore: "**/visual.spec.mjs",
+        use: { ...devices["Desktop Safari"], viewport: { width: 1440, height: 1000 } },
+      },
+    ],
   ],
 });

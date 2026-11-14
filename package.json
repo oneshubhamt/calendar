@@ -137,13 +137,23 @@
   "scripts": {
     "build": "npm run clean && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test tests/*.test.mjs",
+    "test": "npm run build && node tests/run-node.mjs full",
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
-    "check": "npm test && npm pack --dry-run",
+    "check": "npm run check:full",
     "prepack": "npm run build:package",
     "build:package": "npm run clean && tsc -p tsconfig.package.json",
     "qa:browser": "npm run build && playwright test --config=playwright.config.mjs",
-    "qa:browser:update": "npm run build && playwright test --config=playwright.config.mjs --update-snapshots"
+    "qa:browser:update": "npm run build && playwright test --config=playwright.config.mjs --update-snapshots",
+    "qa:browser:smoke": "npm run build && node tests/browser/run-suite.mjs smoke",
+    "qa:browser:cross": "npm run build && node tests/browser/run-suite.mjs cross",
+    "qa:browser:visual": "npm run build && node tests/browser/run-suite.mjs visual",
+    "check:fast": "npm run build && node tests/run-node.mjs fast && node tests/qa/package-audit.mjs prepare && node tests/qa/package-audit.mjs verify",
+    "check:full": "npm run build && node tests/run-node.mjs full && node tests/qa/package-audit.mjs snapshot && npm pack --dry-run && node tests/qa/package-audit.mjs compare && node tests/qa/package-audit.mjs verify",
+    "qa:fast": "npm run build && node tests/run-node.mjs fast && node tests/browser/run-suite.mjs smoke && node tests/qa/package-audit.mjs prepare && node tests/qa/package-audit.mjs verify",
+    "qa:full": "npm run build && node tests/run-node.mjs full && node tests/browser/run-suite.mjs release && node tests/qa/package-audit.mjs snapshot && npm pack --dry-run && node tests/qa/package-audit.mjs compare && node tests/qa/package-audit.mjs verify",
+    "qa:mutation": "npm run build && node tests/qa/mutation-check.mjs",
+    "qa:coverage": "node tests/qa/coverage-audit.mjs",
+    "test:fast": "npm run build && node tests/run-node.mjs fast"
   },
   "devDependencies": {
     "typescript": "7.0.2",

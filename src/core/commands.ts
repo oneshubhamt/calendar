@@ -153,9 +153,18 @@ function splitSeries(
     },
     updatedAt: context.now,
   };
-  const tailPatch = projectTemporalPatchToSeries(item, occurrence, { ...patch, start: patch.start ?? occurrence.start }, { timeZone: context.timeZone });
-  const nextStart = tailPatch.start ?? item.start;
-  const nextEnd = tailPatch.end ?? item.end;
+  // A split creates a new series whose anchor is the split occurrence itself.
+  // Project the requested edit relative to that resolved placement, not the original
+  // series anchor; otherwise the tail can regenerate occurrences before the split.
+  const splitAnchor = { ...item, start: occurrence.start, end: occurrence.end };
+  const tailPatch = projectTemporalPatchToSeries(
+    splitAnchor,
+    occurrence,
+    { ...patch, start: patch.start ?? occurrence.start },
+    { timeZone: context.timeZone },
+  );
+  const nextStart = tailPatch.start ?? occurrence.start;
+  const nextEnd = tailPatch.end ?? occurrence.end;
   const remainingCount = item.recurrence.rule.count === undefined ? undefined : Math.max(1, item.recurrence.rule.count - ordinal + 1);
   const secondId = `${item.id}:split:${Date.parse(occurrence.start)}`;
   const recurrencePatch = patch.recurrence;

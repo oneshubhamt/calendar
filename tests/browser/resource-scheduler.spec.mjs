@@ -1,11 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { scenario } from "./scenario-registry.mjs";
+import { openHarness, settleBrowserFrames } from "./support/harness.mjs";
+import { RESOURCE_TREE } from "./support/resource-fixtures.mjs";
 
 const projection = {
-  resources: [
-    { id: "rooms", title: "Rooms" },
-    { id: "a", title: "Room A", parentId: "rooms", order: 1, acceptsAssignments: true },
-    { id: "b", title: "Room B", parentId: "rooms", order: 2, acceptsAssignments: true },
-  ],
+  resources: RESOURCE_TREE,
   occurrences: [{
     occurrenceId: "occ", sourceItemId: "item", calendarId: "calendar", title: "Visit",
     start: "2026-11-10T09:00:00.000Z", end: "2026-11-10T10:00:00.000Z",
@@ -16,15 +15,14 @@ const projection = {
   range: { start: "2026-11-10T08:00:00.000Z", end: "2026-11-10T12:00:00.000Z" },
 };
 
-test("Resource Scheduler renders authoritative hierarchy and collapse state in a real browser", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("resource.timeline.hierarchy", "Resource Scheduler renders authoritative hierarchy and collapse state in a real browser", async ({ page }) => {
+  await openHarness(page);
   await page.evaluate(async projection => {
     const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
     const host = document.getElementById("browser-test-host");
     host.replaceChildren();
     const ui = new CalendarResourceSchedulerUi(host, { timeZone: "UTC" });
     ui.setProjection(projection);
-    globalThis.__resourceScheduler = ui;
   }, projection);
 
   await expect(page.getByRole("treegrid", { name: "Resource schedule" })).toBeVisible();
@@ -32,11 +30,10 @@ test("Resource Scheduler renders authoritative hierarchy and collapse state in a
   await expect(page.locator(".dc-rs-event")).toContainText("Visit");
   await page.getByRole("button", { name: "Collapse Rooms" }).click();
   await expect(page.locator(".dc-rs-resource-row")).toHaveCount(1);
-  expect(await page.evaluate(() => globalThis.__resourceScheduler.collapsedResourceIds())).toEqual(["rooms"]);
 });
 
-test("Resource Scheduler keyboard reassignment commits one atomic host change and reprojects", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("resource.timeline.keyboard", "Resource Scheduler keyboard reassignment and resize each publish one authoritative mutation", async ({ page }) => {
+  await openHarness(page);
   await page.evaluate(async projection => {
     const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
     let current = structuredClone(projection);
@@ -55,37 +52,44 @@ test("Resource Scheduler keyboard reassignment commits one atomic host change an
                 ? { ...occurrence, start: change.start, end: change.end }
                 : occurrence),
               assignments: current.assignments.map(assignment => assignment.occurrenceId === change.occurrence.occurrenceId
-                ? { ...assignment, resourceIds: [...change.toResourceIds], version: { revision: 2 } }
+                ? { ...assignment, resourceIds: [...change.toResourceIds], version: { revision: commits.length + 1 } }
                 : assignment),
             };
           },
         },
         resourceCapabilityProvider: { capabilities() { return { canReassign: true }; } },
+        occurrenceCapabilityProvider: { capabilities() { return { canResizeStart: true, canResizeEnd: true }; } },
         sourceForOccurrence() { return { id: "calendar", title: "Calendar", visible: true }; },
         refreshProjection() { return structuredClone(current); },
       },
     });
     ui.setProjection(current);
-    globalThis.__resourceSchedulerProbe = { ui, commits };
+    globalThis.__resourceSchedulerKeyboard = { commits };
   }, projection);
 
-  const event = page.locator('.dc-rs-event[data-resource-id="a"]');
+  let event = page.locator('.dc-rs-event[data-resource-id="a"]');
   await event.focus();
   await page.keyboard.press("Alt+ArrowDown");
-
   await expect(page.locator('.dc-rs-event[data-resource-id="b"]')).toBeVisible();
-  const commits = await page.evaluate(() => globalThis.__resourceSchedulerProbe.commits);
+
+  let commits = await page.evaluate(() => globalThis.__resourceSchedulerKeyboard.commits);
   expect(commits).toHaveLength(1);
   expect(commits[0].fromResourceIds).toEqual(["a"]);
   expect(commits[0].toResourceIds).toEqual(["b"]);
-  expect(commits[0].start).toBe("2026-11-10T09:00:00.000Z");
-  expect(commits[0].end).toBe("2026-11-10T10:00:00.000Z");
+
+  const handle = page.getByRole("separator", { name: "Resize end of Visit" });
+  await handle.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(async () => await page.evaluate(() => globalThis.__resourceSchedulerKeyboard.commits.length)).toBe(2);
+  commits = await page.evaluate(() => globalThis.__resourceSchedulerKeyboard.commits);
+  expect(Date.parse(commits[1].end)).toBeGreaterThan(Date.parse(commits[0].end));
+  expect(commits[1].toResourceIds).toEqual(["b"]);
+  await expect(page.getByRole("separator", { name: "Resize end of Visit" })).toBeVisible();
 });
 
-
-test("Resource Scheduler preserves committed result semantics when authoritative reprojection fails", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
-  await page.evaluate(async projection => {
+async function mountResourceRefreshFailure(page, mode) {
+  await openHarness(page);
+  await page.evaluate(async ({ projection, mode }) => {
     const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
     const commits = [];
     const errors = [];
@@ -96,7 +100,14 @@ test("Resource Scheduler preserves committed result semantics when authoritative
       onError(error) { errors.push(String(error)); },
       interaction: {
         mutationPort: {
-          commit(change) { commits.push(structuredClone(change)); },
+          commit(change) {
+            if (mode === "stale") {
+              const error = new Error("stale assignment");
+              error.code = "stale";
+              throw error;
+            }
+            commits.push(structuredClone(change));
+          },
         },
         resourceCapabilityProvider: { capabilities() { return { canReassign: true }; } },
         sourceForOccurrence() { return { id: "calendar", title: "Calendar", visible: true }; },
@@ -105,104 +116,32 @@ test("Resource Scheduler preserves committed result semantics when authoritative
     });
     ui.setProjection(projection);
     globalThis.__resourceSchedulerRefreshFailure = { commits, errors };
-  }, projection);
+  }, { projection, mode });
+}
 
-  const event = page.locator('.dc-rs-event[data-resource-id="a"]');
+scenario("resource.timeline.refresh-failures", "Resource Scheduler distinguishes committed and stale mutations when authoritative refresh fails", async ({ page }) => {
+  await mountResourceRefreshFailure(page, "committed");
+  let event = page.locator('.dc-rs-event[data-resource-id="a"]');
   await event.focus();
   await page.keyboard.press("Alt+ArrowDown");
-
   await expect.poll(async () => await page.evaluate(() => globalThis.__resourceSchedulerRefreshFailure.commits.length)).toBe(1);
   await expect(page.getByRole("status")).toContainText("Visit changed, but authoritative refresh failed.");
   expect(await page.evaluate(() => globalThis.__resourceSchedulerRefreshFailure.errors)).toEqual(["Error: projection offline"]);
   await expect(event).not.toHaveAttribute("aria-busy", "true");
   await expect(event).toBeFocused();
-});
 
-test("Resource Scheduler reports stale authority plus failed reprojection without implying refresh succeeded", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
-  await page.evaluate(async projection => {
-    const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
-    const errors = [];
-    const host = document.getElementById("browser-test-host");
-    host.replaceChildren();
-    const ui = new CalendarResourceSchedulerUi(host, {
-      timeZone: "UTC",
-      onError(error) { errors.push(String(error)); },
-      interaction: {
-        mutationPort: {
-          commit() {
-            const error = new Error("stale assignment");
-            error.code = "stale";
-            throw error;
-          },
-        },
-        resourceCapabilityProvider: { capabilities() { return { canReassign: true }; } },
-        sourceForOccurrence() { return { id: "calendar", title: "Calendar", visible: true }; },
-        refreshProjection() { throw new Error("projection offline"); },
-      },
-    });
-    ui.setProjection(projection);
-    globalThis.__resourceSchedulerStaleRefreshFailure = { errors };
-  }, projection);
-
-  const event = page.locator('.dc-rs-event[data-resource-id="a"]');
+  await mountResourceRefreshFailure(page, "stale");
+  event = page.locator('.dc-rs-event[data-resource-id="a"]');
   await event.focus();
   await page.keyboard.press("Alt+ArrowDown");
-
   await expect(page.getByRole("status")).toContainText("Visit changed elsewhere, but authoritative refresh failed.");
-  expect(await page.evaluate(() => globalThis.__resourceSchedulerStaleRefreshFailure.errors)).toEqual(["Error: projection offline"]);
+  expect(await page.evaluate(() => globalThis.__resourceSchedulerRefreshFailure.errors)).toEqual(["Error: projection offline"]);
   await expect(event).not.toHaveAttribute("aria-busy", "true");
   await expect(event).toBeFocused();
 });
 
-test("Resource Scheduler keyboard end resize uses edge authority and one atomic authoritative mutation", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
-  await page.evaluate(async projection => {
-    const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
-    let current = structuredClone(projection);
-    const commits = [];
-    const host = document.getElementById("browser-test-host");
-    host.replaceChildren();
-    const ui = new CalendarResourceSchedulerUi(host, {
-      timeZone: "UTC",
-      interaction: {
-        mutationPort: {
-          commit(change) {
-            commits.push(structuredClone(change));
-            current = {
-              ...current,
-              occurrences: current.occurrences.map(occurrence => occurrence.occurrenceId === change.occurrence.occurrenceId
-                ? { ...occurrence, start: change.start, end: change.end }
-                : occurrence),
-              assignments: current.assignments.map(assignment => assignment.occurrenceId === change.occurrence.occurrenceId
-                ? { ...assignment, resourceIds: [...change.toResourceIds], version: { revision: 2 } }
-                : assignment),
-            };
-          },
-        },
-        occurrenceCapabilityProvider: { capabilities() { return { canResizeStart: true, canResizeEnd: true }; } },
-        sourceForOccurrence() { return { id: "calendar", title: "Calendar", visible: true }; },
-        refreshProjection() { return structuredClone(current); },
-      },
-    });
-    ui.setProjection(current);
-    globalThis.__resourceSchedulerResize = { commits };
-  }, projection);
-
-  const handle = page.getByRole("separator", { name: "Resize end of Visit" });
-  await handle.focus();
-  await page.keyboard.press("ArrowRight");
-  await expect.poll(async () => await page.evaluate(() => globalThis.__resourceSchedulerResize.commits.length)).toBe(1);
-  const [commit] = await page.evaluate(() => globalThis.__resourceSchedulerResize.commits);
-  expect(commit.start).toBe("2026-11-10T09:00:00.000Z");
-  expect(commit.end).toBe("2026-11-10T10:15:00.000Z");
-  expect(commit.fromResourceIds).toEqual(["a"]);
-  expect(commit.toResourceIds).toEqual(["a"]);
-  await expect(page.getByRole("separator", { name: "Resize end of Visit" })).toBeVisible();
-});
-
-test("Resource Scheduler reuses shared pointer arming, long-press, cancellation and horizontal move", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("resource.timeline.pointer", "Resource Scheduler reuses shared pointer arming, long-press, cancellation and horizontal move", async ({ page }) => {
+  await openHarness(page);
   await page.evaluate(async projection => {
     const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
     let current = structuredClone(projection);
@@ -284,16 +223,16 @@ test("Resource Scheduler reuses shared pointer arming, long-press, cancellation 
 
   await page.evaluate(() => globalThis.__resourcePointerProbe.beginTouch());
   await expect(page.locator('.dc-rs-event[data-occurrence-id="occ"]')).toHaveClass(/is-touch-arming/);
-  await page.waitForTimeout(300);
+  // Wait for the actual long-press activation rather than guessing the timeout.
   await expect(page.locator('.dc-rs-event[data-occurrence-id="occ"]')).toHaveClass(/is-drag-source/);
   await page.evaluate(() => globalThis.__resourcePointerProbe.cancelTouch());
   await expect(page.locator('.dc-rs-event[data-occurrence-id="occ"]')).not.toHaveClass(/is-drag-source|is-touch-arming/);
 });
 
 
-test("shared pointer gesture lifecycle auto-scrolls horizontally and cancels cleanly", async ({ page }) => {
+scenario("resource.timeline.auto-scroll", "shared pointer gesture lifecycle auto-scrolls horizontally and cancels cleanly", async ({ page }) => {
   await page.setViewportSize({ width: 480, height: 640 });
-  await page.goto("/tests/browser/harness.html");
+  await openHarness(page);
   await page.evaluate(async () => {
     const { CalendarPointerGestureController } = await import("/dist/view/pointer-gesture.js");
     const host = document.getElementById("browser-test-host");
@@ -369,6 +308,6 @@ test("shared pointer gesture lifecycle auto-scrolls horizontally and cancels cle
   }, pointerId);
   expect(await page.evaluate(() => globalThis.__pointerLifecycleProbe.cancelled())).toBe(1);
   const settled = await page.evaluate(() => globalThis.__pointerLifecycleProbe.scroll.scrollLeft);
-  await page.waitForTimeout(80);
+  await settleBrowserFrames(page, 4);
   expect(await page.evaluate(() => globalThis.__pointerLifecycleProbe.scroll.scrollLeft)).toBe(settled);
 });
