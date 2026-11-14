@@ -70,6 +70,7 @@ export const requiredInvariants = Object.freeze([
     risk: "state",
     witnesses: Object.freeze([
       { kind: "node", file: "tests/node/engine/repository-mutations.test.mjs", title: "delta undo preserves unrelated later item changes and redo reapplies only the owned delta" },
+      { kind: "node", file: "tests/node/engine/repository-mutations.test.mjs", title: "delta undo still fails closed when an affected item or Calendar source changes" },
     ]),
   },
   {
