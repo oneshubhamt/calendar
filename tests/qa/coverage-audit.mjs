@@ -76,6 +76,11 @@ function discoverBrowserLane(lane, byTitle) {
 
 function expectedProjectScenarioIds(lane, project) {
   if (project === "chromium") return expectedScenarioIds(lane);
+  if (lane === "release") {
+    return new Set(Object.entries(scenarioTags)
+      .filter(([, tags]) => !tags.includes("visual"))
+      .map(([id]) => id));
+  }
   return expectedScenarioIds("cross");
 }
 
