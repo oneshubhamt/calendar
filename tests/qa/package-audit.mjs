@@ -65,11 +65,11 @@ function verify() {
   });
   if (child.error) throw child.error;
   assert.equal(child.status, 0, `npm pack manifest failed: ${child.stderr || child.stdout}`);
-  // npm 12 may return one package object rather than an array for dry-run JSON.
+  // npm 12 returns a name-keyed object for this dry-run invocation.
   const parsed = JSON.parse(child.stdout);
-  const manifest = Array.isArray(parsed) ? parsed[0] : parsed;
+  const manifest = Array.isArray(parsed) ? parsed[0] : (parsed.files ? parsed : parsed[pkg.name]);
   assert.ok(Array.isArray(manifest?.files),
-    `npm pack returned unexpected JSON: ${JSON.stringify(parsed).slice(0, 2800)}`);
+    `npm pack returned no file manifest for ${pkg.name}`);
   const files = new Set(manifest.files.map(file => file.path));
   assert.ok(files.has("package.json") && files.has("README.md"), "publication metadata missing");
   assert.ok(files.has("docs/ARCHITECTURE.md"), "published architecture contract missing");
