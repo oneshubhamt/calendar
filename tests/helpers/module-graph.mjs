@@ -16,7 +16,7 @@ async function sourceFiles(directory) {
 }
 
 function collectModuleSpecifiers(fileName, source) {
-  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const file = ts.createSourceFile(fileName, source, 99, true);
   const specifiers = [];
   const visit = node => {
     if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && staticString(node.moduleSpecifier)) {
@@ -24,7 +24,7 @@ function collectModuleSpecifiers(fileName, source) {
     } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)
       && node.moduleReference.expression && staticString(node.moduleReference.expression)) {
       specifiers.push(node.moduleReference.expression.text);
-    } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword
+    } else if (ts.isCallExpression(node) && node.expression.getText(file) === "import"
       && node.arguments.length === 1 && staticString(node.arguments[0])) {
       specifiers.push(node.arguments[0].text);
     }
