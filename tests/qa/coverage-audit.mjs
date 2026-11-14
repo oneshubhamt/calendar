@@ -12,7 +12,7 @@ assert.equal(nodeFiles.length, 25, "Node domain module census changed");
 assert.equal(browserFiles.length, 13, "Browser domain module census changed");
 
 const nodeCases = nodeFiles.reduce((total, path) =>
-  total + [...readFileSync(path, "utf8").matchAll(/^test\(/gm)].length, 0);
+  total + [...readFileSync(path, "utf8").matchAll(/^(?:test|deepTest)\(/gm)].length, 0);
 assert.equal(nodeCases, 211, "Node case contract changed; update the coverage map deliberately");
 const deepCases = nodeFiles.reduce((total, path) =>
   total + [...readFileSync(path, "utf8").matchAll(/^deepTest\(/gm)].length, 0);
