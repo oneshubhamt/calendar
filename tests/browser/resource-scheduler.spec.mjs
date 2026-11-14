@@ -82,9 +82,9 @@ scenario("resource.timeline.keyboard-reassign", "Resource Scheduler keyboard rea
 });
 
 
-scenario("resource.timeline.committed-refresh-failure", "Resource Scheduler preserves committed result semantics when authoritative reprojection fails", async ({ page }) => {
+async function mountResourceRefreshFailure(page, mode) {
   await openHarness(page);
-  await page.evaluate(async projection => {
+  await page.evaluate(async ({ projection, mode }) => {
     const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
     const commits = [];
     const errors = [];
@@ -95,44 +95,13 @@ scenario("resource.timeline.committed-refresh-failure", "Resource Scheduler pres
       onError(error) { errors.push(String(error)); },
       interaction: {
         mutationPort: {
-          commit(change) { commits.push(structuredClone(change)); },
-        },
-        resourceCapabilityProvider: { capabilities() { return { canReassign: true }; } },
-        sourceForOccurrence() { return { id: "calendar", title: "Calendar", visible: true }; },
-        refreshProjection() { throw new Error("projection offline"); },
-      },
-    });
-    ui.setProjection(projection);
-    globalThis.__resourceSchedulerRefreshFailure = { commits, errors };
-  }, projection);
-
-  const event = page.locator('.dc-rs-event[data-resource-id="a"]');
-  await event.focus();
-  await page.keyboard.press("Alt+ArrowDown");
-
-  await expect.poll(async () => await page.evaluate(() => globalThis.__resourceSchedulerRefreshFailure.commits.length)).toBe(1);
-  await expect(page.getByRole("status")).toContainText("Visit changed, but authoritative refresh failed.");
-  expect(await page.evaluate(() => globalThis.__resourceSchedulerRefreshFailure.errors)).toEqual(["Error: projection offline"]);
-  await expect(event).not.toHaveAttribute("aria-busy", "true");
-  await expect(event).toBeFocused();
-});
-
-scenario("resource.timeline.stale-refresh-failure", "Resource Scheduler reports stale authority plus failed reprojection without implying refresh succeeded", async ({ page }) => {
-  await openHarness(page);
-  await page.evaluate(async projection => {
-    const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
-    const errors = [];
-    const host = document.getElementById("browser-test-host");
-    host.replaceChildren();
-    const ui = new CalendarResourceSchedulerUi(host, {
-      timeZone: "UTC",
-      onError(error) { errors.push(String(error)); },
-      interaction: {
-        mutationPort: {
-          commit() {
-            const error = new Error("stale assignment");
-            error.code = "stale";
-            throw error;
+          commit(change) {
+            if (mode === "stale") {
+              const error = new Error("stale assignment");
+              error.code = "stale";
+              throw error;
+            }
+            commits.push(structuredClone(change));
           },
         },
         resourceCapabilityProvider: { capabilities() { return { canReassign: true }; } },
@@ -141,15 +110,27 @@ scenario("resource.timeline.stale-refresh-failure", "Resource Scheduler reports 
       },
     });
     ui.setProjection(projection);
-    globalThis.__resourceSchedulerStaleRefreshFailure = { errors };
-  }, projection);
+    globalThis.__resourceSchedulerRefreshFailure = { commits, errors };
+  }, { projection, mode });
+}
 
-  const event = page.locator('.dc-rs-event[data-resource-id="a"]');
+scenario("resource.timeline.refresh-failures", "Resource Scheduler distinguishes committed and stale mutations when authoritative refresh fails", async ({ page }) => {
+  await mountResourceRefreshFailure(page, "committed");
+  let event = page.locator('.dc-rs-event[data-resource-id="a"]');
   await event.focus();
   await page.keyboard.press("Alt+ArrowDown");
+  await expect.poll(async () => await page.evaluate(() => globalThis.__resourceSchedulerRefreshFailure.commits.length)).toBe(1);
+  await expect(page.getByRole("status")).toContainText("Visit changed, but authoritative refresh failed.");
+  expect(await page.evaluate(() => globalThis.__resourceSchedulerRefreshFailure.errors)).toEqual(["Error: projection offline"]);
+  await expect(event).not.toHaveAttribute("aria-busy", "true");
+  await expect(event).toBeFocused();
 
+  await mountResourceRefreshFailure(page, "stale");
+  event = page.locator('.dc-rs-event[data-resource-id="a"]');
+  await event.focus();
+  await page.keyboard.press("Alt+ArrowDown");
   await expect(page.getByRole("status")).toContainText("Visit changed elsewhere, but authoritative refresh failed.");
-  expect(await page.evaluate(() => globalThis.__resourceSchedulerStaleRefreshFailure.errors)).toEqual(["Error: projection offline"]);
+  expect(await page.evaluate(() => globalThis.__resourceSchedulerRefreshFailure.errors)).toEqual(["Error: projection offline"]);
   await expect(event).not.toHaveAttribute("aria-busy", "true");
   await expect(event).toBeFocused();
 });
