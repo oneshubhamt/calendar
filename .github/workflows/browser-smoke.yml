@@ -4,11 +4,9 @@ on:
   push:
     branches:
       - "working"
-      - "qa-browser-pass-c" # temporary verification; remove after pass
   pull_request:
     branches:
       - "working"
-      - "main"
   workflow_dispatch:
 
 permissions:

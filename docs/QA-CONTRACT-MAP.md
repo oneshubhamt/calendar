@@ -156,3 +156,59 @@ New independent temporal cases combine a UTC date-scanning oracle (daily/biweekl
 **Measured validation:** baseline `working` (212 pass, **4.071 s** Node test runner); first staged run [43569572707](https://github.com/oneshubhamt/calendar/actions/runs/43569572707) (211 pass, **3.190 s**); consolidated-domain run [43569832277](https://github.com/oneshubhamt/calendar/actions/runs/43569832277) (211 pass, **3.441 s**). Both staged runs passed clean build, Node QA and packaging. Differences are observed CI timing, not statistically demonstrated speedup. Browser specs and `src/` are untouched. Pass C/D own browser selection and workflow economics.
 
 **Future change rule:** Move or remove a test only after the precise risk and its unique failure-mode witness are accounted for in the owning domain. Avoid growth of parallel architecture-guard and legacy-syntax test files.
+
+## Pass C — Browser suite consolidation (2026-11-14)
+
+**Source:** `working`, applied from temporary `qa-browser-pass-c` after staging CI, smoke and full-release verification. Pass A's original case IDs and snapshots are preserved, not rewritten.
+
+### Product-owned suites and selection contracts
+
+| Source directory / spec | Unique scenarios | Contract owner |
+|---|---:|---|
+| `tests/browser/rendering/refresh.spec.mjs` | 3 | Clock rollover, concurrent refresh, failed projection recovery |
+| `tests/browser/rendering/interaction.spec.mjs` | 5 | Week geometry, drag, presentation actions, DST, week-number UI |
+| `tests/browser/rendering/custom-views.spec.mjs` | 4 | Host view protocol, Multi-Month, Timeline, disposal |
+| `tests/browser/rendering/external-drop.spec.mjs` | 2 | External/host drop authority and opt-in |
+| `tests/browser/rendering/print.spec.mjs` | 2 | Detached print and view coverage |
+| `tests/browser/rendering/embedded.spec.mjs` | 2 | Host-contained styling and overdue extension |
+| `tests/browser/storage/schema.spec.mjs` | 4 | Canonical IndexedDB schema and interop metadata rejection |
+| `tests/browser/storage/lifecycle.spec.mjs` | 5 | Single-flight open, close/reopen, stale reload generation |
+| `tests/browser/storage/records.spec.mjs` | 2 | Actual IDB item/source CRUD and persistence |
+| `tests/browser/storage/concurrency.spec.mjs` | 5 | Cross-tab reminder/google claims, CAS, BroadcastChannel/focus recovery |
+| `tests/browser/resource-scheduler.spec.mjs` | 7 | Horizontal resource UI and atomic host actions |
+| `tests/browser/resource-time-grid.spec.mjs` | 5 | Vertical resource UI and diagonal mutations |
+| `tests/browser/visual.spec.mjs` | 9 | Reviewed screenshot baselines |
+| **Total** | **55** | 13 independent spec modules |
+
+`tests/browser/scenario-registry.mjs` owns exactly 55 stable IDs and their suite tags. `scenario()` rejects missing/duplicate IDs; no test depends on a filename or positional tag. `tests/browser/support/harness.mjs` centralizes harness navigation. Existing storage helpers and visual mount fixture remain shared. Storage tests now import only their required helper functions. All 55 original test titles and scenarios remain; no browser test has been deleted.
+
+| Lane | Command | Chromium | Firefox | WebKit | Total executions |
+|---|---|---:|---:|---:|---:|
+| **Smoke (routine working/working-targeted PR)** | `npm run qa:browser:smoke` | 25 | 14 | 14 | **53** |
+| **Cross-engine focused** | `npm run qa:browser:cross` | 14 | 14 | 14 | **42** |
+| **Visual** | `npm run qa:browser:visual` | 9 | — | — | **9** |
+| **Full release (unchanged matrix)** | `npm run qa:browser` | 55 | 46 | 46 | **147** |
+
+Each scenario always has `@release`, with selective `@cross`, `@smoke`, or `@visual`. The 14 cross cases target temporal/DST, pointer, custom-view, external drop, print, resource atomicity, IndexedDB/claims/CAS/focus recovery. Eleven more Chromium-only smoke cases give broader UI and storage coverage. The nine visual cases remain Chromium-only; exact snapshot paths and image files have not changed.
+
+**CI economics:** `.github/workflows/browser-smoke.yml` runs the tagged smoke lane on pushes to `working` and PRs targeting `working`. The existing `browser-release.yml` retains its original triggers for PRs to `main`, pushes to `main`, release tags, and manual dispatch; it runs the complete 147-execution lane. No duplicate smoke job is scheduled for PRs already receiving full release QA. Node CI remains separate and unchanged.
+
+### Behavioural changes versus old tests
+
+- `rendering/interaction` now clicks the presented event through an accessible button name rather than `.dc-occurrence-main` class selection; geometry and visual-layer checks appropriately retain class/structural locators.
+- `resource-scheduler` waits for actual drag activation instead of an assumed 300 ms delay. A short cancellation-observation delay and several negative external-drop asynchronous settle windows remain intentionally: eliminating these without a real completion signal could make negative assertions pass prematurely. They are not evidence of a new timing subsystem requirement.
+- The six old rendering subgroups and four storage subgroups preserve all scenarios, original provider fault paths, cross-tab conditions, resource interactions and visual coverage. The full three-browser matrix is **not** replaced by the smoke lane.
+
+### Verification and measured economics
+
+| Evidence | Baseline (Pass A) | Pass C staged result |
+|---|---|---|
+| Node/type/package | 212/212 before Pass B | 211/211 in final Pass B working and staged Pass C CI |
+| Full browser matrix | 147/147; ~100.6 sec test phase | [Run 43571116387](https://github.com/oneshubhamt/calendar/actions/runs/43571116387): **147/147; ~87.2 sec** |
+| New smoke | Not available | [Run 43571116331](https://github.com/oneshubhamt/calendar/actions/runs/43571116331): **53/53; ~33.8 sec** (Playwright: 34.2 sec incl runner overhead) |
+| Case/registry census | 55 unique; nine visual | 55/55 registry IDs used exactly once; nine visual; 13 specs; 0 missing/duplicate IDs |
+| Code scope | Original `src/` and production behavior | No `src/` modifications; all five original test domains retained |
+
+Durations are observed on GitHub runners and subject to environmental variation. The reliable economic gain is *selection*: 53 smoke executions instead of 147 full, without discarding the latter. Selection and cross/visual tags are configured but standalone `cross` and `visual` commands are not independently timed; their cases are covered by the successful smoke and full release jobs.
+
+**Pass D:** final gate timing/economics, and compare behavioural/mutation sensitivity of the selected smoke set against full release; do not infer that any single green run proves absence of flakiness.
