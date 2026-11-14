@@ -2,6 +2,18 @@ import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = "http://127.0.0.1:4173";
 
+// "release" retains the original 55/46/46 browser matrix. Other lanes select
+// stable scenario tags without depending on filenames or declaration order.
+const lane = process.env.CALENDAR_QA_LANE ?? "release";
+if (!["release", "smoke", "cross", "visual"].includes(lane)) {
+  throw new Error(`Unknown Calendar browser QA lane: ${lane}`);
+}
+const chromiumGrep = lane === "smoke" ? /@smoke|@cross/
+  : lane === "cross" ? /@cross/
+    : lane === "visual" ? /@visual/ : undefined;
+const otherGrep = lane === "release" ? undefined : /@cross/;
+
+
 export default defineConfig({
   testDir: "./tests/browser",
   fullyParallel: false,
@@ -38,17 +50,22 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      grep: chromiumGrep,
       use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 1000 } },
     },
-    {
-      name: "firefox",
-      testMatch: ["**/storage.spec.mjs", "**/rendering-smoke.spec.mjs", "**/resource-scheduler.spec.mjs", "**/resource-time-grid.spec.mjs"],
-      use: { ...devices["Desktop Firefox"], viewport: { width: 1440, height: 1000 } },
-    },
-    {
-      name: "webkit",
-      testMatch: ["**/storage.spec.mjs", "**/rendering-smoke.spec.mjs", "**/resource-scheduler.spec.mjs", "**/resource-time-grid.spec.mjs"],
-      use: { ...devices["Desktop Safari"], viewport: { width: 1440, height: 1000 } },
-    },
+    ...lane === "visual" ? [] : [
+      {
+        name: "firefox",
+        grep: otherGrep,
+        testIgnore: "**/visual.spec.mjs",
+        use: { ...devices["Desktop Firefox"], viewport: { width: 1440, height: 1000 } },
+      },
+      {
+        name: "webkit",
+        grep: otherGrep,
+        testIgnore: "**/visual.spec.mjs",
+        use: { ...devices["Desktop Safari"], viewport: { width: 1440, height: 1000 } },
+      },
+    ],
   ],
 });
