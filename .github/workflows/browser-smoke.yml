@@ -2,11 +2,11 @@ name: Browser smoke QA
 
 on:
   push:
-    branches:
-      - "working"
+    branches-ignore:
+      - "main"
   pull_request:
-    branches:
-      - "working"
+    branches-ignore:
+      - "main"
   workflow_dispatch:
 
 permissions:

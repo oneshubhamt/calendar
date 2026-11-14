@@ -47,7 +47,7 @@ test('presentation data keys fail closed instead of reaching DOMStringMap with m
   assert.deepEqual(result.data,{planningRole:'milestone',ok:'yes'});
 });
 
-test('occurrence actions preserve old menu-only defaults and expose C4 state when opted inline',()=>{
+test('occurrence actions preserve menu-only defaults and expose generic inline action state when opted in',()=>{
   const port={
     actions(){return [
       {id:'open',label:'Open'},

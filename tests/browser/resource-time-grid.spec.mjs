@@ -1,13 +1,10 @@
 import { expect } from "@playwright/test";
 import { scenario } from "./scenario-registry.mjs";
 import { openHarness } from "./support/harness.mjs";
+import { RESOURCE_TREE } from "./support/resource-fixtures.mjs";
 
 const projection = {
-  resources: [
-    { id: "rooms", title: "Rooms" },
-    { id: "a", title: "Room A", parentId: "rooms", order: 1, acceptsAssignments: true },
-    { id: "b", title: "Room B", parentId: "rooms", order: 2, acceptsAssignments: true },
-  ],
+  resources: RESOURCE_TREE,
   occurrences: [
     {
       occurrenceId: "visit", sourceItemId: "visit-item", calendarId: "calendar", title: "Visit",

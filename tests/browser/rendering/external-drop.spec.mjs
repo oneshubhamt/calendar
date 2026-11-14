@@ -1,6 +1,6 @@
 import { expect } from "@playwright/test";
 import { scenario } from "../scenario-registry.mjs";
-import { openHarness } from "../support/harness.mjs";
+import { openHarness, settleBrowserFrames } from "../support/harness.mjs";
 
 scenario("drop.authorized", "external DOM drops create through Calendar authority while internal drag remains a move", async ({ page }) => {
   await openHarness(page);
@@ -294,7 +294,7 @@ scenario("drop.authorized", "external DOM drops create through Calendar authorit
   });
 
   await page.evaluate(() => globalThis.__externalDropProbe.dropMonth("external-locked", "2026-11-11"));
-  await page.waitForTimeout(20);
+  await settleBrowserFrames(page);
   expect(await page.evaluate(() =>
     globalThis.__externalDropProbe.repository.read().items.some(item => item.title === "Locked external"),
   )).toBe(false);
@@ -304,7 +304,7 @@ scenario("drop.authorized", "external DOM drops create through Calendar authorit
     globalThis.__externalDropProbe.dropMonth("external-malformed", "2026-11-12"),
   );
   expect(malformedResult.accepted).toBe(true);
-  await page.waitForTimeout(20);
+  await settleBrowserFrames(page);
   expect(await page.evaluate(() => globalThis.__externalDropProbe.repository.read().items.length)).toBe(beforeMalformed);
 
   const outOfBoundsResult = await page.evaluate(() =>
@@ -316,7 +316,7 @@ scenario("drop.authorized", "external DOM drops create through Calendar authorit
   )).toBe(false);
 
   await page.evaluate(() => globalThis.__externalDropProbe.dropMonth("external-factory-redirect", "2026-11-12"));
-  await page.waitForTimeout(20);
+  await settleBrowserFrames(page);
   expect(await page.evaluate(() =>
     globalThis.__externalDropProbe.repository.read().items.some(item => item.title === "Factory redirect"),
   )).toBe(false);
@@ -330,7 +330,7 @@ scenario("drop.authorized", "external DOM drops create through Calendar authorit
   )).toBe("task");
 
   await page.evaluate(() => globalThis.__externalDropProbe.dropMonth("external-blocked", "2026-11-14"));
-  await page.waitForTimeout(20);
+  await settleBrowserFrames(page);
   expect(await page.evaluate(() =>
     globalThis.__externalDropProbe.repository.read().items.some(item => item.title === "Blocked external"),
   )).toBe(false);
@@ -367,7 +367,7 @@ scenario("drop.authorized", "external DOM drops create through Calendar authorit
     globalThis.__externalDropProbe.dropTimed("external-collision", 245),
   );
   expect(collisionResult.accepted).toBe(true);
-  await page.waitForTimeout(20);
+  await settleBrowserFrames(page);
   expect(await page.evaluate(() => globalThis.__externalDropProbe.repository.read().items.length)).toBe(beforeCollision);
   expect(await page.evaluate(() =>
     globalThis.__externalDropProbe.repository.read().items.some(item => item.title === "Collision external"),

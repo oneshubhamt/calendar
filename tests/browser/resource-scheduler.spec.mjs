@@ -1,13 +1,10 @@
 import { expect } from "@playwright/test";
 import { scenario } from "./scenario-registry.mjs";
-import { openHarness } from "./support/harness.mjs";
+import { openHarness, settleBrowserFrames } from "./support/harness.mjs";
+import { RESOURCE_TREE } from "./support/resource-fixtures.mjs";
 
 const projection = {
-  resources: [
-    { id: "rooms", title: "Rooms" },
-    { id: "a", title: "Room A", parentId: "rooms", order: 1, acceptsAssignments: true },
-    { id: "b", title: "Room B", parentId: "rooms", order: 2, acceptsAssignments: true },
-  ],
+  resources: RESOURCE_TREE,
   occurrences: [{
     occurrenceId: "occ", sourceItemId: "item", calendarId: "calendar", title: "Visit",
     start: "2026-11-10T09:00:00.000Z", end: "2026-11-10T10:00:00.000Z",
@@ -371,6 +368,6 @@ scenario("resource.timeline.auto-scroll", "shared pointer gesture lifecycle auto
   }, pointerId);
   expect(await page.evaluate(() => globalThis.__pointerLifecycleProbe.cancelled())).toBe(1);
   const settled = await page.evaluate(() => globalThis.__pointerLifecycleProbe.scroll.scrollLeft);
-  await page.waitForTimeout(80);
+  await settleBrowserFrames(page, 4);
   expect(await page.evaluate(() => globalThis.__pointerLifecycleProbe.scroll.scrollLeft)).toBe(settled);
 });

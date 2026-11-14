@@ -1,8 +1,8 @@
 import { test } from "@playwright/test";
 
 // Single source of truth for scenario selection. Every case also belongs to @release.
-// "cross" is the selective multi-engine witness; "smoke" is a Chromium-only fast check;
-// "visual" keeps reviewed screenshot coverage outside the cross-browser run.
+// "cross" is the selective multi-engine witness and runs in all three engines.
+// "smoke" adds Chromium breadth; "visual" keeps reviewed screenshots Chromium-only.
 export const scenarioTags = Object.freeze({
   "refresh.midnight": ["cross"],
   "refresh.coalesce": [],
