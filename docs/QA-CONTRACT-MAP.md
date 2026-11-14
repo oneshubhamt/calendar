@@ -256,13 +256,20 @@ Key qualitative outcomes:
 
 ### Latest closure verification
 
-The last full Pass-J verification before this contract consolidation passed:
+A de novo source-level closure audit after Pass J found and corrected three remaining QA-programme gaps:
 
-- **215/215** full/deep Node tests;
+- the superseded `.github/workflows/browser-release.yml` still duplicated the exhaustive matrix already owned by `browser-smoke.yml`;
+- mutation coverage verified only that an invariant ID was named, not that the mutation's failing test was actually a registered witness for that invariant;
+- this document had grown into a 91 KB chronological diary containing obsolete census material rather than a lean canonical contract.
+
+After those corrections, temporary full-verification gates passed:
+
+- **215/215** full/deep Node tests, zero skips;
 - package/parity audit with **185 files / 31 exported subpaths**;
+- all **22 required invariants** and required routine/release risk classes;
 - **12/12** mutation faults detected with artifact restoration;
-- **120/120** exhaustive browser executions.
+- **120/120** exhaustive browser executions in **59.2 s**.
 
-The exact Pass-J merge candidate also passed routine CI (**211 pass + 4 deliberate deep skips**) and routine browser QA (**34/34**).
+Before the temporary full gates were enabled, the repaired branch also passed routine CI (**211 pass + 4 deliberate deep skips**) and routine browser QA (**34/34 in 33.5 s**). A final exact-head routine run is required after restoring normal workflow conditions.
 
 Numbers in this section are dated evidence, not future pass/fail thresholds. The registries and semantic audits define the enduring contract.
