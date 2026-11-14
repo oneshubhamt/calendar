@@ -32,6 +32,22 @@ const mutations = [
     title: "UTC daily and weekly recurrence matches an independent civil-date enumeration across leap and year boundaries",
   },
   {
+    name: "split tail reuses the original series anchor",
+    file: "dist/core/commands.js",
+    from: "const splitAnchor = { ...item, start: occurrence.start, end: occurrence.end };",
+    to: "const splitAnchor = item;",
+    test: "tests/node/engine/state-machine.test.mjs",
+    title: "seeded calendar state machine agrees with an independent reference model across mutation history and refresh",
+  },
+  {
+    name: "negative BYMONTHDAY is shifted one day early",
+    file: "dist/core/recurrence.js",
+    from: "days = rule.byMonthDay.map(value => value > 0 ? value : last + value + 1).filter(day => day >= 1 && day <= last);",
+    to: "days = rule.byMonthDay.map(value => value > 0 ? value : last + value).filter(day => day >= 1 && day <= last);",
+    test: "tests/node/temporal/mathematical-invariants.test.mjs",
+    title: "monthly and yearly recurrence match an independent bounded UTC oracle including filters limits exceptions and partitions",
+  },
+  {
     name: "prefer-local deletion sync silently applies remote",
     file: "dist/interoperability/sync.js",
     from: /if\s*\(policy === "prefer-local"\)\s*return\s*\{\s*action:\s*"delete-remote"\s*\};/,
