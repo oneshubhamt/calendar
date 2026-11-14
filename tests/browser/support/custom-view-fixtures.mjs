@@ -222,12 +222,10 @@ export async function mountMultiMonthView(page) {
     const commands = new RepositoryCommandHandler(repository);
     let projectionCalls = 0;
     let backgroundCalls = 0;
-    const projectedRanges = [];
     const projection = {
       id: "multi-month-query-probe",
       project(range) {
         projectionCalls += 1;
-        projectedRanges.push({ ...range });
         return [];
       },
     };
@@ -268,7 +266,6 @@ export async function mountMultiMonthView(page) {
 
     projectionCalls = 0;
     backgroundCalls = 0;
-    projectedRanges.length = 0;
     await calendar.refresh();
 
     const dispatchExternal = (date, title) => {
@@ -315,7 +312,6 @@ export async function mountMultiMonthView(page) {
       repository,
       projectionCalls: () => projectionCalls,
       backgroundCalls: () => backgroundCalls,
-      projectedRanges,
       createdSelections,
       dispatchExternal,
       createOn,
@@ -365,12 +361,10 @@ export async function mountTimelineView(page) {
     ];
     const repository = new MemoryCalendarRepository([source], items);
     let projectionCalls = 0;
-    const projectedRanges = [];
     const projection = {
       id: "timeline-query-probe",
       project(range) {
         projectionCalls += 1;
-        projectedRanges.push({ ...range });
         return [];
       },
     };
@@ -414,7 +408,6 @@ export async function mountTimelineView(page) {
     });
     projectionCalls = 0;
     backgroundCalls = 0;
-    projectedRanges.length = 0;
     await calendar.refresh();
 
     const dispatchExternal = title => {
@@ -471,7 +464,6 @@ export async function mountTimelineView(page) {
       repository,
       projectionCalls: () => projectionCalls,
       backgroundCalls: () => backgroundCalls,
-      projectedRanges,
       createdSelections,
       openCalls: () => openCalls,
       dispatchExternal,
