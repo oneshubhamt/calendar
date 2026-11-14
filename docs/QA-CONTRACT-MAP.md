@@ -213,42 +213,55 @@ Durations are observed on GitHub runners and subject to environmental variation.
 
 **Pass D:** final gate timing/economics, and compare behavioural/mutation sensitivity of the selected smoke set against full release; do not infer that any single green run proves absence of flakiness.
 
-## Pass D — CI economics and independent verification (2026-11-14)
+## Pass D — CI economics, independent verification and objective closure (2026-11-14)
 
-**Independent stage verification:** [Node/type/package/coverage/mutations run 43572885721](https://github.com/oneshubhamt/calendar/actions/runs/43572885721) and [full browser run 43572885762](https://github.com/oneshubhamt/calendar/actions/runs/43572885762) both succeeded. Pass A source baseline `20f06c826f37` remains the immutable census anchor. No production `src/` changes occurred in Passes A–D.
+**Final independent staging evidence:** [CI 43575578899](https://github.com/oneshubhamt/calendar/actions/runs/43575578899), [browser smoke 43575578900](https://github.com/oneshubhamt/calendar/actions/runs/43575578900), and [full browser release 43575578930](https://github.com/oneshubhamt/calendar/actions/runs/43575578930) all succeeded. Pass A source baseline `20f06c826f37` remains the immutable census anchor. No production `src/` code changed anywhere in Passes A–D or this closure audit.
 
-### QA commands and publication correctness
+### Canonical fast/full execution model
 
-| Command | Work performed | Compilations |
-|---|---|---:|
-| `npm run check:fast` | Full strict compiler → all 211 Node cases → remove `dist/demo` and `dist/fixtures` → validate package contents and every exports target using script-free npm dry-run | **1** |
-| `npm run check` / `check:full` | Full strict compiler → all 211 Node cases → snapshot production output hashes → genuine `prepack` package compilation → compare every canonical emitted file → validate package manifest | **2** |
-| `npm run qa:fast` | One full build shared by Node + 53 tagged browser executions, then script-free package audit | **1** |
-| `npm run qa:full` | One full build shared by Node + 147 browser executions, then native publication compilation, parity and manifest checks | **2** |
+| Lane | Node / package | Browser | Intended trigger |
+|---|---|---|---|
+| **Fast** | One strict build; **207 routine pass + 4 explicit deep skips**; script-free publication manifest audit | **53** executions: 25 Chromium + 14 Firefox + 14 WebKit | Every ordinary non-`main` push / PR |
+| **Full** | All **211/211** Node cases; genuine `prepack`; byte-for-byte publication parity; coverage census | **147/147**: 55 Chromium + 46 Firefox + 46 WebKit, including all nine visual baselines | PR/push to `main`, weekly schedule, release/manual/major-refactor |
+| **Focused** | `qa:mutation`: four named compiled-output faults; `qa:coverage`: executable inventory/lane discovery | `qa:browser:cross` = 42; `qa:browser:visual` = 9 | Manual / diagnostic |
 
-`npm run qa:browser:smoke` and `qa:browser` are standalone browser gates and build independently for their separate CI runners. The original `prepack` and `build:package` commands remain canonical; skipping lifecycle scripts is allowed **only** in the validated fast manifest check. The fast preparation explicitly verifies `tsconfig.package.json` exclusions and fails if they change without a reviewed policy update.
+The four full-only Node witnesses are deliberately the genuinely expensive exhaustive/stress cases: multi-year civil-day/snap algebra, broad recurrence partition/ordinal metamorphism, complete 400-year ISO-week comparison, and the 12,000-level resource hierarchy stress test. Fast QA **still runs** the cheap independent UTC recurrence oracle, explicit leap/month-end/New York/Lord Howe transition examples, interval finite-lattice model, layout/resource permutations, CAS model and all ordinary failure paths.
 
-On the same staged GitHub runner, [paired run 43572721264](https://github.com/oneshubhamt/calendar/actions/runs/43572721264) measured fast **~4.47 s** versus native full **~5.40 s** quality steps, an observed ~**0.93 s (17%)** difference. Not a statistically reliable fixed speedup; both execute the same Node tests. The native parity check found **182 byte-identical published compiled artifacts** and the npm manifest contained **185 files / 31 exported subpaths**, with no demo/test fixture output.
+### Measured economics
 
-### Independently observed verification
+- Before deep tiering, staged fast Node execution was **3.42 s** in run 43572721264. The final closure run executed the same 211 declarations as **207 pass + 4 skip in 2.00 s**; an earlier fast-only closure run measured **1.23 s**. These runner measurements vary, but the selection saving is structural.
+- Final closure smoke: [43575578900](https://github.com/oneshubhamt/calendar/actions/runs/43575578900), **53/53 in 34.3 s**. Original Pass A browser phase: **147 in ~100.6 s**.
+- Final closure full release: [43575578930](https://github.com/oneshubhamt/calendar/actions/runs/43575578930), **147/147 in ~68.1 s** on that runner; release scope is unchanged.
+- Publication audit remains **185 packaged files / 31 export subpaths**, with **182** canonical compiled files byte-identical between the full-development and publication compiler routes.
 
-| Invariant/evidence | Result |
+Durations are observations, not guaranteed benchmarks. The robust gain is that ordinary QA no longer pays for four exhaustive Node witnesses or 94 unnecessary browser-engine repetitions, while full QA still does.
+
+### Independent regression-sensitivity evidence
+
+| Injected defect | Independent intended witness |
 |---|---|
-| Node suite | **211/211 pass**, original 212 → remove 3 superseded declarations + add 2 independent reference tests = 211; all Pass A failure modes reconciled in Pass B |
-| Original browser release matrix | **147/147 pass**, 55 Chromium + 46 Firefox + 46 WebKit, with nine intact screenshot baselines; Pass D full test phase ~84 seconds |
-| Live Playwright discovery via `--list` | **147 full / 53 smoke / 42 cross / 9 visual**; exactly 55 distinct scenario IDs in 13 specs, 25 Node modules |
-| Half-open interval mutant | Inclusive boundary rejected by independent finite lattice oracle |
-| Repository stale revision mutant | Removed revision guard rejected by multi-step CAS reference model |
-| Recurrence COUNT mutant | Extra recurrence occurrence rejected by independent UTC calendar enumeration |
-| Sync prefer-local mutant | Incorrect remote-apply result rejected by local/remote/policy decision-table model |
+| Half-open interval boundary made inclusive | Exhaustive finite interval model |
+| Stale revision guard disabled | Multi-transition CAS reference state model |
+| Recurrence COUNT leaks one occurrence | Independent UTC civil-date enumeration |
+| Prefer-local sync deletion applies remote instead | Local/remote/policy decision table |
 
-**All four targeted mutations were detected by their *intended named tests*.** Fault injection altered only ephemeral compiled output; the harness checked and restored each original artifact hash. These are selective, meaningful sensitivity proofs, not a claim of exhaustive mutation testing.
+**4/4 faults were detected by their named intended tests**, and each modified compiled artifact was hash-verified restored immediately afterward. This is selective mutation evidence, not a claim of exhaustive mutation coverage.
 
-### Final gate ownership and cost audit
+### Browser maintainability closure
 
-- Ordinary branch pushes: `check:fast`; `working` pushes and PRs targeting `working` also run browser smoke (53 executions). PRs targeting `main` and main pushes: native `check:full` + independent full browser-release matrix (147 executions), with Playwright discovery census.
-- CI manual dispatch exposes `full` and `mutation` controls; local `qa:coverage` and `qa:mutation` remain available without running on every quick pass.
-- Remaining slow Node witnesses are civil/DST algebra (~1.7–2.0 s), independent 400-year ISO-week verification (~0.7–0.8 s), dependency graph (~0.6 s) and recurrence properties (~0.4–0.5 s). Retain them: their semantic value and fault detection outweigh the modest runtime.
-- Real-browser storage/gesture/visual checks dominate release cost. Smoke selection provides the structural savings; release scope was not reduced. Timings vary between GitHub runners; repeated-green results do not prove the suite is flake-free. Live Google and actual host-provider contracts still require separate authorized integration evidence.
+- The original 1,982-line rendering file remains split by behaviour; storage remains split by schema/lifecycle/records/concurrency.
+- Harness navigation and browser-frame settling are centralized; Resource Scheduler and Resource TimeGrid share one canonical resource-tree fixture.
+- There are **zero `waitForTimeout` calls** in the browser QA modules. Negative asynchronous external-drop assertions settle on browser animation frames; pointer cancellation is observed across frames rather than a guessed millisecond sleep.
+- User actions use semantic locators where the interaction contract permits; CSS/DOM selectors remain only where geometry, state classes, layout layers or drag targets are themselves the contract.
+- The former historical “C4 state” test label is now generic action-state terminology; no compatibility/legacy QA scaffolding remains.
 
-**Closure:** 25 product-domain Node modules / **211 cases** (all original essential contracts preserved or strengthened), 13 browser specs / **55 distinct scenarios**, nine reference screenshots and the unchanged **147-execution** complete release matrix. Production files, canonical data, initialization, and observable calendar behaviour are untouched. Further test growth or optimization should be driven by observed regressions or costs.
+### Final reconciliation against Pass A acceptance criteria
+
+1. **Critical invariants retained:** 25 product-domain Node modules, **211 declared cases**, 13 browser specs, **55 unique scenarios**, nine screenshot baselines. The original 212 Node declarations reconcile as documented in Pass B; no unique failure-path witness was intentionally discarded.
+2. **Independent mathematics:** explicit recurrence/date oracles, known DST/leap boundaries, 400-year ISO reference, finite interval model and metamorphic properties coexist; production functions are not used as their own sole oracle.
+3. **Important real-browser behaviour retained:** multi-tab IndexedDB/CAS/convergence/focus fallback, resource atomicity in both layouts, host boundaries, pointer/keyboard actions, print/custom views and all visual baselines remain in full release.
+4. **Routine QA materially faster:** Node deep tier plus the 53-execution browser smoke lane reduces ordinary work; complete 211/147 coverage remains scheduled/release/manual.
+5. **Suite is leaner:** product-domain Node layout, behavioural browser layout, shared fixtures, no fixed-time browser sleeps, one module-graph architecture contract, and no obsolete compatibility checks.
+6. **Complete validation:** final staged full Node/package/coverage/mutation gate passed; smoke passed all three engines; full release passed **147/147** across Chromium, Firefox and WebKit.
+
+**Programme closure:** the requested QA architecture is now implemented end to end. Future changes should add or move tests only when a new risk/invariant requires evidence, not to preserve development-history file structures or assertion counts.

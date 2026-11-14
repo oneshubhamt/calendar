@@ -10,7 +10,6 @@ on:
   push:
     branches:
       - "main"
-      - "qa-objective-closure" # temporary full verification
     tags:
       - "v*"
 
