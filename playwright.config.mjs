@@ -2,9 +2,9 @@ import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = "http://127.0.0.1:4173";
 
-// Release runs every browser contract once in Chromium. The explicit @cross subset
-// is the selective multi-engine witness in Firefox and WebKit; visual baselines stay Chromium-only.
-// Other lanes select the same stable scenario tags without depending on filenames or declaration order.
+// Routine smoke runs broad Chromium evidence plus the selective @cross subset in all engines.
+// Release is exhaustive: every nonvisual browser contract runs in Chromium, Firefox and WebKit,
+// while reviewed visual baselines remain Chromium-only.
 const lane = process.env.CALENDAR_QA_LANE ?? "release";
 if (!["release", "smoke", "cross", "visual"].includes(lane)) {
   throw new Error(`Unknown Calendar browser QA lane: ${lane}`);
@@ -12,7 +12,7 @@ if (!["release", "smoke", "cross", "visual"].includes(lane)) {
 const chromiumGrep = lane === "smoke" ? /@smoke|@cross/
   : lane === "cross" ? /@cross/
     : lane === "visual" ? /@visual/ : undefined;
-const otherGrep = /@cross/;
+const otherGrep = lane === "release" ? /@release/ : /@cross/;
 
 
 export default defineConfig({
