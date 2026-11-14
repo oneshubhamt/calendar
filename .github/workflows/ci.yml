@@ -64,5 +64,4 @@ jobs:
         run: npm run qa:coverage
 
       - name: Selective fault injection
-        if: inputs.mutation == true
         run: npm run qa:mutation
