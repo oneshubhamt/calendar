@@ -104,7 +104,7 @@ scenario("presentation.actions", "structured presentation, inline actions and em
   expect(await page.evaluate(() => globalThis.__structuredProbe.actionCalls())).toBe(1);
   expect(await page.evaluate(() => globalThis.__structuredProbe.openCalls())).toBe(0);
 
-  await event.locator(".dc-occurrence-main").click();
+  await event.getByRole("button", { name: /Presented title/ }).click();
   expect(await page.evaluate(() => globalThis.__structuredProbe.openCalls())).toBe(1);
 });
 

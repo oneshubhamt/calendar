@@ -286,7 +286,7 @@ scenario("resource.timeline.pointer", "Resource Scheduler reuses shared pointer 
 
   await page.evaluate(() => globalThis.__resourcePointerProbe.beginTouch());
   await expect(page.locator('.dc-rs-event[data-occurrence-id="occ"]')).toHaveClass(/is-touch-arming/);
-  await page.waitForTimeout(300);
+  // Wait for the actual long-press activation rather than guessing the timeout.
   await expect(page.locator('.dc-rs-event[data-occurrence-id="occ"]')).toHaveClass(/is-drag-source/);
   await page.evaluate(() => globalThis.__resourcePointerProbe.cancelTouch());
   await expect(page.locator('.dc-rs-event[data-occurrence-id="occ"]')).not.toHaveClass(/is-drag-source|is-touch-arming/);
