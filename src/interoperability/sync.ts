@@ -119,6 +119,7 @@ export function decideSync(
   if ((localChanged || remoteChanged) && localFingerprint === remoteFingerprint) return { action: "rebase" };
   if (!localChanged && !remoteChanged) return { action: "none" };
   if (localDeleted && remoteDeleted) return { action: "none" };
+  if (localDeleted && !remoteChanged) return { action: "delete-remote" };
   if (localDeleted && remoteChanged && !remoteDeleted) {
     if (policy === "prefer-local") return { action: "delete-remote" };
     if (policy === "prefer-remote") return { action: "apply-remote" };

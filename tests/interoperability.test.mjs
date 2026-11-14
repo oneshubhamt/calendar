@@ -326,6 +326,29 @@ test('Google incremental checkpoint refreshes provider identity without rewritin
   assert.equal(result.state.links[0].identity.sequence,2);
 });
 
+test('Google full sync propagates a local deletion when the remote event is unchanged',async()=>{
+  const base=event({title:'Delete me'});
+  const remoteEvent={id:'g1',etag:'"e1"',summary:'Delete me',start:{dateTime:base.start},end:{dateTime:base.end},reminders:{useDefault:false}};
+  const remoteBase=Google.googleEventToCalendarItem(remoteEvent,'personal','delete-local','e1','remote');
+  const states=new Sync.MemorySyncStateStore();
+  states.write({
+    provider:'google',connectionId:'delete-local',mode:'two-way',externalCalendarId:'remote',localCalendarId:'personal',
+    links:[{localItemId:'e1',identity:{provider:'google',connectionId:'delete-local',externalCalendarId:'remote',eventId:'g1',etag:'"e1"'},baseLocalFingerprint:Sync.fingerprintCalendarItem(base),baseRemoteFingerprint:Sync.fingerprintCalendarItem(remoteBase),status:'clean',lastSyncedAt:'2026-01-01T00:00:00Z'}],
+  });
+  const repo=new Core.MemoryCalendarRepository([source],[]);
+  let deletes=0;
+  const transport={
+    async listEvents(){return {items:[remoteEvent],nextSyncToken:'token-1'};},
+    async getEvent(){throw Error('unused');},async listInstances(){return {items:[]};},
+    async insertEvent(){throw Error('unused');},async updateEvent(){throw Error('unused');},async patchEvent(){throw Error('unused');},
+    async deleteEvent(_calendarId,eventId,etag){deletes++;assert.equal(eventId,'g1');assert.equal(etag,'"e1"');},
+  };
+  const result=await new Google.GoogleCalendarSyncAdapter(transport,repo,states,{id:'delete-local',googleCalendarId:'remote',localCalendarId:'personal',mode:'two-way'}).sync();
+  assert.equal(deletes,1);
+  assert.equal(result.deletedRemote,1);
+  assert.deepEqual(result.state.links,[]);
+});
+
 test('Google sync removes a stale link once both local and remote are already deleted',async()=>{
   const base=event({title:'Deleted'});
   const remoteBase=Google.googleEventToCalendarItem({id:'g1',etag:'"e1"',summary:'Deleted',start:{dateTime:base.start},end:{dateTime:base.end},reminders:{useDefault:false}},'personal','delete-rebase','e1','remote');

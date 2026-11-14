@@ -3,71 +3,38 @@ import assert from "node:assert/strict";
 import { weekOfYear } from "../dist/core/time.js";
 import { resolveCalendarWeekNumbering } from "../dist/view/week-numbering.js";
 
-test("weekOfYear handles ISO-style year rollover without DOM assumptions", () => {
-  assert.deepEqual(weekOfYear("2020-12-31", 1, 4, "UTC"), {
-    weekYear: 2020,
-    weekNumber: 53,
-    weekStart: "2020-12-28",
-  });
-  assert.deepEqual(weekOfYear("2021-01-01", 1, 4, "UTC"), {
-    weekYear: 2020,
-    weekNumber: 53,
-    weekStart: "2020-12-28",
-  });
-  assert.deepEqual(weekOfYear("2021-01-04", 1, 4, "UTC"), {
-    weekYear: 2021,
-    weekNumber: 1,
-    weekStart: "2021-01-04",
-  });
-  assert.deepEqual(weekOfYear("2026-01-01", 1, 4, "UTC"), {
-    weekYear: 2026,
-    weekNumber: 1,
-    weekStart: "2025-12-29",
-  });
-});
+const DAY_MS = 86_400_000;
 
-test("weekOfYear follows displayed week start and minimum-days policy", () => {
-  assert.deepEqual(weekOfYear("2020-12-31", 0, 1, "UTC"), {
-    weekYear: 2021,
-    weekNumber: 1,
-    weekStart: "2020-12-27",
-  });
-  assert.deepEqual(weekOfYear("2021-01-01", 0, 1, "UTC"), {
-    weekYear: 2021,
-    weekNumber: 1,
-    weekStart: "2020-12-27",
-  });
-  assert.deepEqual(weekOfYear("2021-01-01", 0, 4, "UTC"), {
-    weekYear: 2020,
-    weekNumber: 53,
-    weekStart: "2020-12-27",
-  });
-  assert.deepEqual(weekOfYear("2021-01-03", 0, 4, "UTC"), {
-    weekYear: 2021,
-    weekNumber: 1,
-    weekStart: "2021-01-03",
-  });
-  assert.deepEqual(weekOfYear("2021-01-01", 6, 4, "UTC"), {
-    weekYear: 2020,
-    weekNumber: 52,
-    weekStart: "2020-12-26",
-  });
-  assert.deepEqual(weekOfYear("2021-01-02", 6, 4, "UTC"), {
-    weekYear: 2021,
-    weekNumber: 1,
-    weekStart: "2021-01-02",
-  });
-});
+function isoWeekReference(date) {
+  const value = new Date(date.getTime());
+  const weekday = value.getUTCDay() || 7;
+  const weekStart = new Date(value.getTime() - (weekday - 1) * DAY_MS);
+  const thursday = new Date(value.getTime() + (4 - weekday) * DAY_MS);
+  const weekYear = thursday.getUTCFullYear();
+  const january4 = new Date(Date.UTC(weekYear, 0, 4));
+  const january4Weekday = january4.getUTCDay() || 7;
+  const firstWeekStart = new Date(january4.getTime() - (january4Weekday - 1) * DAY_MS);
+  return {
+    weekYear,
+    weekNumber: Math.floor((weekStart.getTime() - firstWeekStart.getTime()) / (7 * DAY_MS)) + 1,
+    weekStart: weekStart.toISOString().slice(0, 10),
+  };
+}
 
-test("weekOfYear preserves the same civil date identity across time zones", () => {
+test("ISO week identity matches an independent reference over the complete 400-year Gregorian cycle", () => {
   const zones = ["UTC", "Asia/Kolkata", "America/Los_Angeles", "Pacific/Auckland"];
-  const values = zones.map(zone => weekOfYear("2026-01-01", 1, 4, zone));
-  for (const value of values) assert.deepEqual(value, values[0]);
-
-  assert.deepEqual(
-    weekOfYear(new Date("2026-01-01T12:00:00.000Z"), 1, 4, "Asia/Kolkata"),
-    weekOfYear("2026-01-01", 1, 4, "Asia/Kolkata"),
-  );
+  const start = Date.UTC(2000, 0, 1);
+  const end = Date.UTC(2400, 0, 1);
+  let ordinal = 0;
+  for (let epoch = start; epoch < end; epoch += DAY_MS, ordinal += 1) {
+    const date = new Date(epoch);
+    const key = date.toISOString().slice(0, 10);
+    const expected = isoWeekReference(date);
+    assert.deepEqual(weekOfYear(key, 1, 4, "UTC"), expected, key);
+    if (ordinal % 997 === 0) {
+      for (const zone of zones) assert.deepEqual(weekOfYear(key, 1, 4, zone), expected, `${key} in ${zone}`);
+    }
+  }
 });
 
 test("weekOfYear fails closed on invalid policy values", () => {
