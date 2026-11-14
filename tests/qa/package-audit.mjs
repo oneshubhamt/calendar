@@ -68,7 +68,8 @@ function verify() {
   // npm 12 may return one package object rather than an array for dry-run JSON.
   const parsed = JSON.parse(child.stdout);
   const manifest = Array.isArray(parsed) ? parsed[0] : parsed;
-  assert.ok(Array.isArray(manifest?.files), "npm pack returned no manifest");
+  assert.ok(Array.isArray(manifest?.files),
+    `npm pack returned unexpected JSON: ${JSON.stringify(parsed).slice(0, 2800)}`);
   const files = new Set(manifest.files.map(file => file.path));
   assert.ok(files.has("package.json") && files.has("README.md"), "publication metadata missing");
   assert.ok(files.has("docs/ARCHITECTURE.md"), "published architecture contract missing");
