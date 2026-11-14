@@ -53,7 +53,7 @@ jobs:
       - name: Run tagged browser smoke
         env:
           HOME: /root
-        run: npm run qa:browser
+        run: npm run qa:browser:smoke
 
       - name: Upload Playwright failure report
         if: failure()
