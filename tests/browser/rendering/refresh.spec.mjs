@@ -66,9 +66,9 @@ scenario("refresh.midnight", "live temporal chrome advances across midnight with
 });
 
 
-scenario("refresh.coalesce", "Calendar refresh coalesces invalidation bursts and awaited refresh includes the trailing authoritative query", async ({ page }) => {
+async function exerciseRefreshQueue(page, mode) {
   await openHarness(page);
-  const result = await page.evaluate(async () => {
+  return await page.evaluate(async mode => {
     const [{ CalendarEngine }, { MemoryCalendarRepository }, { CalendarUi }] = await Promise.all([
       import("/dist/core/calendar-engine.js"),
       import("/dist/core/store.js"),
@@ -76,110 +76,76 @@ scenario("refresh.coalesce", "Calendar refresh coalesces invalidation bursts and
     ]);
     const source = { id: "personal", title: "Personal", visible: true };
     const ranges = [];
-    const releases = [];
-    const projection = {
-      id: "slow-refresh-probe",
-      project(range) {
-        ranges.push(structuredClone(range));
-        return new Promise(resolve => releases.push(resolve));
-      },
-    };
-    const engine = new CalendarEngine(new MemoryCalendarRepository([source], []), [projection]);
-    const host = document.getElementById("browser-test-host");
-    const calendar = new CalendarUi(host, engine, {
-      locale: "en-US",
-      timeZone: "UTC",
-      initialDate: "2026-11-10",
-      initialView: "day",
-    });
-
-    const waitForCalls = async count => {
-      while (releases.length < count) await new Promise(resolve => setTimeout(resolve, 0));
-    };
-    await waitForCalls(1);
-
-    const awaited = calendar.refresh();
-    let settled = false;
-    void awaited.then(() => { settled = true; });
-    calendar.goTo("2026-11-12");
-    void calendar.refresh();
-    void calendar.refresh();
-
-    releases[0]([]);
-    while (ranges.length < 2) await new Promise(resolve => setTimeout(resolve, 0));
-    const settledBeforeTrailingQuery = settled;
-    releases[1]([]);
-    await awaited;
-
-    const title = host.querySelector("[data-role='title']")?.textContent ?? "";
-    calendar.destroy();
-    return {
-      calls: ranges.length,
-      settledBeforeTrailingQuery,
-      firstStart: ranges[0]?.start,
-      trailingStart: ranges[1]?.start,
-      title,
-    };
-  });
-
-  expect(result.calls).toBe(2);
-  expect(result.settledBeforeTrailingQuery).toBe(false);
-  expect(result.firstStart).toBe("2026-11-10T00:00:00.000Z");
-  expect(result.trailingStart).toBe("2026-11-12T00:00:00.000Z");
-  expect(result.title).toMatch(/November 12, 2026/);
-});
-
-
-scenario("refresh.failure-recovery", "Calendar refresh drains a queued newer request when a superseded projection fails", async ({ page }) => {
-  await openHarness(page);
-  const result = await page.evaluate(async () => {
-    const [{ CalendarEngine }, { MemoryCalendarRepository }, { CalendarUi }] = await Promise.all([
-      import("/dist/core/calendar-engine.js"),
-      import("/dist/core/store.js"),
-      import("/dist/view/calendar-ui.js"),
-    ]);
-    const source = { id: "personal", title: "Personal", visible: true };
-    const calls = [];
     const controls = [];
     const projection = {
-      id: "failing-refresh-probe",
+      id: "refresh-queue-probe",
       project(range) {
-        calls.push(structuredClone(range));
+        ranges.push(structuredClone(range));
         return new Promise((resolve, reject) => controls.push({ resolve, reject }));
       },
     };
-    const engine = new CalendarEngine(new MemoryCalendarRepository([source], []), [projection]);
-    const host = document.getElementById("browser-test-host");
-    const calendar = new CalendarUi(host, engine, {
-      locale: "en-US",
-      timeZone: "UTC",
-      initialDate: "2026-11-10",
-      initialView: "day",
-    });
+    const calendar = new CalendarUi(
+      document.getElementById("browser-test-host"),
+      new CalendarEngine(new MemoryCalendarRepository([source], []), [projection]),
+      {
+        locale: "en-US",
+        timeZone: "UTC",
+        initialDate: "2026-11-10",
+        initialView: "day",
+      },
+    );
+    const waitForCalls = async count => {
+      while (controls.length < count) await new Promise(resolve => setTimeout(resolve, 0));
+    };
+    await waitForCalls(1);
 
-    while (controls.length < 1) await new Promise(resolve => setTimeout(resolve, 0));
-    calendar.goTo("2026-11-12");
-    const awaited = calendar.refresh();
-    controls[0].reject(new Error("superseded projection failed"));
+    let awaited;
+    let settled = false;
+    if (mode === "coalesce") {
+      awaited = calendar.refresh();
+      void awaited.then(() => { settled = true; });
+      calendar.goTo("2026-11-12");
+      void calendar.refresh();
+      void calendar.refresh();
+      controls[0].resolve([]);
+    } else {
+      calendar.goTo("2026-11-12");
+      awaited = calendar.refresh();
+      controls[0].reject(new Error("superseded projection failed"));
+    }
 
-    while (controls.length < 2) await new Promise(resolve => setTimeout(resolve, 0));
+    await waitForCalls(2);
+    const settledBeforeTrailingQuery = settled;
     controls[1].resolve([]);
     await awaited;
 
-    const title = host.querySelector("[data-role='title']")?.textContent ?? "";
+    const title = document.querySelector("#browser-test-host [data-role='title']")?.textContent ?? "";
     calendar.destroy();
     return {
-      calls: calls.length,
-      firstStart: calls[0]?.start,
-      trailingStart: calls[1]?.start,
+      calls: ranges.length,
+      firstStart: ranges[0]?.start,
+      trailingStart: ranges[1]?.start,
+      settledBeforeTrailingQuery,
       title,
     };
-  });
+  }, mode);
+}
 
-  expect(result).toMatchObject({
+scenario("refresh.queue", "Calendar refresh queue coalesces bursts and recovers from superseded projection failure", async ({ page }) => {
+  const coalesced = await exerciseRefreshQueue(page, "coalesce");
+  expect(coalesced).toMatchObject({
+    calls: 2,
+    firstStart: "2026-11-10T00:00:00.000Z",
+    trailingStart: "2026-11-12T00:00:00.000Z",
+    settledBeforeTrailingQuery: false,
+  });
+  expect(coalesced.title).toMatch(/November 12, 2026/);
+
+  const recovered = await exerciseRefreshQueue(page, "failure");
+  expect(recovered).toMatchObject({
     calls: 2,
     firstStart: "2026-11-10T00:00:00.000Z",
     trailingStart: "2026-11-12T00:00:00.000Z",
   });
-  expect(result.title).toMatch(/November 12, 2026/);
+  expect(recovered.title).toMatch(/November 12, 2026/);
 });
