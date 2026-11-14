@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as C from '../dist/index.js';
-import {createDirectorFixtureEnvironment,DIRECTOR_FIXTURE_TIME_ZONE} from '../dist/fixtures/director.js';
-import {DIRECTOR_ECOSYSTEM_SOURCES} from '../dist/integration/ecosystem.js';
-import {StudyDirectorPlanCommandHandler} from '../dist/integration/study-director.js';
+import * as C from '../../../dist/index.js';
+import {createDirectorFixtureEnvironment,DIRECTOR_FIXTURE_TIME_ZONE} from '../../../dist/fixtures/director.js';
+import {DIRECTOR_ECOSYSTEM_SOURCES} from '../../../dist/integration/ecosystem.js';
+import {StudyDirectorPlanCommandHandler} from '../../../dist/integration/study-director.js';
 
 test('realistic fixtures project all three Director domains', async()=>{
   const fixture=createDirectorFixtureEnvironment();

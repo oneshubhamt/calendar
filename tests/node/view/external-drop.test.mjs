@@ -7,7 +7,7 @@ import {
   normalizeCalendarExternalDropTemplate,
   resolveCalendarExternalDropDecoder,
   setCalendarExternalDropData,
-} from "../dist/view/external-drop.js";
+} from "../../../dist/view/external-drop.js";
 
 class FakeDataTransfer {
   data = new Map();

@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as C from '../dist/index.js';
-import { baselineOccurrenceCapabilities, calendarOccurrenceCommandContext, resolveOccurrenceCapabilities, temporalMutationCapabilityRequirements } from '../dist/core/authority.js';
-import { CalendarCommandLifecycle } from '../dist/view/command-lifecycle.js';
-import { occurrenceWithPreview } from '../dist/view/occurrence-preview.js';
-import { CalendarMutationCoordinator } from '../dist/view/mutation-coordinator.js';
-import { CalendarCommandStaleError } from '../dist/core/commands.js';
+import * as C from '../../../dist/index.js';
+import { baselineOccurrenceCapabilities, calendarOccurrenceCommandContext, resolveOccurrenceCapabilities, temporalMutationCapabilityRequirements } from '../../../dist/core/authority.js';
+import { CalendarCommandLifecycle } from '../../../dist/view/command-lifecycle.js';
+import { occurrenceWithPreview } from '../../../dist/view/occurrence-preview.js';
+import { CalendarMutationCoordinator } from '../../../dist/view/mutation-coordinator.js';
+import { CalendarCommandStaleError } from '../../../dist/core/commands.js';
 
 const source={id:'host',title:'Host',visible:true};
 const readOnlySource={...source,readOnly:true};

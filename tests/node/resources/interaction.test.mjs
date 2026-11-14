@@ -3,13 +3,13 @@ import assert from "node:assert/strict";
 import {
   executeCalendarResourceInteraction,
   replaceCalendarResourceAssignment,
-} from "../dist/features/resource-scheduler/index.js";
+} from "../../../dist/features/resource-scheduler/index.js";
 import {
   moveOccurrenceByCivilMinutes,
   resizeOccurrenceByCivilMinutes,
   snapMinuteCoordinate,
-} from "../dist/index.js";
-import { makeResourceOccurrence } from "./fixtures/domain.mjs";
+} from "../../../dist/index.js";
+import { makeResourceOccurrence } from "../../fixtures/domain.mjs";
 
 const occurrence = makeResourceOccurrence;
 

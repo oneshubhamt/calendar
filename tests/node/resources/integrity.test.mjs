@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   validateCalendarResources, flattenCalendarResources,
   validateCalendarResourceAssignments, associateCalendarResources,
-} from "../dist/features/resource-scheduler/index.js";
+} from "../../../dist/features/resource-scheduler/index.js";
 
 const resources = [
   {id:"roomB",title:"Room B",parentId:"rooms",acceptsAssignments:true,order:2},

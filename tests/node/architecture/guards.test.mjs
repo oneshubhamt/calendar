@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import * as Calendar from "../dist/index.js";
-import * as CalendarCore from "../dist/core/index.js";
-import { loadSourceModuleGraph } from "./helpers/module-graph.mjs";
+import * as Calendar from "../../../dist/index.js";
+import * as CalendarCore from "../../../dist/core/index.js";
+import { loadSourceModuleGraph } from "../../helpers/module-graph.mjs";
 
 const read = path => fs.readFile(new URL(path, import.meta.url), "utf8");
-const graphPromise = loadSourceModuleGraph(new URL("../src/", import.meta.url));
+const graphPromise = loadSourceModuleGraph(new URL("../../../src/", import.meta.url));
 
 const idsUnder = (graph, prefix) => [...graph.keys()].filter(id => id.startsWith(prefix));
 const dependenciesOf = (graph, id) => graph.get(id)?.imports ?? new Set();
@@ -47,7 +47,7 @@ test("module graph enforces generic dependency direction", async () => {
 });
 
 test("optional features and package entry points remain explicit contracts", async () => {
-  const pkg = JSON.parse(await read("../package.json"));
+  const pkg = JSON.parse(await read("../../../package.json"));
   assert.equal(Object.hasOwn(pkg.exports, "./features"), false);
   for (const subpath of [
     "./features/personal", "./features/personal-ui", "./features/planning", "./features/availability",
@@ -57,7 +57,12 @@ test("optional features and package entry points remain explicit contracts", asy
     assert.equal(typeof pkg.exports[subpath]?.import, "string", `missing explicit feature export ${subpath}`);
     assert.equal(typeof pkg.exports[subpath]?.types, "string", `missing explicit type export ${subpath}`);
   }
+  // One canonical public-root exclusion contract. Optional host/interop APIs must stay explicit subpaths.
   for (const name of [
+    "createDirectorEcosystem", "StudyDirectorCalendarIntegration",
+    "createDirectorFixtureEnvironment", "createPlanningUiExtension",
+    "parseQuickCreate", "PERSONAL_CALENDAR_FEATURE",
+    "IndexedDbCalendarRepository", "exportIcs", "GoogleCalendarSyncAdapter",
     "resolveOccurrenceCapabilities", "CalendarCommandLifecycle", "resolveOccurrencePresentation", "CalendarViewRegistry",
     "secondaryTimeScaleLabels", "resolveNavigationBounds", "createAvailabilityBackgroundProvider",
     "executeCalendarResourcePlacement", "executeCalendarResourceInteraction", "layoutResourceTimeGrid",
@@ -112,14 +117,17 @@ test("recurrence, availability, external-drop and background boundaries stay one
 });
 
 test("published package contract remains production-only", async () => {
-  const pkg = JSON.parse(await read("../package.json"));
+  const pkg = JSON.parse(await read("../../../package.json"));
   assert.deepEqual(pkg.files, ["dist", "docs/ARCHITECTURE.md", "README.md"]);
-  assert.equal(Object.hasOwn(pkg.exports, "./fixtures/director"), false);
+  assert.equal(Object.hasOwn(pkg.exports, "../../fixtures/director"), false);
   assert.equal(Object.hasOwn(pkg.exports, "./package-contract"), false);
   for (const [subpath, target] of Object.entries(pkg.exports)) {
     assert.equal(typeof target?.import, "string", `${subpath} must publish an import target`);
     assert.equal(typeof target?.types, "string", `${subpath} must publish a type target`);
     assert.equal(target.import.startsWith("./dist/"), true, `${subpath} import must come from dist`);
     assert.equal(target.types.startsWith("./dist/"), true, `${subpath} types must come from dist`);
+    // Test resolved public artifacts, not the absence of a historical output filename.
+    await fs.access(new URL(`../../../${target.import.slice(2)}`, import.meta.url));
+    await fs.access(new URL(`../../../${target.types.slice(2)}`, import.meta.url));
   }
 });

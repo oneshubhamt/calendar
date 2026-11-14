@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveOccurrencePresentation, resolveSourceActions } from '../dist/view/presentation.js';
-import { safePresentationCss, safeAddonCss, calendarHostCss } from '../dist/view/extension-styles.js';
+import { resolveOccurrencePresentation, resolveSourceActions } from '../../../dist/view/presentation.js';
+import { safePresentationCss, safeAddonCss, calendarHostCss } from '../../../dist/view/extension-styles.js';
 
 function occurrence(overrides={}) {
   return {

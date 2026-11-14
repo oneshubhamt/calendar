@@ -5,9 +5,9 @@ import {
   horizontalTimelineTicks,
   layoutHorizontalTimeline,
   resolveHorizontalTimelineRangeGeometry,
-} from "../dist/index.js";
-import { createTimelineView } from "../dist/view/timeline.js";
-import { dateKey } from "../dist/core/time.js";
+} from "../../../dist/index.js";
+import { createTimelineView } from "../../../dist/view/timeline.js";
+import { dateKey } from "../../../dist/core/time.js";
 
 function nav(anchor = "2026-11-10T12:00:00.000Z") {
   return {

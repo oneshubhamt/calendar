@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import * as Calendar from "../dist/index.js";
-import { CalendarIntegrationInvalidationNotifier } from "../dist/integration/common.js";
-import { PracticeDeskLiveProjection } from "../dist/integration/practice-desk.js";
+import * as Calendar from "../../../dist/index.js";
+import { CalendarIntegrationInvalidationNotifier } from "../../../dist/integration/common.js";
+import { PracticeDeskLiveProjection } from "../../../dist/integration/practice-desk.js";
 import {
   createRevisionDirectorPresentationExtension,
   RevisionDirectorLiveProjection,
-} from "../dist/integration/revision-director.js";
+} from "../../../dist/integration/revision-director.js";
 
 const RANGE = Object.freeze({
   start: "2026-11-08T00:00:00.000Z",

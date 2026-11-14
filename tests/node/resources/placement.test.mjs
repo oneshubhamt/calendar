@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import {
   evaluateCalendarResourcePlacement,
   executeCalendarResourcePlacement,
-} from "../dist/features/resource-scheduler/index.js";
-import { CalendarCommandStaleError } from "../dist/core/commands.js";
-import { makeResourceOccurrence } from "./fixtures/domain.mjs";
+} from "../../../dist/features/resource-scheduler/index.js";
+import { CalendarCommandStaleError } from "../../../dist/core/commands.js";
+import { makeResourceOccurrence } from "../../fixtures/domain.mjs";
 
 const resources=[
   {id:"rooms",title:"Rooms"},

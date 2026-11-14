@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CalendarViewRegistry } from "../dist/view/view-registry.js";
+import { CalendarViewRegistry } from "../../../dist/view/view-registry.js";
 
 const range = { start: "2026-11-10T00:00:00.000Z", end: "2026-11-11T00:00:00.000Z" };
 const plugin = (id, label = id) => ({

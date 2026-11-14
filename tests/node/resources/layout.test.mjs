@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { layoutResourceTimeline } from "../dist/features/resource-scheduler/index.js";
+import { layoutResourceTimeline } from "../../../dist/features/resource-scheduler/index.js";
 
 const resources=[
   {id:"rooms",title:"Rooms"},

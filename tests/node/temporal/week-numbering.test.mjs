@@ -1,9 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { weekOfYear } from "../dist/core/time.js";
-import { resolveCalendarWeekNumbering } from "../dist/view/week-numbering.js";
-
-const DAY_MS = 86_400_000;
+import { weekOfYear } from "../../../dist/core/time.js";
+import { resolveCalendarWeekNumbering } from "../../../dist/view/week-numbering.js";
+import { DAY_MS } from "../../fixtures/reference-temporal.mjs";
 
 function isoWeekReference(date) {
   const value = new Date(date.getTime());

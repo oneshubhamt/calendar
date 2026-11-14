@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as C from '../dist/index.js';
+import * as C from '../../../dist/index.js';
 import {
   formatRecurrenceByDay,
   parseRecurrenceByDay,
@@ -8,8 +8,8 @@ import {
   recurrenceAdvancedFields,
   recurrenceRuleFromEditor,
   recurrenceUntilFromEditor,
-} from '../dist/view/recurrence-editor.js';
-import { makeCalendarItem, makePersonalSource } from './fixtures/domain.mjs';
+} from '../../../dist/view/recurrence-editor.js';
+import { makeCalendarItem, makePersonalSource } from '../../fixtures/domain.mjs';
 
 const source=makePersonalSource({removable:true});
 function event(overrides={}){

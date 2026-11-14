@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as Core from '../dist/index.js';
-import * as ICS from '../dist/interoperability/ics.js';
-import * as Google from '../dist/interoperability/google-calendar.js';
-import * as Sync from '../dist/interoperability/sync.js';
-import * as Reminder from '../dist/interoperability/reminders.js';
-import { makeCalendarItem, makePersonalSource } from './fixtures/domain.mjs';
+import * as Core from '../../../dist/index.js';
+import * as ICS from '../../../dist/interoperability/ics.js';
+import * as Google from '../../../dist/interoperability/google-calendar.js';
+import * as Sync from '../../../dist/interoperability/sync.js';
+import * as Reminder from '../../../dist/interoperability/reminders.js';
+import { makeCalendarItem, makePersonalSource } from '../../fixtures/domain.mjs';
 
 const source=makePersonalSource();
 const event=(patch={})=>makeCalendarItem({ownership:'host-owned',...patch});

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import * as C from '../dist/index.js';
-import * as Personal from '../dist/features/personal.js';
-import * as Availability from '../dist/features/availability.js';
+import * as C from '../../../dist/index.js';
+import * as Personal from '../../../dist/features/personal.js';
+import * as Availability from '../../../dist/features/availability.js';
 
 const sources=[
   {id:'ayana:journey',title:'Goa',visible:true,sourceType:'journey',readOnly:true,removable:false,metadata:{host:'travel'}},
@@ -88,23 +88,6 @@ test('personal conveniences remain explicit opt-in behavior',()=>{
   const parsed=feature.parseQuickCreate('tomorrow 9am Review 30m',new Date('2026-12-09T00:00:00Z'),'Asia/Kolkata');
   assert.equal(parsed.title,'Review');
   assert.equal(parsed.kind,'event');
-});
-
-test('generic root does not export Director or planning integrations',async()=>{
-  const root=await import('../dist/index.js');
-  assert.equal('createDirectorEcosystem' in root,false);
-  assert.equal('StudyDirectorCalendarIntegration' in root,false);
-  assert.equal('createDirectorFixtureEnvironment' in root,false);
-  assert.equal('createPlanningUiExtension' in root,false);
-  assert.equal('parseQuickCreate' in root,false);
-  assert.equal('PERSONAL_CALENDAR_FEATURE' in root,false);
-  assert.equal('IndexedDbCalendarRepository' in root,false);
-  assert.equal('exportIcs' in root,false);
-  assert.equal('GoogleCalendarSyncAdapter' in root,false);
-});
-
-test('clean builds cannot retain deleted compiled modules',async()=>{
-  await assert.rejects(fs.access(new URL('../dist/core/personal.js',import.meta.url)));
 });
 
 test('generic public API uses application-neutral primary names',()=>{
@@ -254,10 +237,10 @@ test('availability definitions fail closed and remain an optional feature bounda
     {timeZone:'UTC'},
   ),/Duplicate availability definition/i);
 
-  const root=await import('../dist/index.js');
+  const root=await import('../../../dist/index.js');
   assert.equal('expandAvailabilityDefinitions' in root,false);
   assert.equal('createAvailabilityBackgroundProvider' in root,false);
-  const pkg=JSON.parse(await fs.readFile(new URL('../package.json',import.meta.url),'utf8'));
+  const pkg=JSON.parse(await fs.readFile(new URL('../../../package.json',import.meta.url),'utf8'));
   assert.equal(pkg.exports['./features/availability'].import,'./dist/features/availability.js');
 });
 

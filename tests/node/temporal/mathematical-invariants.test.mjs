@@ -8,25 +8,20 @@ import {
   placementCollisions,
   snapMinuteCoordinate,
   toDate,
-} from "../dist/index.js";
-import { instantToPlain } from "../dist/core/temporal.js";
+} from "../../../dist/index.js";
+import { instantToPlain } from "../../../dist/core/temporal.js";
 import {
   expandTemporalSeries,
   temporalSeriesIdentityAtOrdinal,
   temporalSeriesOrdinal,
-} from "../dist/core/recurrence.js";
+} from "../../../dist/core/recurrence.js";
 import {
   associateCalendarResources,
   validateCalendarResourceAssignments,
-} from "../dist/features/resource-scheduler/index.js";
-import * as Sync from "../dist/interoperability/sync.js";
-import { makeCalendarItem, makeResourceOccurrence } from "./fixtures/domain.mjs";
-
-const DAY_MS = 86_400_000;
-
-function utcDateKey(epochMs) {
-  return new Date(epochMs).toISOString().slice(0, 10);
-}
+} from "../../../dist/features/resource-scheduler/index.js";
+import * as Sync from "../../../dist/interoperability/sync.js";
+import { makeCalendarItem, makeResourceOccurrence } from "../../fixtures/domain.mjs";
+import { DAY_MS, utcDateKey, referenceUtcRecurrence } from "../../fixtures/reference-temporal.mjs";
 
 function permutations(values) {
   if (values.length <= 1) return [values.slice()];
@@ -325,5 +320,64 @@ test("sync decision model covers every local/remote deletion-change state and co
 
   for (const policy of policies) {
     assert.equal(Sync.decideSync(link, converged, snapshot(converged), policy).action, "rebase");
+  }
+});
+
+test("UTC daily and weekly recurrence matches an independent civil-date enumeration across leap and year boundaries", () => {
+  const models = [
+    { start: "2024-02-27T10:00:00.000Z", rule: { frequency: "daily", interval: 2, count: 8 } },
+    { start: "2024-12-30T09:00:00.000Z", rule: { frequency: "weekly", interval: 2, byDay: [{weekday: 1}, {weekday: 3}], count: 14 } },
+    { start: "2026-11-01T09:00:00.000Z", rule: { frequency: "daily", interval: 7, count: 10 } },
+  ];
+  for (const {start, rule} of models) {
+    const series = {id: `reference-${start}`, start, end: start, temporalForm: "point"};
+    const actual = expandTemporalSeries(series, {rule}, {
+      start, end: new Date(Date.parse(start) + 366 * DAY_MS).toISOString(),
+    }, {timeZone: "UTC"}).map(value => value.start);
+    const expected = referenceUtcRecurrence({
+      start, frequency: rule.frequency, interval: rule.interval,
+      weekdays: (rule.byDay ?? []).map(day => day.weekday), count: rule.count,
+    });
+    assert.deepEqual(actual, expected, `${start} must satisfy the independent day-scan oracle`);
+  }
+});
+
+test("recurrence follows independently known leap, month-end, and DST transition instants", () => {
+  const cases = [
+    {
+      label: "Leap year month ends",
+      start: "2024-01-31T08:00:00.000Z", rule: { frequency: "monthly", byMonthDay: [-1], count: 5 },
+      expected: ["2024-01-31T08:00:00.000Z", "2024-02-29T08:00:00.000Z", "2024-03-31T08:00:00.000Z", "2024-04-30T08:00:00.000Z", "2024-05-31T08:00:00.000Z"],
+    },
+    {
+      label: "Leap day only recurring years",
+      start: "2024-02-29T08:00:00.000Z", rule: { frequency: "yearly", count: 3 },
+      expected: ["2024-02-29T08:00:00.000Z", "2028-02-29T08:00:00.000Z", "2032-02-29T08:00:00.000Z"],
+    },
+    {
+      label: "New York spring-forward at unambiguous 09:00",
+      start: "2026-03-06T09:00:00", zone: "America/New_York", rule: { frequency: "daily", count: 5 },
+      expected: ["2026-03-06T14:00:00.000Z", "2026-03-07T14:00:00.000Z", "2026-03-08T13:00:00.000Z", "2026-03-09T13:00:00.000Z", "2026-03-10T13:00:00.000Z"],
+    },
+    {
+      label: "New York fall-back at unambiguous 09:00",
+      start: "2026-10-30T09:00:00", zone: "America/New_York", rule: { frequency: "daily", count: 5 },
+      expected: ["2026-10-30T13:00:00.000Z", "2026-10-31T13:00:00.000Z", "2026-11-01T14:00:00.000Z", "2026-11-02T14:00:00.000Z", "2026-11-03T14:00:00.000Z"],
+    },
+    {
+      label: "Lord Howe half-hour DST rollback",
+      start: "2026-04-03T09:00:00", zone: "Australia/Lord_Howe", rule: { frequency: "daily", count: 4 },
+      expected: ["2026-04-02T22:00:00.000Z", "2026-04-03T22:00:00.000Z", "2026-04-04T22:30:00.000Z", "2026-04-05T22:30:00.000Z"],
+    },
+  ];
+  for (const {label, start, zone, rule, expected} of cases) {
+    const series = {
+      id: label, start, end: start, temporalForm: "point",
+      ...(zone ? {temporal: {kind: "zoned", timeZone: zone}} : {}),
+    };
+    const occurrences = expandTemporalSeries(series, {rule}, {
+      start: "2024-01-01T00:00:00.000Z", end: "2033-01-01T00:00:00.000Z",
+    }, {timeZone: zone ?? "UTC"});
+    assert.deepEqual(occurrences.map(value => value.start), expected, label);
   }
 });

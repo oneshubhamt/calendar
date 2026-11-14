@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as C from '../dist/index.js';
+import * as C from '../../../dist/index.js';
 
 const range={start:'2026-11-09T00:00:00.000Z',end:'2026-11-10T00:00:00.000Z'};
 const sources=[
@@ -180,7 +180,7 @@ test('event-only query starts no background projection work while event projecti
     repo,
     [{id:'item-gate',project(){started.push('items');return itemGate;}}],
     [{id:'occurrence-gate',projectOccurrences(){started.push('occurrences');return occurrenceGate;}}],
-    [{id:'background',projectBackgroundRanges(){started.push('backgrounds');return [];}}],
+    [{id:'background',projectBackgroundRanges(){started.push('backgrounds');throw new Error('passive provider failure');}}],
   );
   const pending=engine.query(range,{includeBackgroundRanges:false});
   await Promise.resolve();
@@ -189,6 +189,10 @@ test('event-only query starts no background projection work while event projecti
   resolveOccurrences([]);
   const result=await pending;
   assert.deepEqual(result.backgroundRanges,[]);
+  // A skipped provider is not merely filtered after execution: its throwing contract is never invoked.
+  assert.equal(started.includes('backgrounds'),false);
+  await assert.rejects(() => engine.query(range), /passive provider failure/i);
+  assert.equal(started.filter(name => name === 'backgrounds').length,1);
 });
 
 

@@ -5,8 +5,8 @@ import {
   clampNavigationDate,
   navigationDateInBounds,
   resolveNavigationBounds,
-} from '../dist/view/navigation.js';
-import { placementInNavigationBounds } from '../dist/core/interaction.js';
+} from '../../../dist/view/navigation.js';
+import { placementInNavigationBounds } from '../../../dist/core/interaction.js';
 
 const zone='Asia/Kolkata';
 

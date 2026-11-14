@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createMultiMonthView } from "../dist/view/multi-month.js";
-import { dateKey } from "../dist/core/time.js";
+import { createMultiMonthView } from "../../../dist/view/multi-month.js";
+import { dateKey } from "../../../dist/core/time.js";
 
 function context(anchor = "2026-11-15T12:00:00.000Z") {
   return {

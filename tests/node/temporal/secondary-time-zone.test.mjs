@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from '../dist/view/time-zone-scale.js';
+import { resolveSecondaryTimeZone, secondaryTimeScaleLabels } from '../../../dist/view/time-zone-scale.js';
 
 test('secondary time scale is optional and malformed IANA zones fail closed',()=>{
   assert.equal(resolveSecondaryTimeZone(undefined),undefined);
@@ -34,7 +34,7 @@ test('week-scale conversion reports DST offset changes across visible primary da
 });
 
 test('primary civil-time geometry remains aligned to wall-clock labels across a spring-forward transition',async()=>{
-  const C=await import('../dist/index.js');
+  const C=await import('../../../dist/index.js');
   const item={id:'dst',calendarId:'calendar',title:'After jump',start:'2026-03-08T07:00:00.000Z',end:'2026-03-08T08:00:00.000Z',kind:'event',ownership:'calendar',editPolicy:'full'};
   const occurrence=C.occurrenceFromItem(item,{timeZone:'America/New_York'});
   const [layout]=C.layoutTimedDay([occurrence],new Date('2026-03-08T05:00:00.000Z'),'America/New_York');

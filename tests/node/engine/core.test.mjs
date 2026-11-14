@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as C from '../dist/index.js';
-import * as Planning from '../dist/features/planning.js';
-import * as Personal from '../dist/features/personal.js';
-import { canonicalValueString, sameCanonicalValue } from '../dist/core/canonical-value.js';
-import { makeCalendarItem, makePersonalSource } from './fixtures/domain.mjs';
+import * as C from '../../../dist/index.js';
+import * as Planning from '../../../dist/features/planning.js';
+import * as Personal from '../../../dist/features/personal.js';
+import { canonicalValueString, sameCanonicalValue } from '../../../dist/core/canonical-value.js';
+import { makeCalendarItem, makePersonalSource } from '../../fixtures/domain.mjs';
 
 const source=makePersonalSource({removable:true});
 const event=(patch={})=>makeCalendarItem(patch);
@@ -365,27 +365,6 @@ test('placement guard evaluation composes allow warn prevent and fails closed',a
 });
 
 
-test('event-only engine queries do not invoke passive background providers', async()=>{
-  const source={id:'query-source',title:'Query source',visible:true};
-  const repo=new C.MemoryCalendarRepository([source],[event({id:'query-event',calendarId:'query-source',start:'2026-11-10T09:00:00Z',end:'2026-11-10T10:00:00Z'})]);
-  let backgroundCalls=0;
-  const engine=new C.CalendarEngine(repo,[],[],[{
-    id:'visual-only',
-    projectBackgroundRanges(){
-      backgroundCalls+=1;
-      throw new Error('passive provider failure');
-    },
-  }]);
-  const range={start:'2026-11-10T00:00:00Z',end:'2026-11-11T00:00:00Z'};
-  const eventOnly=await engine.query(range,{includeBackgroundRanges:false});
-  assert.equal(eventOnly.occurrences.length,1);
-  assert.deepEqual(eventOnly.backgroundRanges,[]);
-  assert.equal(backgroundCalls,0);
-  await assert.rejects(()=>engine.query(range),/passive provider failure/i);
-  assert.equal(backgroundCalls,1);
-});
-
-
 test('shared placement evaluation centralizes bounds guards and collisions with lazy event loading',async()=>{
   const base={
     start:'2026-11-10T09:00:00.000Z',
@@ -546,27 +525,38 @@ test('RepositoryCommandHandler commits each logical command through one revision
 });
 
 
-test('revision-guarded repositories reject stale replacement without partial mutation',async()=>{
-  const source={id:'revision-source',title:'Revision',visible:true};
-  const first={
-    id:'revision-a',calendarId:'revision-source',title:'A',
-    start:'2026-11-10T09:00:00.000Z',end:'2026-11-10T10:00:00.000Z',
-    kind:'event',ownership:'calendar',editPolicy:'full',
-  };
-  const repo=new C.MemoryCalendarRepository([source],[first]);
-  const initial=repo.read();
-  await repo.replaceAtRevision([{...first,title:'B'}],initial.revision);
-  assert.equal(repo.read().revision,1);
-  assert.equal(repo.read().items[0].title,'B');
-  assert.throws(
-    ()=>repo.replaceAtRevision([{...first,title:'stale'}],initial.revision),
-    error=>error instanceof C.CalendarStaleRevisionError && error.code==='stale'
-      && error.expectedRevision===0 && error.actualRevision===1,
-  );
-  assert.equal(repo.read().items[0].title,'B');
-  assert.equal(repo.read().revision,1);
+test('revision-guarded repository transitions match an independent state model and never partially apply a stale proposal', () => {
+  const source = makePersonalSource();
+  const item = makeCalendarItem({ id: 'cas-item' });
+  const repo = new C.MemoryCalendarRepository([source], [item]);
+  const model = { revision: 0, title: item.title };
+  const actions = [
+    { expectedRevision: 0, title: 'First', accepted: true },
+    { expectedRevision: 0, title: 'Stale previous', accepted: false },
+    { expectedRevision: 1, title: 'Second', accepted: true },
+    { expectedRevision: 3, title: 'Future', accepted: false },
+    { expectedRevision: 2, title: 'Third', accepted: true },
+    { expectedRevision: 1, title: 'Older', accepted: false },
+  ];
+  for (const { expectedRevision, title, accepted } of actions) {
+    const attempted = [{ ...item, title }];
+    if (accepted) {
+      repo.replaceAtRevision(attempted, expectedRevision);
+      model.revision += 1;
+      model.title = title;
+    } else {
+      assert.throws(
+        () => repo.replaceAtRevision(attempted, expectedRevision),
+        error => error instanceof C.CalendarStaleRevisionError && error.code === 'stale'
+          && error.expectedRevision === expectedRevision && error.actualRevision === model.revision,
+        `stale expected revision ${expectedRevision} must not commit`,
+      );
+    }
+    const snapshot = repo.read();
+    assert.equal(snapshot.revision, model.revision);
+    assert.deepEqual(snapshot.items.map(({ id, title }) => ({ id, title })), [{ id: item.id, title: model.title }]);
+  }
 });
-
 test('CalendarEngine separates durable repository revision from combined invalidation generation',async()=>{
   const source={id:'generation-source',title:'Generation',visible:true};
   const item={

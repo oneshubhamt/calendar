@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as C from '../dist/index.js';
-import { resolveOccurrenceCapabilities } from '../dist/core/authority.js';
+import * as C from '../../../dist/index.js';
+import { resolveOccurrenceCapabilities } from '../../../dist/core/authority.js';
 
 const source={id:'calendar',title:'Calendar',visible:true};
 function item(overrides={}) {
