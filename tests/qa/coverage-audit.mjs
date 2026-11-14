@@ -164,7 +164,8 @@ for (const lane of ["routine", "release"]) {
   }
 }
 
-const invariantIds = new Set(requiredInvariants.map(invariant => invariant.id));
+const invariantById = new Map(requiredInvariants.map(invariant => [invariant.id, invariant]));
+const invariantIds = new Set(invariantById.keys());
 const mutationIds = new Set();
 const mutationCoverage = new Map();
 for (const mutation of mutationCases) {
@@ -173,6 +174,14 @@ for (const mutation of mutationCases) {
   assert.ok(mutation.invariantIds.length > 0, `${mutation.id} does not name an invariant`);
   for (const invariantId of mutation.invariantIds) {
     assert.ok(invariantIds.has(invariantId), `${mutation.id} references unknown invariant: ${invariantId}`);
+    const invariant = invariantById.get(invariantId);
+    assert.ok(
+      invariant.witnesses.some(witness =>
+        witness.kind === "node"
+        && witness.file === mutation.test
+        && witness.title === mutation.title),
+      `${mutation.id} target test is not a registered witness for ${invariantId}: ${mutation.test}::${mutation.title}`,
+    );
     if (!mutationCoverage.has(invariantId)) mutationCoverage.set(invariantId, []);
     mutationCoverage.get(invariantId).push(mutation.id);
   }
