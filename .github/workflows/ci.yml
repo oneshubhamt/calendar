@@ -57,13 +57,13 @@ jobs:
         run: npm run check:fast
 
       - name: Full native package/parity QA
-        if: github.ref == 'refs/heads/main' || github.base_ref == 'main' || inputs.full == true
+        if: github.ref == 'refs/heads/main' || github.base_ref == 'main' || inputs.full == true || github.ref == 'refs/heads/qa-objective-closure'
         run: npm run check:full
 
       - name: Executable coverage and lane census
-        if: github.ref == 'refs/heads/main' || github.base_ref == 'main' || inputs.full == true || inputs.mutation == true
+        if: github.ref == 'refs/heads/main' || github.base_ref == 'main' || inputs.full == true || inputs.mutation == true || github.ref == 'refs/heads/qa-objective-closure'
         run: npm run qa:coverage
 
       - name: Selective fault injection
-        if: inputs.mutation == true
+        if: inputs.mutation == true || github.ref == 'refs/heads/qa-objective-closure'
         run: npm run qa:mutation
