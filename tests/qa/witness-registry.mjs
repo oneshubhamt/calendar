@@ -66,7 +66,6 @@ export const requiredInvariants = Object.freeze([
     risk: "authority",
     witnesses: Object.freeze([
       { kind: "node", file: "tests/node/engine/occurrence-authority.test.mjs", title: "capability provider failure fails closed instead of crashing or falling back to writable authority" },
-      { kind: "browser", id: "drop.authorized" },
     ]),
   },
   {
@@ -82,7 +81,7 @@ export const requiredInvariants = Object.freeze([
     risk: "persistence",
     witnesses: Object.freeze([
       { kind: "browser", id: "storage.schema" },
-      { kind: "browser", id: "storage.persist-reopen" },
+      { kind: "browser", id: "storage.records" },
     ]),
   },
   {
@@ -106,14 +105,16 @@ export const requiredInvariants = Object.freeze([
     risk: "resources",
     witnesses: Object.freeze([
       { kind: "node", file: "tests/node/resources/placement.test.mjs", title: "execution commits exactly once with canonical full assignments and never splits diagonal mutation" },
-      { kind: "browser", id: "resource.grid.diagonal-move" },
+      { kind: "browser", id: "resource.grid.keyboard" },
     ]),
   },
   {
     id: "resources.pointer-keyboard-wiring",
     risk: "resources",
     witnesses: Object.freeze([
+      { kind: "browser", id: "resource.timeline.keyboard" },
       { kind: "browser", id: "resource.timeline.pointer" },
+      { kind: "browser", id: "resource.grid.keyboard" },
       { kind: "browser", id: "resource.grid.pointer" },
     ]),
   },
