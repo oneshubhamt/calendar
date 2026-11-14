@@ -1,17 +1,19 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { scenario } from "./scenario-registry.mjs";
+import { openHarness } from "./support/harness.mjs";
 import { mountVisualCalendar } from "./visual-fixture.mjs";
 
-test("week desktop visual baseline", async ({ page }) => {
+scenario("visual.week", "week desktop visual baseline", async ({ page }) => {
   await mountVisualCalendar(page, { view: "week" });
   await expect(page.locator(".dc-root")).toHaveScreenshot("week-desktop.png");
 });
 
-test("month desktop visual baseline", async ({ page }) => {
+scenario("visual.month", "month desktop visual baseline", async ({ page }) => {
   await mountVisualCalendar(page, { view: "month", initialDate: "2026-11-09" });
   await expect(page.locator(".dc-root")).toHaveScreenshot("month-desktop.png");
 });
 
-test("day narrow visual baseline", async ({ page }) => {
+scenario("visual.day-narrow", "day narrow visual baseline", async ({ page }) => {
   await page.setViewportSize({ width: 480, height: 900 });
   await mountVisualCalendar(page, {
     view: "day",
@@ -23,7 +25,7 @@ test("day narrow visual baseline", async ({ page }) => {
   await expect(page.locator(".dc-root")).toHaveScreenshot("day-narrow.png");
 });
 
-test("DST fall-back day visual baseline", async ({ page }) => {
+scenario("visual.dst-fallback", "DST fall-back day visual baseline", async ({ page }) => {
   await mountVisualCalendar(page, {
     view: "day",
     initialDate: "2026-11-01",
@@ -41,7 +43,7 @@ test("DST fall-back day visual baseline", async ({ page }) => {
 async function mountAdvancedCalendar(page, view, { narrow = false } = {}) {
   if (narrow) await page.setViewportSize({ width: 480, height: 900 });
   await page.clock.setFixedTime(new Date("2026-11-10T05:00:00.000Z"));
-  await page.goto("/tests/browser/harness.html");
+  await openHarness(page);
   await page.evaluate(async ({ view }) => {
     const [
       { CalendarEngine },
@@ -84,22 +86,22 @@ async function mountAdvancedCalendar(page, view, { narrow = false } = {}) {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 
-test("Multi-Month desktop visual baseline", async ({ page }) => {
+scenario("visual.multi-month", "Multi-Month desktop visual baseline", async ({ page }) => {
   await mountAdvancedCalendar(page, "multi-month");
   await expect(page.locator(".dc-root")).toHaveScreenshot("multi-month-desktop.png");
 });
 
-test("Multi-Month narrow visual baseline", async ({ page }) => {
+scenario("visual.multi-month-narrow", "Multi-Month narrow visual baseline", async ({ page }) => {
   await mountAdvancedCalendar(page, "multi-month", { narrow: true });
   await expect(page.locator(".dc-root")).toHaveScreenshot("multi-month-narrow.png");
 });
 
-test("Timeline desktop visual baseline", async ({ page }) => {
+scenario("visual.timeline", "Timeline desktop visual baseline", async ({ page }) => {
   await mountAdvancedCalendar(page, "timeline");
   await expect(page.locator(".dc-root")).toHaveScreenshot("timeline-desktop.png");
 });
 
-test("detached print snapshot visual baseline", async ({ page }) => {
+scenario("visual.print", "detached print snapshot visual baseline", async ({ page }) => {
   await mountAdvancedCalendar(page, "multi-month");
   await page.evaluate(() => {
     const snapshot=globalThis.__advancedVisualCalendar.createPrintSnapshot({title:"Calendar print"});
@@ -108,8 +110,8 @@ test("detached print snapshot visual baseline", async ({ page }) => {
   await expect(page.locator(".dc-print-snapshot")).toHaveScreenshot("print-multi-month.png");
 });
 
-test("Resource TimeGrid desktop visual baseline", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("visual.resource-grid", "Resource TimeGrid desktop visual baseline", async ({ page }) => {
+  await openHarness(page);
   await page.evaluate(async () => {
     const { CalendarResourceTimeGridUi } = await import("/dist/features/resource-time-grid-ui/index.js");
     const host=document.getElementById("browser-test-host");

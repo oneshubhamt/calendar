@@ -1,4 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { scenario } from "./scenario-registry.mjs";
+import { openHarness } from "./support/harness.mjs";
 
 const projection = {
   resources: [
@@ -16,8 +18,8 @@ const projection = {
   range: { start: "2026-11-10T08:00:00.000Z", end: "2026-11-10T12:00:00.000Z" },
 };
 
-test("Resource Scheduler renders authoritative hierarchy and collapse state in a real browser", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("resource.timeline.hierarchy", "Resource Scheduler renders authoritative hierarchy and collapse state in a real browser", async ({ page }) => {
+  await openHarness(page);
   await page.evaluate(async projection => {
     const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
     const host = document.getElementById("browser-test-host");
@@ -35,8 +37,8 @@ test("Resource Scheduler renders authoritative hierarchy and collapse state in a
   expect(await page.evaluate(() => globalThis.__resourceScheduler.collapsedResourceIds())).toEqual(["rooms"]);
 });
 
-test("Resource Scheduler keyboard reassignment commits one atomic host change and reprojects", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("resource.timeline.keyboard-reassign", "Resource Scheduler keyboard reassignment commits one atomic host change and reprojects", async ({ page }) => {
+  await openHarness(page);
   await page.evaluate(async projection => {
     const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
     let current = structuredClone(projection);
@@ -83,8 +85,8 @@ test("Resource Scheduler keyboard reassignment commits one atomic host change an
 });
 
 
-test("Resource Scheduler preserves committed result semantics when authoritative reprojection fails", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("resource.timeline.committed-refresh-failure", "Resource Scheduler preserves committed result semantics when authoritative reprojection fails", async ({ page }) => {
+  await openHarness(page);
   await page.evaluate(async projection => {
     const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
     const commits = [];
@@ -118,8 +120,8 @@ test("Resource Scheduler preserves committed result semantics when authoritative
   await expect(event).toBeFocused();
 });
 
-test("Resource Scheduler reports stale authority plus failed reprojection without implying refresh succeeded", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("resource.timeline.stale-refresh-failure", "Resource Scheduler reports stale authority plus failed reprojection without implying refresh succeeded", async ({ page }) => {
+  await openHarness(page);
   await page.evaluate(async projection => {
     const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
     const errors = [];
@@ -155,8 +157,8 @@ test("Resource Scheduler reports stale authority plus failed reprojection withou
   await expect(event).toBeFocused();
 });
 
-test("Resource Scheduler keyboard end resize uses edge authority and one atomic authoritative mutation", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("resource.timeline.resize", "Resource Scheduler keyboard end resize uses edge authority and one atomic authoritative mutation", async ({ page }) => {
+  await openHarness(page);
   await page.evaluate(async projection => {
     const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
     let current = structuredClone(projection);
@@ -201,8 +203,8 @@ test("Resource Scheduler keyboard end resize uses edge authority and one atomic 
   await expect(page.getByRole("separator", { name: "Resize end of Visit" })).toBeVisible();
 });
 
-test("Resource Scheduler reuses shared pointer arming, long-press, cancellation and horizontal move", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("resource.timeline.pointer", "Resource Scheduler reuses shared pointer arming, long-press, cancellation and horizontal move", async ({ page }) => {
+  await openHarness(page);
   await page.evaluate(async projection => {
     const { CalendarResourceSchedulerUi } = await import("/dist/features/resource-scheduler-ui/index.js");
     let current = structuredClone(projection);
@@ -291,9 +293,9 @@ test("Resource Scheduler reuses shared pointer arming, long-press, cancellation 
 });
 
 
-test("shared pointer gesture lifecycle auto-scrolls horizontally and cancels cleanly", async ({ page }) => {
+scenario("resource.timeline.auto-scroll", "shared pointer gesture lifecycle auto-scrolls horizontally and cancels cleanly", async ({ page }) => {
   await page.setViewportSize({ width: 480, height: 640 });
-  await page.goto("/tests/browser/harness.html");
+  await openHarness(page);
   await page.evaluate(async () => {
     const { CalendarPointerGestureController } = await import("/dist/view/pointer-gesture.js");
     const host = document.getElementById("browser-test-host");

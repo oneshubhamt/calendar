@@ -1,4 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { scenario } from "./scenario-registry.mjs";
+import { openHarness } from "./support/harness.mjs";
 
 const projection = {
   resources: [
@@ -37,8 +39,8 @@ const projection = {
   range: { start: "2026-11-10T00:00:00.000Z", end: "2026-11-11T00:00:00.000Z" },
 };
 
-test("Resource TimeGrid renders resources as columns, all-day assignments and passive availability", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("resource.grid.render", "Resource TimeGrid renders resources as columns, all-day assignments and passive availability", async ({ page }) => {
+  await openHarness(page);
   await page.evaluate(async projection => {
     const { CalendarResourceTimeGridUi } = await import("/dist/features/resource-time-grid-ui/index.js");
     const host = document.getElementById("browser-test-host");
@@ -61,8 +63,8 @@ test("Resource TimeGrid renders resources as columns, all-day assignments and pa
     .toHaveAttribute("aria-label", /Room A.*November 10, 2026/);
 });
 
-test("Resource TimeGrid keyboard diagonal move produces one atomic host mutation and authoritative reprojection", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("resource.grid.diagonal-move", "Resource TimeGrid keyboard diagonal move produces one atomic host mutation and authoritative reprojection", async ({ page }) => {
+  await openHarness(page);
   await page.evaluate(async projection => {
     const { CalendarResourceTimeGridUi } = await import("/dist/features/resource-time-grid-ui/index.js");
     let current = structuredClone(projection);
@@ -108,8 +110,8 @@ test("Resource TimeGrid keyboard diagonal move produces one atomic host mutation
   expect(commits[0].end).toBe("2026-11-10T10:00:00.000Z");
 });
 
-test("Resource TimeGrid vertical keyboard movement reuses temporal authority and civil snapping", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("resource.grid.vertical-keyboard", "Resource TimeGrid vertical keyboard movement reuses temporal authority and civil snapping", async ({ page }) => {
+  await openHarness(page);
   await page.evaluate(async projection => {
     const { CalendarResourceTimeGridUi } = await import("/dist/features/resource-time-grid-ui/index.js");
     let current = structuredClone(projection);
@@ -148,8 +150,8 @@ test("Resource TimeGrid vertical keyboard movement reuses temporal authority and
 });
 
 
-test("Resource TimeGrid keyboard end resize uses edge authority and one atomic authoritative mutation", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("resource.grid.resize", "Resource TimeGrid keyboard end resize uses edge authority and one atomic authoritative mutation", async ({ page }) => {
+  await openHarness(page);
   await page.evaluate(async projection => {
     const { CalendarResourceTimeGridUi } = await import("/dist/features/resource-time-grid-ui/index.js");
     let current = structuredClone(projection);
@@ -194,8 +196,8 @@ test("Resource TimeGrid keyboard end resize uses edge authority and one atomic a
   await expect(page.getByRole("separator", { name: "Resize end of Visit" })).toBeVisible();
 });
 
-test("Resource TimeGrid pointer drag combines time and resource changes into one atomic commit", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("resource.grid.pointer", "Resource TimeGrid pointer drag combines time and resource changes into one atomic commit", async ({ page }) => {
+  await openHarness(page);
   await page.evaluate(async projection => {
     const { CalendarResourceTimeGridUi } = await import("/dist/features/resource-time-grid-ui/index.js");
     let current = structuredClone(projection);

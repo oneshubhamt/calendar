@@ -1,4 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { scenario } from "./scenario-registry.mjs";
+import { openHarness } from "./support/harness.mjs";
 import {
   DATABASE_NAME,
   SOURCE,
@@ -45,7 +47,7 @@ async function interopReadError(page) {
   });
 }
 
-test("calendar repository and interoperability share one exact version-1 IndexedDB topology", async ({ page }) => {
+scenario("storage.schema", "calendar repository and interoperability share one exact version-1 IndexedDB topology", async ({ page }) => {
   const databaseName = DATABASE_NAME;
   await openRepository(page);
   await page.evaluate(async databaseName => {
@@ -73,7 +75,7 @@ test("calendar repository and interoperability share one exact version-1 Indexed
   await deleteDatabase(page);
 });
 
-test("all IndexedDB entry points reject any non-canonical physical topology", async ({ page }) => {
+scenario("storage.schema-reject", "all IndexedDB entry points reject any non-canonical physical topology", async ({ page }) => {
   const canonicalStores = [
     { name: "calendar", keyPath: "key" },
     { name: "syncStates" },
@@ -128,9 +130,9 @@ test("all IndexedDB entry points reject any non-canonical physical topology", as
   }
 });
 
-test("interop persistence rejects malformed sync state and reminder records", async ({ page }) => {
+scenario("storage.interop-invalid", "interop persistence rejects malformed sync state and reminder records", async ({ page }) => {
   const databaseName = DATABASE_NAME;
-  await page.goto("/tests/browser/harness.html");
+  await openHarness(page);
 
   const errors = await page.evaluate(async databaseName => {
     const { IndexedDbSyncStateStore, IndexedDbReminderReceiptStore } = await import("/dist/interoperability/storage.js");
@@ -183,9 +185,9 @@ test("interop persistence rejects malformed sync state and reminder records", as
   await deleteDatabase(page);
 });
 
-test("interop persistence canonicalizes absolute timestamps and rejects enclosing identity mismatches", async ({ page }) => {
+scenario("storage.interop-identity", "interop persistence canonicalizes absolute timestamps and rejects enclosing identity mismatches", async ({ page }) => {
   const databaseName = DATABASE_NAME;
-  await page.goto("/tests/browser/harness.html");
+  await openHarness(page);
 
   const result = await page.evaluate(async databaseName => {
     const { IndexedDbSyncStateStore, IndexedDbReminderReceiptStore } = await import("/dist/interoperability/storage.js");
@@ -250,7 +252,7 @@ test("interop persistence canonicalizes absolute timestamps and rejects enclosin
   await deleteDatabase(page);
 });
 
-test("two tabs atomically claim one reminder receipt and completed delivery stays deduplicated", async ({ page, context }) => {
+scenario("storage.reminder-claim", "two tabs atomically claim one reminder receipt and completed delivery stays deduplicated", async ({ page, context }) => {
   const databaseName = DATABASE_NAME;
   const second = await context.newPage();
   await Promise.all([page.goto("/tests/browser/harness.html"), second.goto("/tests/browser/harness.html")]);
@@ -278,7 +280,7 @@ test("two tabs atomically claim one reminder receipt and completed delivery stay
   await deleteDatabase(page);
 });
 
-test("two tabs serialize one Google connection before remote publish and shared state write", async ({ page, context }) => {
+scenario("storage.google-lock", "two tabs serialize one Google connection before remote publish and shared state write", async ({ page, context }) => {
   const databaseName = DATABASE_NAME;
   const second = await context.newPage();
   await Promise.all([page.goto("/tests/browser/harness.html"), second.goto("/tests/browser/harness.html")]);
@@ -346,8 +348,8 @@ test("two tabs serialize one Google connection before remote publish and shared 
   await deleteDatabase(page);
 });
 
-test("repository open is single-flight across concurrent callers", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("storage.single-flight", "repository open is single-flight across concurrent callers", async ({ page }) => {
+  await openHarness(page);
   await deleteDatabase(page);
 
   const result = await page.evaluate(async () => {
@@ -369,8 +371,8 @@ test("repository open is single-flight across concurrent callers", async ({ page
   await deleteDatabase(page);
 });
 
-test("close during open cancels the pending lifecycle and cannot resurrect a closed repository", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("storage.close-open", "close during open cancels the pending lifecycle and cannot resurrect a closed repository", async ({ page }) => {
+  await openHarness(page);
   await deleteDatabase(page);
 
   const result = await page.evaluate(async () => {
@@ -394,8 +396,8 @@ test("close during open cancels the pending lifecycle and cannot resurrect a clo
   await deleteDatabase(page);
 });
 
-test("immediate reopen after close wins over an older in-flight open", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("storage.reopen-race", "immediate reopen after close wins over an older in-flight open", async ({ page }) => {
+  await openHarness(page);
   await deleteDatabase(page);
 
   const result = await page.evaluate(async () => {
@@ -451,8 +453,8 @@ test("immediate reopen after close wins over an older in-flight open", async ({ 
   await deleteDatabase(page);
 });
 
-test("one repository instance can close and reopen persisted state deterministically", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("storage.reopen", "one repository instance can close and reopen persisted state deterministically", async ({ page }) => {
+  await openHarness(page);
   await deleteDatabase(page);
 
   const result = await page.evaluate(async () => {
@@ -482,8 +484,8 @@ test("one repository instance can close and reopen persisted state deterministic
   await deleteDatabase(page);
 });
 
-test("close and reopen isolate an older cross-tab reload from the new repository generation", async ({ page }) => {
-  await page.goto("/tests/browser/harness.html");
+scenario("storage.reload-generation", "close and reopen isolate an older cross-tab reload from the new repository generation", async ({ page }) => {
+  await openHarness(page);
   await deleteDatabase(page);
 
   const result = await page.evaluate(async () => {
@@ -541,7 +543,7 @@ test("close and reopen isolate an older cross-tab reload from the new repository
   await deleteDatabase(page);
 });
 
-test("native IndexedDB persists normalized create, update and delete state across reopen", async ({ page }) => {
+scenario("storage.persist-reopen", "native IndexedDB persists normalized create, update and delete state across reopen", async ({ page }) => {
   const databaseName = DATABASE_NAME;
   await openRepository(page);
   await createItem(page, event("persisted", { title: "Persisted event" }));
@@ -575,7 +577,7 @@ test("native IndexedDB persists normalized create, update and delete state acros
   await deleteDatabase(page);
 });
 
-test("native IndexedDB item and source CRUD preserve the canonical transition semantics", async ({ page }) => {
+scenario("storage.crud", "native IndexedDB item and source CRUD preserve the canonical transition semantics", async ({ page }) => {
   const databaseName = DATABASE_NAME;
   await openRepository(page);
 
@@ -613,7 +615,7 @@ test("native IndexedDB item and source CRUD preserve the canonical transition se
   await deleteDatabase(page);
 });
 
-test("two-tab guarded replacement rejects a durable revision that was not the local delta basis", async ({ page, context }) => {
+scenario("storage.cas", "two-tab guarded replacement rejects a durable revision that was not the local delta basis", async ({ page, context }) => {
   const databaseName = DATABASE_NAME;
   const stalePage = await context.newPage();
   await installSilentBroadcastChannel(stalePage);
@@ -652,7 +654,7 @@ test("two-tab guarded replacement rejects a durable revision that was not the lo
   await deleteDatabase(page);
 });
 
-test("BroadcastChannel invalidation converges a passive tab through a burst of commits", async ({ page, context }) => {
+scenario("storage.broadcast", "BroadcastChannel invalidation converges a passive tab through a burst of commits", async ({ page, context }) => {
   const databaseName = DATABASE_NAME;
   const observer = await context.newPage();
 
@@ -680,7 +682,7 @@ test("BroadcastChannel invalidation converges a passive tab through a burst of c
   await deleteDatabase(page);
 });
 
-test("no-BroadcastChannel fallback refreshes when a passive tab returns to the foreground", async ({ page, context }) => {
+scenario("storage.focus-fallback", "no-BroadcastChannel fallback refreshes when a passive tab returns to the foreground", async ({ page, context }) => {
   const databaseName = DATABASE_NAME;
   await disableBroadcastChannel(context);
   const observer = await context.newPage();
