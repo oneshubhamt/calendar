@@ -1,4 +1,5 @@
 import test from "node:test";
+import { deepTest } from "../../helpers/qa-tier.mjs";
 import assert from "node:assert/strict";
 import { permutations } from "../../fixtures/combinatorics.mjs";
 import { makeResourceOccurrence } from "../../fixtures/domain.mjs";
@@ -66,7 +67,7 @@ test("rejects invalid assignment projections including duplicates, unknown IDs, 
   assert.deepEqual(validateCalendarResourceAssignments(resources,occurrences,[]),[]);
 });
 
-test("flattening remains stack-safe and deterministic for a very deep valid hierarchy",()=>{
+deepTest("flattening remains stack-safe and deterministic for a very deep valid hierarchy",()=>{
   const depth=12000;
   const deep=Array.from({length:depth},(_,index)=>({
     id:`r${index}`,title:`Resource ${index}`,

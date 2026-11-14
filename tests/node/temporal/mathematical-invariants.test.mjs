@@ -1,4 +1,5 @@
 import test from "node:test";
+import { deepTest } from "../../helpers/qa-tier.mjs";
 import assert from "node:assert/strict";
 import {
   addDays,
@@ -48,7 +49,7 @@ function temporalOverlap(left, right) {
   return leftStart < rightEnd && leftEnd > rightStart;
 }
 
-test("civil-day arithmetic and snapping satisfy reversible algebra over representative time zones", () => {
+deepTest("civil-day arithmetic and snapping satisfy reversible algebra over representative time zones", () => {
   const zones = ["UTC", "Asia/Kolkata", "America/New_York", "Australia/Lord_Howe"];
   const start = Date.UTC(2024, 0, 1);
   const end = Date.UTC(2028, 0, 1);
@@ -81,7 +82,7 @@ test("civil-day arithmetic and snapping satisfy reversible algebra over represen
   }
 });
 
-test("recurrence expansion obeys partition, uniqueness, ordering and ordinal-inverse laws", () => {
+deepTest("recurrence expansion obeys partition, uniqueness, ordering and ordinal-inverse laws", () => {
   const cases = [
     {
       series: { id: "daily", start: "2024-01-01T09:00:00.000Z", end: "2024-01-01T09:00:00.000Z", temporalForm: "point" },

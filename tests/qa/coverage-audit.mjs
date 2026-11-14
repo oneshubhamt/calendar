@@ -14,6 +14,9 @@ assert.equal(browserFiles.length, 13, "Browser domain module census changed");
 const nodeCases = nodeFiles.reduce((total, path) =>
   total + [...readFileSync(path, "utf8").matchAll(/^test\(/gm)].length, 0);
 assert.equal(nodeCases, 211, "Node case contract changed; update the coverage map deliberately");
+const deepCases = nodeFiles.reduce((total, path) =>
+  total + [...readFileSync(path, "utf8").matchAll(/^deepTest\(/gm)].length, 0);
+assert.equal(deepCases, 4, "Deep/stress Node witness count changed; reconcile fast/full selection deliberately");
 
 const ids = browserFiles.flatMap(path =>
   [...readFileSync(path, "utf8").matchAll(/^scenario\("([^"]+)"/gm)].map(match => match[1]));
@@ -41,4 +44,4 @@ for (const [lane, expected] of [["release", 147], ["smoke", 53], ["cross", 42], 
   assert.equal(actual, expected, `${lane} test discovery differs from the accepted release baseline`);
   console.log(`${lane}: ${actual} discovered executions`);
 }
-console.log(`Coverage census: ${nodeCases} Node cases, ${ids.length} unique browser scenarios, ${screenshots.length} visual baselines`);
+console.log(`Coverage census: ${nodeCases} Node cases (${deepCases} deep/full-only), ${ids.length} unique browser scenarios, ${screenshots.length} visual baselines`);

@@ -1,4 +1,5 @@
 import test from "node:test";
+import { deepTest } from "../../helpers/qa-tier.mjs";
 import assert from "node:assert/strict";
 import { weekOfYear } from "../../../dist/core/time.js";
 import { resolveCalendarWeekNumbering } from "../../../dist/view/week-numbering.js";
@@ -20,7 +21,7 @@ function isoWeekReference(date) {
   };
 }
 
-test("ISO week identity matches an independent reference over the complete 400-year Gregorian cycle", () => {
+deepTest("ISO week identity matches an independent reference over the complete 400-year Gregorian cycle", () => {
   const zones = ["UTC", "Asia/Kolkata", "America/Los_Angeles", "Pacific/Auckland"];
   const start = Date.UTC(2000, 0, 1);
   const end = Date.UTC(2400, 0, 1);
