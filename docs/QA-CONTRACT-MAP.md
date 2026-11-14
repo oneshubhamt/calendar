@@ -811,3 +811,90 @@ On the permanent lane definitions before documentation-only closure:
 - exhaustive browser lane: **120/120 passed in ~1.5 min**.
 
 No production source changed in Pass I.
+
+
+## Pass J — mutation/evidence validation and closure (2026-11-14)
+
+Pass J closes the QA programme by testing the **sensitivity of the evidence itself**. It keeps mutation testing deliberately small and named rather than adopting a broad mutation framework.
+
+The true pre-Pass-J baseline was **6** mutations (not four): half-open collision, stale repository revision, recurrence COUNT, split-series tail anchor, negative BYMONTHDAY and prefer-local sync deletion. A baseline GitHub Actions measurement detected all **6/6** in about **1.50 s** for the `qa:mutation` job segment.
+
+### Canonical mutation registry
+
+Mutation definitions now live once in `tests/qa/mutation-cases.mjs`. `mutation-check.mjs` is only the executor/restoration guard, and `coverage-audit.mjs` reads the same registry as evidence metadata. This removes the former inline mutation list without creating a second source of truth.
+
+Every mutation has:
+
+- a stable id and human-readable realistic defect;
+- one compiled-artifact target that must occur exactly once;
+- one focused independent test title expected to fail;
+- one or more invariant ids explaining what evidence the fault validates;
+- byte restoration/hash verification after execution.
+
+The final set contains **12 hand-selected faults**:
+
+| Fault family | Mutation | Primary invariant |
+|---|---|---|
+| interval semantics | half-open boundary becomes closed | `temporal.half-open-collision-model` |
+| repository CAS | stale revision guard allows overwrite | `state.revision-guarded-atomicity` |
+| recurrence limit | COUNT admits one extra occurrence | `temporal.independent-recurrence` |
+| series state | split tail reuses original anchor | `state.seeded-reference-machine` |
+| recurrence calendar math | negative BYMONTHDAY shifts a day early | `temporal.monthly-yearly-reference-oracle` |
+| interoperability | prefer-local deletion applies remote state | `interoperability.retry-and-conflict` |
+| recurrence exceptions | cancelled exception is emitted | `temporal.monthly-yearly-reference-oracle` |
+| authority | provider failure falls back to writable baseline | `authority.fail-closed` |
+| stale projection | rendered occurrence is executed instead of latest authoritative occurrence | `integration.authoritative-occurrence-revalidation` |
+| resource atomicity | diagonal placement is split into two host commits | `resources.atomic-placement` |
+| history ownership | undo ignores a concurrent affected-item edit | `state.delta-undo-redo` |
+| staged multi-record command | recurring split publishes head without tail creation | `state.staged-multi-record-rollback` |
+
+All **12/12** are detected by their intended focused witness, and every mutated compiled artifact is restored to its original SHA-256 hash.
+
+### Mutation-critical invariant contract
+
+Two previously implicit evidence contracts are now first-class required invariants:
+
+- `temporal.half-open-collision-model`, backed by the exhaustive finite-lattice collision model;
+- `integration.authoritative-occurrence-revalidation`, backed by the mutation coordinator test that requires the latest projected occurrence payload and opaque identity before execution.
+
+The registry now contains **22 required invariants**. Eleven are marked `mutationRequired: true` because a realistic compiled-code defect is an appropriate sensitivity test for them. `coverage-audit.mjs` fails if any mutation-critical invariant has no registered injected-fault witness or if a mutation references an unknown invariant.
+
+Mutation sensitivity is intentionally **not** forced onto architecture/package, native IndexedDB, accessibility, print/visual or other browser-only contracts where archive inspection or real-browser evidence is the correct oracle. This avoids artificial mutations added solely to reach a coverage percentage.
+
+### Old-versus-refined evidence economics
+
+| Measure | Before Pass J | Pass J |
+|---|---:|---:|
+| Required invariant contracts | 20 | **22** |
+| Explicit mutation-critical invariants | implicit | **11** |
+| Hand-selected mutation cases | 6 | **12** |
+| Detected mutations | 6/6 | **12/12** |
+| Mutation job segment | ~1.50 s | **~2.21 s** |
+| Routine Node declarations | 215 | **215** |
+| Routine browser executions | 34 | **34** |
+| Exhaustive browser executions | 120 | **120** |
+
+Doubling the realistic mutation set added only about **0.70 s** to the observed mutation segment. The normal routine lane is unaffected because mutation QA remains explicit/opt-in.
+
+### Superseded-structure audit
+
+After the comparison above, executable QA source was checked for old numeric census contracts, duplicated mutation definitions and historical mutation-count assertions. None remain.
+
+The only mutation structure superseded by Pass J was the inline array formerly embedded in `mutation-check.mjs`; it has been removed in favour of the canonical mutation registry. The remaining QA modules have separate responsibilities:
+
+- `witness-registry.mjs` — required semantic invariants and witness ownership;
+- `coverage-audit.mjs` — executable witness/lane/mutation-contract validation;
+- `mutation-cases.mjs` — named realistic injected faults;
+- `mutation-check.mjs` — isolated execution and restoration;
+- `package-audit.mjs` — publication/archive contract.
+
+No useful browser, Node, package or manual cross-browser lane was deleted merely for closure.
+
+### Pass J objective reconciliation
+
+1. Mutation evidence expanded only where an independent high-value witness exists.
+2. Recurrence exceptions, authority fail-open, stale projected occurrence reuse, partial resource commits, undo ownership and staged split rollback now have direct fault sensitivity.
+3. Mutation-critical invariant coverage is machine-checked rather than documented only in prose.
+4. The refined mutation suite remains cheap enough to keep as an explicit high-confidence gate.
+5. No production source changed.
+6. No duplicate/superseded executable QA topology remains after the canonical mutation-registry extraction.
