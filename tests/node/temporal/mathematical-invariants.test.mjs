@@ -324,7 +324,7 @@ test("monthly and yearly recurrence match an independent bounded UTC oracle incl
       rangeStart: entry.range.start,
       rangeEnd: entry.range.end,
     });
-    assert.deepEqual(actual, expected, `\${entry.label} must match independent UTC date-scan oracle`);
+    assert.deepEqual(actual, expected, `${entry.label} must match independent UTC date-scan oracle`);
 
     const partitioned = [];
     for (let index = 0; index + 1 < entry.cuts.length; index += 1) {
@@ -335,6 +335,6 @@ test("monthly and yearly recurrence match an independent bounded UTC oracle incl
         { timeZone: "UTC" },
       ).map(({ originalStart, start }) => ({ originalStart, start })));
     }
-    assert.deepEqual(partitioned, actual, `\${entry.label} must be invariant under bounded query partitioning`);
+    assert.deepEqual(partitioned, actual, `${entry.label} must be invariant under bounded query partitioning`);
   }
 });
