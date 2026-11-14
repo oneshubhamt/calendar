@@ -54,13 +54,13 @@ jobs:
           test "$(npx playwright --version)" = "Version 1.65.0"
 
       - name: Run routine tagged browser smoke
-        if: github.event_name != 'schedule' && github.ref != 'refs/heads/main' && github.base_ref != 'main' && !startsWith(github.ref, 'refs/tags/') && inputs.full != true
+        if: false
         env:
           HOME: /root
         run: npm run qa:browser:smoke
 
       - name: Run exhaustive browser release QA
-        if: github.event_name == 'schedule' || github.ref == 'refs/heads/main' || github.base_ref == 'main' || startsWith(github.ref, 'refs/tags/') || inputs.full == true
+        if: true
         env:
           HOME: /root
         run: npm run qa:browser
