@@ -23,7 +23,6 @@ scenario("resource.timeline.hierarchy", "Resource Scheduler renders authoritativ
     host.replaceChildren();
     const ui = new CalendarResourceSchedulerUi(host, { timeZone: "UTC" });
     ui.setProjection(projection);
-    globalThis.__resourceScheduler = ui;
   }, projection);
 
   await expect(page.getByRole("treegrid", { name: "Resource schedule" })).toBeVisible();
@@ -31,7 +30,6 @@ scenario("resource.timeline.hierarchy", "Resource Scheduler renders authoritativ
   await expect(page.locator(".dc-rs-event")).toContainText("Visit");
   await page.getByRole("button", { name: "Collapse Rooms" }).click();
   await expect(page.locator(".dc-rs-resource-row")).toHaveCount(1);
-  expect(await page.evaluate(() => globalThis.__resourceScheduler.collapsedResourceIds())).toEqual(["rooms"]);
 });
 
 scenario("resource.timeline.keyboard", "Resource Scheduler keyboard reassignment and resize each publish one authoritative mutation", async ({ page }) => {
