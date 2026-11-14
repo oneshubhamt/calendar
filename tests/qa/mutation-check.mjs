@@ -3,61 +3,14 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { mutationCases } from "./mutation-cases.mjs";
 
-// Deliberately small, named faults tied to independently modelled invariants.
-// These modify compiled artifacts only, in isolation, and always restore the original bytes.
-const mutations = [
-  {
-    name: "half-open interval boundary becomes closed",
-    file: "dist/core/interaction.js",
-    from: "return aStartMs < bEndMs && aEndMs > bStartMs;",
-    to: "return aStartMs <= bEndMs && aEndMs > bStartMs;",
-    test: "tests/node/temporal/mathematical-invariants.test.mjs",
-    title: "interval collision semantics match the half-open interval model exhaustively on a finite lattice",
-  },
-  {
-    name: "stale revision guard allows overwrites",
-    file: "dist/core/store.js",
-    from: "if (this.snapshotValue.revision !== expectedRevision) {",
-    to: "if (false) {",
-    test: "tests/node/engine/repository-mutations.test.mjs",
-    title: "revision-guarded repository transitions match an independent state model and never partially apply a stale proposal",
-  },
-  {
-    name: "recurrence COUNT leaks an extra occurrence",
-    file: "dist/core/recurrence.js",
-    from: /yielded\s*>=\s*\(rule\.count\s*\?\?\s*MAX_OCCURRENCES\)/,
-    to: "yielded > (rule.count ?? MAX_OCCURRENCES)",
-    test: "tests/node/temporal/mathematical-invariants.test.mjs",
-    title: "UTC daily and weekly recurrence matches an independent civil-date enumeration across leap and year boundaries",
-  },
-  {
-    name: "split tail reuses the original series anchor",
-    file: "dist/core/commands.js",
-    from: "const splitAnchor = { ...item, start: occurrence.start, end: occurrence.end };",
-    to: "const splitAnchor = item;",
-    test: "tests/node/engine/state-machine.test.mjs",
-    title: "seeded calendar state machine agrees with an independent reference model across mutation history and refresh",
-  },
-  {
-    name: "negative BYMONTHDAY is shifted one day early",
-    file: "dist/core/recurrence.js",
-    from: "days = rule.byMonthDay.map(value => value > 0 ? value : last + value + 1).filter(day => day >= 1 && day <= last);",
-    to: "days = rule.byMonthDay.map(value => value > 0 ? value : last + value).filter(day => day >= 1 && day <= last);",
-    test: "tests/node/temporal/mathematical-invariants.test.mjs",
-    title: "monthly and yearly recurrence match an independent bounded UTC oracle including filters limits exceptions and partitions",
-  },
-  {
-    name: "prefer-local deletion sync silently applies remote",
-    file: "dist/interoperability/sync.js",
-    from: /if\s*\(policy === "prefer-local"\)\s*return\s*\{\s*action:\s*"delete-remote"\s*\};/,
-    to: 'if (policy === "prefer-local") return { action: "apply-remote" };',
-    test: "tests/node/interop/contracts.test.mjs",
-    title: "sync decision model covers every local/remote deletion-change state and conflict policy",
-  },
-];
+const ids = new Set();
+for (const entry of mutationCases) {
+  assert.equal(ids.has(entry.id), false, `Duplicate mutation id: ${entry.id}`);
+  ids.add(entry.id);
+  assert.ok(entry.invariantIds.length > 0, `${entry.id}: mutation must name at least one invariant`);
 
-for (const entry of mutations) {
   const file = resolve(entry.file);
   const original = readFileSync(file, "utf8");
   const occurrences = entry.from instanceof RegExp
@@ -82,6 +35,6 @@ for (const entry of mutations) {
     line.startsWith("not ok ") && line.includes(entry.title));
   assert.ok(outcome.status !== 0 && expectedFailure,
     `${entry.name} escaped its targeted assertion (exit ${outcome.status}).\n${output.slice(-3500)}`);
-  console.log(`FAULT DETECTED: ${entry.name} -> ${entry.title}`);
+  console.log(`FAULT DETECTED [${entry.id}]: ${entry.name} -> ${entry.title}`);
 }
-console.log(`Mutation witnesses: ${mutations.length}/${mutations.length} independently detected and artifacts restored`);
+console.log(`Mutation witnesses: ${mutationCases.length}/${mutationCases.length} independently detected and artifacts restored`);
