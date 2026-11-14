@@ -12,7 +12,7 @@ on:
         type: boolean
         default: false
       mutation:
-        description: "Run four targeted regression fault injections"
+        description: "Run targeted regression fault injections"
         type: boolean
         default: false
 
