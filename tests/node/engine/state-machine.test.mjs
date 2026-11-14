@@ -40,7 +40,7 @@ function occurrenceAt(item, ordinal) {
     ...fields,
     start,
     end,
-    occurrenceId: `model:\${item.id}:\${ordinal}`,
+    occurrenceId: `model:${item.id}:${ordinal}`,
     sourceItemId: item.id,
     originalStart: start,
     recurring: Boolean(item.recurrence),
@@ -76,7 +76,7 @@ function splitModel(item, occurrence, start, end, ordinal) {
       exceptions: undefined,
     },
   };
-  const tailId = `\${item.id}:split:\${Date.parse(occurrence.start)}`;
+  const tailId = `${item.id}:split:${Date.parse(occurrence.start)}`;
   const tail = {
     ...item,
     id: tailId,
@@ -94,19 +94,19 @@ function splitModel(item, occurrence, start, end, ordinal) {
 
 async function assertModel(repo, engine, model, range, label) {
   const snapshot = repo.read();
-  assert.equal(snapshot.revision, model.revision, `\${label}: repository revision`);
-  assert.deepEqual(semanticItems(snapshot.items), semanticItems(model.items), `\${label}: canonical items`);
+  assert.equal(snapshot.revision, model.revision, `${label}: repository revision`);
+  assert.deepEqual(semanticItems(snapshot.items), semanticItems(model.items), `${label}: canonical items`);
 
   const query = await engine.query(range, { timeZone: "UTC" });
-  assert.equal(query.repositoryRevision, model.revision, `\${label}: query revision`);
-  assert.equal(query.generation, model.revision, `\${label}: invalidation generation`);
+  assert.equal(query.repositoryRevision, model.revision, `${label}: query revision`);
+  assert.equal(query.generation, model.revision, `${label}: invalidation generation`);
   const actualOccurrences = query.occurrences
     .map(({ sourceItemId, originalStart, start, end }) => ({ sourceItemId, originalStart, start, end }))
     .sort((left, right) =>
       Date.parse(left.start) - Date.parse(right.start)
       || left.sourceItemId.localeCompare(right.sourceItemId)
       || left.originalStart.localeCompare(right.originalStart));
-  assert.deepEqual(actualOccurrences, modelOccurrences(model.items, range), `\${label}: refreshed occurrences`);
+  assert.deepEqual(actualOccurrences, modelOccurrences(model.items, range), `${label}: refreshed occurrences`);
 }
 
 test("seeded calendar state machine agrees with an independent reference model across mutation history and refresh", async () => {
@@ -126,15 +126,15 @@ test("seeded calendar state machine agrees with an independent reference model a
 
     const anchor = new Date(Date.UTC(2026, 10, day, hour, 0, 0)).toISOString();
     const item = {
-      id: `series-\${seed.toString(16)}`,
+      id: `series-${seed.toString(16)}`,
       calendarId: source.id,
-      title: `Seed \${seed.toString(16)}`,
+      title: `Seed ${seed.toString(16)}`,
       start: anchor,
       end: plusMinutes(anchor, durationMinutes),
       kind: "event",
       ownership: "calendar",
       editPolicy: "full",
-      seriesId: `series-\${seed.toString(16)}`,
+      seriesId: `series-${seed.toString(16)}`,
       recurrence: { rule: { frequency: "daily", count } },
     };
 
@@ -151,7 +151,7 @@ test("seeded calendar state machine agrees with an independent reference model a
     await handler.execute({ type: "create", item }, context);
     model.items = [structuredClone(item)];
     model.revision += 1;
-    await assertModel(repo, engine, model, range, `seed \${seed} create`);
+    await assertModel(repo, engine, model, range, `seed ${seed} create`);
 
     let occurrence = occurrenceAt(model.items[0], 1);
     const movedStart = plusMinutes(occurrence.start, moveMinutes);
@@ -161,7 +161,7 @@ test("seeded calendar state machine agrees with an independent reference model a
     }, context);
     model.items[0] = { ...model.items[0], start: movedStart, end: movedEnd };
     model.revision += 1;
-    await assertModel(repo, engine, model, range, `seed \${seed} move`);
+    await assertModel(repo, engine, model, range, `seed ${seed} move`);
 
     occurrence = occurrenceAt(model.items[0], 1);
     const resizedEnd = plusMinutes(occurrence.end, resizeMinutes);
@@ -170,7 +170,7 @@ test("seeded calendar state machine agrees with an independent reference model a
     }, context);
     model.items[0] = { ...model.items[0], end: resizedEnd };
     model.revision += 1;
-    await assertModel(repo, engine, model, range, `seed \${seed} resize`);
+    await assertModel(repo, engine, model, range, `seed ${seed} resize`);
 
     occurrence = occurrenceAt(model.items[0], 1);
     const editedRecurrence = { rule: { frequency: "daily", interval, count } };
@@ -179,7 +179,7 @@ test("seeded calendar state machine agrees with an independent reference model a
     }, context);
     model.items[0] = { ...model.items[0], recurrence: structuredClone(editedRecurrence) };
     model.revision += 1;
-    await assertModel(repo, engine, model, range, `seed \${seed} recurrence edit`);
+    await assertModel(repo, engine, model, range, `seed ${seed} recurrence edit`);
 
     const beforeSplit = structuredClone(model.items);
     occurrence = occurrenceAt(model.items[0], splitOrdinal);
@@ -190,20 +190,20 @@ test("seeded calendar state machine agrees with an independent reference model a
     }, context);
     model.items = splitModel(model.items[0], occurrence, tailStart, tailEnd, splitOrdinal);
     model.revision += 1;
-    await assertModel(repo, engine, model, range, `seed \${seed} split`);
+    await assertModel(repo, engine, model, range, `seed ${seed} split`);
 
     const afterSplit = structuredClone(model.items);
     assert.equal(await handler.undo(), true);
     model.items = beforeSplit;
     model.revision += 1;
     assert.deepEqual(handler.historyState(), { canUndo: true, canRedo: true });
-    await assertModel(repo, engine, model, range, `seed \${seed} undo`);
+    await assertModel(repo, engine, model, range, `seed ${seed} undo`);
 
     assert.equal(await handler.redo(), true);
     model.items = afterSplit;
     model.revision += 1;
     assert.deepEqual(handler.historyState(), { canUndo: true, canRedo: false });
-    await assertModel(repo, engine, model, range, `seed \${seed} redo`);
+    await assertModel(repo, engine, model, range, `seed ${seed} redo`);
 
     const beforeStale = repo.read();
     assert.throws(
@@ -212,8 +212,8 @@ test("seeded calendar state machine agrees with an independent reference model a
         && error.expectedRevision === beforeStale.revision - 1
         && error.actualRevision === beforeStale.revision,
     );
-    assert.strictEqual(repo.read(), beforeStale, `seed \${seed}: stale CAS must not publish a new snapshot`);
-    await assertModel(repo, engine, model, range, `seed \${seed} stale CAS refresh`);
+    assert.strictEqual(repo.read(), beforeStale, `seed ${seed}: stale CAS must not publish a new snapshot`);
+    await assertModel(repo, engine, model, range, `seed ${seed} stale CAS refresh`);
 
     unsubscribe();
   }
@@ -233,7 +233,7 @@ test("multi-record recurrence split rolls back completely when staged tail creat
     recurrence: { rule: { frequency: "daily", count: 4 } },
   };
   const occurrence = occurrenceAt(recurring, 3);
-  const collidingTailId = `\${recurring.id}:split:\${Date.parse(occurrence.start)}`;
+  const collidingTailId = `${recurring.id}:split:${Date.parse(occurrence.start)}`;
   const blocker = {
     ...recurring,
     id: collidingTailId,
