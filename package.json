@@ -157,7 +157,7 @@
   },
   "devDependencies": {
     "typescript": "7.0.2",
-    "@playwright/test": "1.65.0"
+    "@playwright/test": "1.65.1"
   },
   "packageManager": "npm@12.2.2",
   "repository": {
